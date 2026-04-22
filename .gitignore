@@ -1,0 +1,20 @@
+# macOS metadata
+.DS_Store
+
+# Local editor folders
+.vscode/
+.claude/
+
+# Archived local repo state
+_OLD/
+
+# Project docs not part of shipped repo
+CLAUDE.md
+
+# Python build artefacts
+__pycache__/
+*.pyc
+
+# Rendered logs that might appear during local testing
+/var/log/macstudio/
+

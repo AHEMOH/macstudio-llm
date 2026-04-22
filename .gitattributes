@@ -1,0 +1,10 @@
+# Keep shell scripts Unix-compatible on macOS
+*.sh text eol=lf
+
+# Keep PowerShell scripts Windows-native
+*.ps1 text eol=crlf
+
+# Markdown and YAML as LF
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

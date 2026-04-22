@@ -1,0 +1,27 @@
+══════════════════════════════════════════════════════════════════════
+  Mac Studio Headless LLM Server          (Apple Silicon, @TOTAL_RAM_GB@ GB)
+══════════════════════════════════════════════════════════════════════
+  Primary:    ollama        :@OLLAMA_PORT@   (always on, KEEP_ALIVE=@OLLAMA_KEEP_ALIVE@)
+  On-demand:  immich-ml     :@ML_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_IMMICH@m)
+              docling-serve :@DOCLING_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_DOCLING@m)
+  Monitoring: node_exporter :@NODE_EXPORTER_PORT@
+              silicon       :@SILICON_EXPORTER_PORT@   (GPU, power, thermal)
+              ollama        :@OLLAMA_EXPORTER_PORT@   (loaded model, sizes)
+══════════════════════════════════════════════════════════════════════
+  Commands (type them directly — already on PATH):
+    llm-status                      full service + memory overview
+    llm-restart [service|all]       restart services
+    llm-update                      run brew+pip+softwareupdate now
+    llm-service-ctl wake  immich    force-wake on-demand service
+    llm-service-ctl sleep docling   force-sleep on-demand service
+    llm-logs [service]              tail /var/log/macstudio/<svc>.log
+
+  Ollama basics:
+    ollama list                     installed models
+    ollama ps                       currently loaded
+    ollama run <model>              chat (stays loaded forever)
+
+  Settings:     sudo bash /opt/macstudio/setup.sh
+  Logs:         tail -F /var/log/macstudio/ollama.log
+  Weekly auto:  @AUTOUPDATE_HUMAN@ → /var/log/macstudio/autoupdate.log
+══════════════════════════════════════════════════════════════════════

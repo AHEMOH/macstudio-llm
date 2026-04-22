@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# llm-logs — tail one of the service log files.
+#
+# Usage:
+#   llm-logs                              # list available logs
+#   llm-logs ollama                       # tail -F ollama.log
+#   llm-logs immich-proxy  docling-proxy  # tail -F multiple at once
+set -u
+
+LOG_DIR=/var/log/macstudio
+
+if [ ! -d "$LOG_DIR" ]; then
+  echo "log directory missing: $LOG_DIR" >&2
+  exit 1
+fi
+
+if [ $# -eq 0 ]; then
+  echo "Available logs in $LOG_DIR:"
+  ls -1 "$LOG_DIR" | sed 's/\.log$//' | sed 's/^/  /'
+  echo
+  echo "usage: llm-logs <name> [<name>...]"
+  exit 0
+fi
+
+files=()
+for name in "$@"; do
+  case "$name" in
+    *.log) f="$LOG_DIR/$name" ;;
+    *)     f="$LOG_DIR/${name}.log" ;;
+  esac
+  if [ ! -e "$f" ]; then
+    echo "not found: $f" >&2
+    exit 1
+  fi
+  files+=("$f")
+done
+
+exec /usr/bin/tail -n 50 -F "${files[@]}"

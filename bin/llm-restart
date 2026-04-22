@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# llm-restart — restart one or all MacStudioLLM services.
+#
+# Usage:
+#   llm-restart                 # restart every always-on service
+#   llm-restart ollama          # restart ollama only
+#   llm-restart immich docling  # multiple
+#   llm-restart all             # explicit "all"
+#   llm-restart list            # show known service names
+set -u
+
+# Self-elevate: launchctl kickstart on system/ domain needs root.
+if [ "$(id -u)" -ne 0 ]; then
+  exec sudo "$0" "$@"
+fi
+
+# Short-name → launchd label
+declare -A LABELS=(
+  [ollama]=com.local.ollama.headless
+  [immich-proxy]=com.local.immich.proxy
+  [immich]=com.local.immich.ml
+  [docling-proxy]=com.local.docling.proxy
+  [docling]=com.local.docling.serve
+  [node]=com.local.node.exporter
+  [silicon]=com.local.silicon.exporter
+  [ollama-exporter]=com.local.ollama.exporter
+  [watchdog]=com.local.llm.watchdog
+  [preventsleep]=com.local.preventsleep
+)
+
+ALL_ALWAYS_ON=(ollama immich-proxy docling-proxy node silicon ollama-exporter watchdog preventsleep)
+
+if [ $# -eq 0 ] || [ "${1:-}" = all ]; then
+  set -- "${ALL_ALWAYS_ON[@]}"
+fi
+
+if [ "${1:-}" = list ]; then
+  printf "%-20s %s\n" NAME LABEL
+  for k in "${!LABELS[@]}"; do printf "%-20s %s\n" "$k" "${LABELS[$k]}"; done
+  exit 0
+fi
+
+rc=0
+for name in "$@"; do
+  label="${LABELS[$name]:-}"
+  if [ -z "$label" ]; then
+    echo "unknown service: $name (try: llm-restart list)" >&2
+    rc=1
+    continue
+  fi
+  if /bin/launchctl print "system/$label" >/dev/null 2>&1; then
+    /bin/launchctl kickstart -k "system/$label" && echo "restarted: $name ($label)"
+  else
+    echo "not registered: $name ($label)" >&2
+    rc=1
+  fi
+done
+exit "$rc"

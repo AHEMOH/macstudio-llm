@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# llm-status — print a full snapshot of the LLM server's live state.
+# Thin wrapper around `setup.sh --status`. Read-only, no sudo needed.
+set -u
+
+# setup.sh writes /usr/local/etc/macstudio.repo at install time with SETUP_SH=<path>.
+POINTER=/usr/local/etc/macstudio.repo
+if [ -r "$POINTER" ]; then
+  # shellcheck disable=SC1090
+  . "$POINTER"
+fi
+SETUP="${SETUP_SH:-}"
+if [ -x "$SETUP" ]; then
+  exec /bin/bash "$SETUP" --status "$@"
+fi
+
+# Fallback: inline minimal status if setup.sh wasn't installed to the
+# expected path. Keeps `llm-status` useful on a broken install.
+LABELS=(
+  "com.local.ollama.headless"
+  "com.local.immich.proxy"
+  "com.local.immich.ml"
+  "com.local.docling.proxy"
+  "com.local.docling.serve"
+  "com.local.node.exporter"
+  "com.local.silicon.exporter"
+  "com.local.ollama.exporter"
+  "com.local.llm.watchdog"
+  "com.local.preventsleep"
+  "com.local.weekly.autoupdate"
+)
+
+printf "%-34s %-10s %s\n" LABEL STATE PID
+for L in "${LABELS[@]}"; do
+  out=$(/bin/launchctl print "system/$L" 2>/dev/null || true)
+  if [ -z "$out" ]; then
+    printf "%-34s %-10s %s\n" "$L" "unknown" "-"
+    continue
+  fi
+  pid=$(printf "%s" "$out" | awk '/^[[:space:]]*pid[[:space:]]*=/{print $3; exit}')
+  state=$(printf "%s" "$out" | awk '/^[[:space:]]*state[[:space:]]*=/{print $3; exit}')
+  printf "%-34s %-10s %s\n" "$L" "${state:-?}" "${pid:-0}"
+done
+
+echo
+/usr/sbin/sysctl iogpu.wired_limit_mb 2>/dev/null || true
+/usr/bin/memory_pressure 2>/dev/null | head -5 || true

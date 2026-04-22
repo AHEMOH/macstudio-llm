@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# llm-service-ctl — manually wake, sleep, or inspect the on-demand
+# services (immich-ml, docling-serve). Useful to force-warm them before
+# a batch job, or force-sleep them to reclaim RAM immediately.
+#
+# Usage:
+#   llm-service-ctl wake   immich|docling|all
+#   llm-service-ctl sleep  immich|docling|all
+#   llm-service-ctl status [immich|docling|all]
+set -u
+
+if [ "$(id -u)" -ne 0 ] && [ "${1:-}" != status ]; then
+  exec sudo "$0" "$@"
+fi
+
+declare -A LABELS=(
+  [immich]=com.local.immich.ml
+  [docling]=com.local.docling.serve
+)
+
+usage() {
+  cat <<USAGE >&2
+usage:
+  llm-service-ctl wake   immich|docling|all
+  llm-service-ctl sleep  immich|docling|all
+  llm-service-ctl status [immich|docling|all]
+USAGE
+  exit 2
+}
+
+resolve() {
+  case "$1" in
+    all) echo immich docling ;;
+    *)   echo "$1" ;;
+  esac
+}
+
+daemon_pid() {
+  /bin/launchctl print "system/$1" 2>/dev/null \
+    | awk '/^[[:space:]]*pid[[:space:]]*=/{print $3; exit}'
+}
+
+cmd=${1:-}
+shift || true
+[ -z "$cmd" ] && usage
+[ $# -eq 0 ] && set -- all
+
+case "$cmd" in
+  wake)
+    for s in $(resolve "$1"); do
+      label="${LABELS[$s]:-}"
+      [ -z "$label" ] && { echo "unknown: $s" >&2; exit 1; }
+      /bin/launchctl kickstart -k "system/$label" && echo "woken: $s ($label)"
+    done
+    ;;
+  sleep)
+    for s in $(resolve "$1"); do
+      label="${LABELS[$s]:-}"
+      [ -z "$label" ] && { echo "unknown: $s" >&2; exit 1; }
+      /bin/launchctl stop "$label" && echo "stopped: $s ($label)"
+    done
+    ;;
+  status)
+    for s in $(resolve "$1"); do
+      label="${LABELS[$s]:-}"
+      [ -z "$label" ] && { echo "unknown: $s" >&2; exit 1; }
+      pid=$(daemon_pid "$label")
+      if [ -n "$pid" ] && [ "$pid" != 0 ]; then
+        echo "$s ($label): awake  pid=$pid"
+      else
+        echo "$s ($label): sleeping"
+      fi
+    done
+    ;;
+  -h|--help|help) usage ;;
+  *) usage ;;
+esac

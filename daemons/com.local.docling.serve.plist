@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.local.docling.serve</string>
+  <key>UserName</key><string>@TARGET_USER@</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/libexec/start-docling-serve.sh</string>
+  </array>
+  <key>WorkingDirectory</key><string>@DOCLING_PROJECT_DIR@</string>
+  <key>RunAtLoad</key><false/>
+  <key>KeepAlive</key><false/>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>StandardOutPath</key><string>/var/log/macstudio/docling-serve.log</string>
+  <key>StandardErrorPath</key><string>/var/log/macstudio/docling-serve.log</string>
+</dict>
+</plist>
