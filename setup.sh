@@ -278,6 +278,22 @@ load_config() {
   export IDLE_MIN_DOCLING=$(( IDLE_TIMEOUT_DOCLING / 60 ))
   local dow_names=(Sun Mon Tue Wed Thu Fri Sat)
   export AUTOUPDATE_HUMAN="$(printf '%s %02d:%02d' "${dow_names[$AUTOUPDATE_WEEKDAY]:-?}" "$AUTOUPDATE_HOUR" "$AUTOUPDATE_MINUTE")"
+  # Compute ACTIVE_LABELS — the subset of ALL_LABELS the current config says
+  # should be installed. Used by status/service-control menus. ALL_LABELS is
+  # still the authoritative list for plist cleanup on toggle-off.
+  ACTIVE_LABELS=()
+  local _lbl
+  for _lbl in "${ALL_LABELS[@]}"; do
+    case "$_lbl" in
+      com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || continue ;;
+      com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || continue ;;
+      com.local.node.exporter|com.local.silicon.exporter|com.local.ollama.exporter)
+        [ "${INSTALL_EXPORTERS:-1}" = 1 ] || continue ;;
+      com.local.llm.watchdog)
+        [ "${INSTALL_WATCHDOG:-1}" = 1 ] || continue ;;
+    esac
+    ACTIVE_LABELS+=("$_lbl")
+  done
 }
 
 save_config_key() {
@@ -558,6 +574,10 @@ apply_everything() {
   need_root "$@"
   dbg "step: load_config";           load_config
   dbg "step: ensure_dirs";            ensure_dirs
+  if [ "$INTERACTIVE" = 1 ]; then
+    dbg "step: apply_leftover_cleanup_interactive"
+    apply_leftover_cleanup_interactive
+  fi
   dbg "step: write_repo_pointer";     write_repo_pointer
   dbg "step: ensure_homebrew";        ensure_homebrew || true
   dbg "step: ensure_formulas";        ensure_formulas
@@ -603,21 +623,29 @@ verify_and_summary() {
   echo
   printf "%-36s %-10s %-8s %s\n" LABEL STATE PID NOTES
   printf "%-36s %-10s %-8s %s\n" ------- ----- --- ----
+  local active_list=" ${ACTIVE_LABELS[*]:-} "
   for label in "${ALL_LABELS[@]}"; do
     local state pid notes=""
-    if daemon_loaded "$label"; then
-      state=$(/bin/launchctl print "system/$label" 2>/dev/null | awk '/^[[:space:]]*state[[:space:]]*=/{print $3; exit}')
-      pid=$(daemon_pid "$label")
-    else
-      state="absent"; pid=""
-    fi
-    case "$label" in
-      com.local.immich.ml|com.local.docling.serve)
-        [ -z "$pid" ] || [ "$pid" = 0 ] && notes="on-demand (sleeping)"
-        [ -n "$pid" ] && [ "$pid" != 0 ] && notes="on-demand (awake)"
+    case "$active_list" in
+      *" $label "*)
+        if daemon_loaded "$label"; then
+          state=$(/bin/launchctl print "system/$label" 2>/dev/null | awk '/^[[:space:]]*state[[:space:]]*=/{print $3; exit}')
+          pid=$(daemon_pid "$label")
+        else
+          state="absent"; pid=""
+        fi
+        case "$label" in
+          com.local.immich.ml|com.local.docling.serve)
+            [ -z "$pid" ] || [ "$pid" = 0 ] && notes="on-demand (sleeping)"
+            [ -n "$pid" ] && [ "$pid" != 0 ] && notes="on-demand (awake)"
+            ;;
+          com.local.iogpu.wiredlimit|com.local.weekly.autoupdate)
+            notes="scheduled / one-shot"
+            ;;
+        esac
         ;;
-      com.local.iogpu.wiredlimit|com.local.weekly.autoupdate)
-        notes="scheduled / one-shot"
+      *)
+        state="skipped"; pid=""; notes="disabled in config (menu 2)"
         ;;
     esac
     printf "%-36s %-10s %-8s %s\n" "$label" "${state:-?}" "${pid:-0}" "$notes"
@@ -631,6 +659,132 @@ verify_and_summary() {
   printf "Scheduled autoupdate: %s\n" "${next:-(not scheduled)}"
 
   echo
+}
+
+# ===========================================================================
+# Leftover detection & interactive service selection
+# ===========================================================================
+
+# scan_leftovers — print TAB-separated "KIND<TAB>PATH" lines for anything
+# on disk that looks like it's from a previous (incompatible) install.
+# KINDs: foreign-plist, orphan-libexec, legacy-app. Returns 0 always.
+scan_leftovers() {
+  local known_plists=" ${ALL_LABELS[*]} "
+  local f lbl
+  for f in "$PLIST_DIR"/com.local.*.plist; do
+    [ -f "$f" ] || continue
+    lbl=$(basename "$f" .plist)
+    case "$known_plists" in
+      *" $lbl "*) : ;;
+      *)          printf 'foreign-plist\t%s\n' "$f" ;;
+    esac
+  done
+  # Build "expected libexec basenames" from what the repo actually ships.
+  local expected=" "
+  for f in "$REPO_DIR"/wrappers/*.sh "$REPO_DIR"/services/*.py "$REPO_DIR"/services/*.sh; do
+    [ -f "$f" ] || continue
+    expected+="$(basename "$f") "
+  done
+  for f in "$LIBEXEC_DIR"/start-*.sh \
+           "$LIBEXEC_DIR"/*-exporter.py \
+           "$LIBEXEC_DIR"/*-proxy.py \
+           "$LIBEXEC_DIR"/llm-watchdog.sh; do
+    [ -f "$f" ] || continue
+    case "$expected" in
+      *" $(basename "$f") "*) : ;;
+      *)                       printf 'orphan-libexec\t%s\n' "$f" ;;
+    esac
+  done
+  # GUI apps that must not coexist with this headless daemon stack.
+  [ -d "/Applications/LM Studio.app" ] && printf 'legacy-app\t%s\n' "/Applications/LM Studio.app"
+  [ -d "/Applications/Ollama.app" ]     && printf 'legacy-app\t%s\n' "/Applications/Ollama.app"
+  return 0
+}
+
+apply_leftover_cleanup_interactive() {
+  local output
+  output=$(scan_leftovers)
+  if [ -z "$output" ]; then
+    dbg "no leftovers detected"
+    return 0
+  fi
+  printf "\n${C_BOLD}── Leftovers detected from previous installs ─${C_RST}\n"
+  printf '%s\n' "$output" | while IFS=$'\t' read -r kind path; do
+    printf "  %-15s %s\n" "[$kind]" "$path"
+  done
+  echo
+  if ! confirm "Clean these up now? (plists are bootout'ed + removed; legacy apps flagged for manual removal)"; then
+    warn "leftovers left in place — re-run setup.sh to clean later"
+    return 0
+  fi
+  local kind path lbl
+  while IFS=$'\t' read -r kind path; do
+    case "$kind" in
+      foreign-plist)
+        lbl=$(basename "$path" .plist)
+        bootout_plist "$lbl"
+        /bin/rm -f "$path"
+        ok "removed foreign plist: $lbl"
+        ;;
+      orphan-libexec)
+        /bin/rm -f "$path"
+        ok "removed orphan file: $path"
+        ;;
+      legacy-app)
+        warn "manual uninstall required: drag '$path' to Trash, or run:"
+        warn "  sudo rm -rf \"$path\""
+        ;;
+    esac
+  done <<< "$output"
+}
+
+onoff_label() { [ "$1" = 1 ] && printf 'on ' || printf 'off'; }
+
+toggle_install_flag() {
+  local key=$1 cur
+  eval "cur=\"\${$key:-1}\""
+  if [ "$cur" = 1 ]; then
+    save_config_key "$key" 0
+    eval "$key=0"
+    ok "$key → off"
+  else
+    save_config_key "$key" 1
+    eval "$key=1"
+    ok "$key → on"
+  fi
+}
+
+menu_select_services() {
+  load_config
+  while true; do
+    printf "\n${C_BOLD}── Select services to install ─────────────────${C_RST}\n"
+    printf "%s\n" "Ollama, the GPU-wired-limit helper, caffeinate, and the weekly"
+    printf "%s\n" "autoupdate are always installed. The optional services below"
+    printf "%s\n" "can be skipped now and added later — re-running setup.sh never"
+    printf "%s\n" "overwrites a healthy installed service."
+    echo
+    printf "  1) %-18s [%s]   immich-ml on-demand photo AI (:%s)\n" \
+      INSTALL_IMMICH    "$(onoff_label "${INSTALL_IMMICH:-1}")"    "${ML_PUBLIC_PORT:-3003}"
+    printf "  2) %-18s [%s]   docling-serve on-demand OCR/VLM (:%s)\n" \
+      INSTALL_DOCLING   "$(onoff_label "${INSTALL_DOCLING:-1}")"   "${DOCLING_PUBLIC_PORT:-5001}"
+    printf "  3) %-18s [%s]   Prometheus exporters (:%s :%s :%s)\n" \
+      INSTALL_EXPORTERS "$(onoff_label "${INSTALL_EXPORTERS:-1}")" \
+      "${NODE_EXPORTER_PORT:-9100}" "${SILICON_EXPORTER_PORT:-9101}" "${OLLAMA_EXPORTER_PORT:-9102}"
+    printf "  4) %-18s [%s]   Memory-pressure safety watchdog\n" \
+      INSTALL_WATCHDOG  "$(onoff_label "${INSTALL_WATCHDOG:-1}")"
+    echo
+    echo "   a) Apply these choices now     q) Back (don't apply)"
+    read -r -p "Toggle which? [1-4 / a / q]: " c
+    case "$c" in
+      1) toggle_install_flag INSTALL_IMMICH    ;;
+      2) toggle_install_flag INSTALL_DOCLING   ;;
+      3) toggle_install_flag INSTALL_EXPORTERS ;;
+      4) toggle_install_flag INSTALL_WATCHDOG  ;;
+      a|A) apply_everything; pause_enter; return 0 ;;
+      q|Q|"") return 0 ;;
+      *) warn "unknown: $c"; sleep 1 ;;
+    esac
+  done
 }
 
 # ===========================================================================
@@ -685,11 +839,12 @@ menu_settings() {
 }
 
 menu_service_ctl() {
+  load_config
   while true; do
     printf "\n${C_BOLD}── Service control ────────────────────────────${C_RST}\n"
     local i=1
     local -a menu_labels=()
-    for label in "${ALL_LABELS[@]}"; do
+    for label in "${ACTIVE_LABELS[@]}"; do
       local pid state
       pid=$(daemon_pid "$label"); pid=${pid:-0}
       if daemon_loaded "$label"; then
@@ -795,28 +950,46 @@ print_header() {
 
 main_menu() {
   need_root "$@"
+  # First-run welcome: guide the user through service selection before the
+  # normal TUI. Config file was absent at startup → FIRST_RUN=1.
+  if [ "${FIRST_RUN:-0}" = 1 ]; then
+    clear 2>/dev/null || true
+    print_header
+    load_config   # writes defaults if absent
+    printf "\n${C_BOLD}Welcome — first run detected.${C_RST}\n"
+    printf "Default config written to %s\n" "$CONF_FILE"
+    printf "Step 1: pick which optional services you want installed.\n"
+    printf "        (Everything is on by default. Re-run later to add more.)\n"
+    pause_enter
+    menu_select_services
+    FIRST_RUN=0
+  fi
   while true; do
     clear 2>/dev/null || true
     print_header
     verify_and_summary
     echo "Main menu:"
     echo "  1) Install / update everything   (recommended — applies current config)"
-    echo "  2) Change settings…"
-    echo "  3) Service control…"
-    echo "  4) Run weekly autoupdate now"
-    echo "  5) Clean-up tasks…"
-    echo "  6) View logs…"
-    echo "  7) Uninstall everything this tool installed"
+    echo "  2) Select services to install…   (toggle immich / docling / exporters / watchdog)"
+    echo "  3) Change settings…"
+    echo "  4) Service control…"
+    echo "  5) Run weekly autoupdate now"
+    echo "  6) Scan for leftovers from previous installs"
+    echo "  7) Clean-up tasks…"
+    echo "  8) View logs…"
+    echo "  9) Uninstall everything this tool installed"
     echo "  q) Quit"
     read -r -p "Choice: " choice
     case "$choice" in
       1) apply_everything; pause_enter ;;
-      2) menu_settings ;;
-      3) menu_service_ctl ;;
-      4) log "running weekly-autoupdate.sh NOW"; /bin/bash "$SBIN_DIR/weekly-autoupdate.sh" || true; pause_enter ;;
-      5) menu_cleanup ;;
-      6) menu_logs ;;
-      7) menu_uninstall ;;
+      2) menu_select_services ;;
+      3) menu_settings ;;
+      4) menu_service_ctl ;;
+      5) log "running weekly-autoupdate.sh NOW"; /bin/bash "$SBIN_DIR/weekly-autoupdate.sh" || true; pause_enter ;;
+      6) apply_leftover_cleanup_interactive; pause_enter ;;
+      7) menu_cleanup ;;
+      8) menu_logs ;;
+      9) menu_uninstall ;;
       q|Q|"") exit 0 ;;
       *) warn "unknown choice: $choice"; sleep 1 ;;
     esac
@@ -876,6 +1049,12 @@ else
   _orig_args=()
 fi
 [ "$DEBUG" = 1 ] && { PS4='+ ${BASH_SOURCE##*/}:${LINENO}: '; set -x; }
+
+# First-run detection: config-file absence at startup triggers the welcome
+# flow in main_menu(). The self-elevate re-exec below re-runs the script, so
+# this is naturally re-evaluated in the child — no state to pass through.
+FIRST_RUN=0
+[ -f "$CONF_FILE" ] || FIRST_RUN=1
 
 # Self-elevate before doing real work. Use the stripped argv for the help
 # check (so `-d --help` still skips sudo), but pass the ORIGINAL argv to

@@ -148,19 +148,34 @@ TUI main menu:
 
 ```
 1) Install / update everything   (recommended — applies current config)
-2) Change settings…              (GPU memory, keep-alive, idle timeouts, …)
-3) Service control…              (start / stop / restart each daemon)
-4) Run weekly autoupdate now
-5) Clean-up tasks…               (old logs, uninstall node_exporter)
-6) View logs…
-7) Uninstall everything this tool installed
+2) Select services to install…   (toggle immich / docling / exporters / watchdog)
+3) Change settings…              (GPU memory, keep-alive, idle timeouts, …)
+4) Service control…              (start / stop / restart each daemon)
+5) Run weekly autoupdate now
+6) Scan for leftovers from previous installs
+7) Clean-up tasks…               (old logs, uninstall node_exporter)
+8) View logs…
+9) Uninstall everything this tool installed
 q) Quit
 ```
+
+**On first run** (no config file yet) the TUI jumps straight to menu 2 so
+you can pick which optional services to install before anything is touched.
+Everything is on by default. Re-run later and toggle more on — the script
+never overwrites a healthy service (brew formulas, venvs, and rendered
+files are all hash-checked before touching). Toggling a service **off**
+removes its launchd plist; toggling **on** re-renders and bootstraps it.
 
 Every action is **idempotent**. Re-running on a healthy system is a
 ~5-second no-op. There are no `.state/` checkpoint files — the script
 inspects `/Library/LaunchDaemons/`, `sysctl`, `launchctl print`, file hashes,
 and `brew list` to decide what needs touching.
+
+**Leftovers from previous installs** (stale `com.local.*` plists from an
+older layout, orphan files in `/usr/local/libexec/`, leftover `LM Studio.app`
+or `Ollama.app`) are detected at the start of every interactive install,
+listed, and removed only with your confirmation. Menu 6 runs the same scan
+on demand.
 
 ## Configuration reference
 
