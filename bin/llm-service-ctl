@@ -13,10 +13,14 @@ if [ "$(id -u)" -ne 0 ] && [ "${1:-}" != status ]; then
   exec sudo "$0" "$@"
 fi
 
-declare -A LABELS=(
-  [immich]=com.local.immich.ml
-  [docling]=com.local.docling.serve
-)
+# Bash-3.2 safe lookup (macOS ships /bin/bash 3.2, no assoc arrays).
+label_for() {
+  case "$1" in
+    immich)  echo com.local.immich.ml ;;
+    docling) echo com.local.docling.serve ;;
+    *)       echo "" ;;
+  esac
+}
 
 usage() {
   cat <<USAGE >&2
@@ -48,21 +52,21 @@ shift || true
 case "$cmd" in
   wake)
     for s in $(resolve "$1"); do
-      label="${LABELS[$s]:-}"
+      label=$(label_for "$s")
       [ -z "$label" ] && { echo "unknown: $s" >&2; exit 1; }
       /bin/launchctl kickstart -k "system/$label" && echo "woken: $s ($label)"
     done
     ;;
   sleep)
     for s in $(resolve "$1"); do
-      label="${LABELS[$s]:-}"
+      label=$(label_for "$s")
       [ -z "$label" ] && { echo "unknown: $s" >&2; exit 1; }
       /bin/launchctl stop "$label" && echo "stopped: $s ($label)"
     done
     ;;
   status)
     for s in $(resolve "$1"); do
-      label="${LABELS[$s]:-}"
+      label=$(label_for "$s")
       [ -z "$label" ] && { echo "unknown: $s" >&2; exit 1; }
       pid=$(daemon_pid "$label")
       if [ -n "$pid" ] && [ "$pid" != 0 ]; then

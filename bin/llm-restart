@@ -14,20 +14,25 @@ if [ "$(id -u)" -ne 0 ]; then
   exec sudo "$0" "$@"
 fi
 
-# Short-name → launchd label
-declare -A LABELS=(
-  [ollama]=com.local.ollama.headless
-  [immich-proxy]=com.local.immich.proxy
-  [immich]=com.local.immich.ml
-  [docling-proxy]=com.local.docling.proxy
-  [docling]=com.local.docling.serve
-  [node]=com.local.node.exporter
-  [silicon]=com.local.silicon.exporter
-  [ollama-exporter]=com.local.ollama.exporter
-  [watchdog]=com.local.llm.watchdog
-  [preventsleep]=com.local.preventsleep
-)
+# Short-name → launchd label (Bash-3.2 safe; macOS ships /bin/bash 3.2).
+label_for() {
+  case "$1" in
+    ollama)          echo com.local.ollama.headless ;;
+    immich-proxy)    echo com.local.immich.proxy ;;
+    immich)          echo com.local.immich.ml ;;
+    docling-proxy)   echo com.local.docling.proxy ;;
+    docling)         echo com.local.docling.serve ;;
+    node)            echo com.local.node.exporter ;;
+    silicon)         echo com.local.silicon.exporter ;;
+    ollama-exporter) echo com.local.ollama.exporter ;;
+    watchdog)        echo com.local.llm.watchdog ;;
+    preventsleep)    echo com.local.preventsleep ;;
+    *)               echo "" ;;
+  esac
+}
 
+ALL_SHORT_NAMES=(ollama immich-proxy immich docling-proxy docling \
+                 node silicon ollama-exporter watchdog preventsleep)
 ALL_ALWAYS_ON=(ollama immich-proxy docling-proxy node silicon ollama-exporter watchdog preventsleep)
 
 if [ $# -eq 0 ] || [ "${1:-}" = all ]; then
@@ -36,13 +41,13 @@ fi
 
 if [ "${1:-}" = list ]; then
   printf "%-20s %s\n" NAME LABEL
-  for k in "${!LABELS[@]}"; do printf "%-20s %s\n" "$k" "${LABELS[$k]}"; done
+  for k in "${ALL_SHORT_NAMES[@]}"; do printf "%-20s %s\n" "$k" "$(label_for "$k")"; done
   exit 0
 fi
 
 rc=0
 for name in "$@"; do
-  label="${LABELS[$name]:-}"
+  label=$(label_for "$name")
   if [ -z "$label" ]; then
     echo "unknown service: $name (try: llm-restart list)" >&2
     rc=1

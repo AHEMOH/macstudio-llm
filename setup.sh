@@ -85,52 +85,62 @@ CONFIG_KEYS=(
   WATCHDOG_AUTO_RESTORE
   AUTO_ACCEPT
 )
-declare -A CONFIG_DEFAULTS=(
-  [TARGET_USER]=mac
-  [TARGET_HOME]=/Users/mac
-  [IMMICH_PROJECT_DIR]=/Users/mac/projects/immich-ml-metal
-  [DOCLING_PROJECT_DIR]=/Users/mac/projects/docling-serve
-  [IOGPU_WIRED_LIMIT_MB]=30720
-  [OLLAMA_PORT]=11434
-  [OLLAMA_MODELS]=/Users/mac/.ollama/models
-  [OLLAMA_MAX_LOADED_MODELS]=1
-  [OLLAMA_NUM_PARALLEL]=1
-  [OLLAMA_FLASH_ATTENTION]=1
-  [OLLAMA_KV_CACHE_TYPE]=q8_0
-  [OLLAMA_KEEP_ALIVE]=-1
-  [OLLAMA_LOAD_TIMEOUT]=15m
-  [ML_PUBLIC_PORT]=3003
-  [ML_BACKEND_PORT]=13003
-  [DOCLING_PUBLIC_PORT]=5001
-  [DOCLING_BACKEND_PORT]=15001
-  [IDLE_TIMEOUT_IMMICH]=900
-  [IDLE_TIMEOUT_DOCLING]=900
-  [STARTUP_TIMEOUT_IMMICH]=60
-  [STARTUP_TIMEOUT_DOCLING]=120
-  [AUTOUPDATE_WEEKDAY]=6
-  [AUTOUPDATE_HOUR]=6
-  [AUTOUPDATE_MINUTE]=0
-  [NODE_EXPORTER_PORT]=9100
-  [SILICON_EXPORTER_PORT]=9101
-  [OLLAMA_EXPORTER_PORT]=9102
-  [INSTALL_IMMICH]=1
-  [INSTALL_DOCLING]=1
-  [INSTALL_EXPORTERS]=1
-  [INSTALL_WATCHDOG]=1
-  [WATCHDOG_PRESSURE_THRESHOLD]=warn
-  [WATCHDOG_AUTO_RESTORE]=0
-  [AUTO_ACCEPT]=0
-)
-declare -A CONFIG_HINTS=(
-  [IOGPU_WIRED_LIMIT_MB]="GPU wired memory ceiling in MB (28672–30720 on 32 GB; 2048 headroom for OS)"
-  [OLLAMA_KEEP_ALIVE]="How long Ollama keeps a model in VRAM: -1=forever, 24h, 1h, 5m"
-  [OLLAMA_KV_CACHE_TYPE]="KV cache precision: q8_0 (recommended), q4_0 (aggressive), fp16 (default)"
-  [IDLE_TIMEOUT_IMMICH]="Seconds before immich-ml backend is put to sleep"
-  [IDLE_TIMEOUT_DOCLING]="Seconds before docling-serve backend is put to sleep"
-  [AUTOUPDATE_WEEKDAY]="launchd weekday: 0=Sun 1=Mon … 6=Sat"
-  [AUTO_ACCEPT]="1 = skip all 'press Enter to proceed' prompts in TUI"
-  [WATCHDOG_PRESSURE_THRESHOLD]="warn | critical — when watchdog offloads optional services"
-)
+# Bash-3.2 safe (macOS ships /bin/bash 3.2): lookup functions instead of
+# associative arrays. Keep key order in CONFIG_KEYS above as the source of
+# truth for iteration.
+config_default() {
+  case "$1" in
+    TARGET_USER)                 echo mac ;;
+    TARGET_HOME)                 echo /Users/mac ;;
+    IMMICH_PROJECT_DIR)          echo /Users/mac/projects/immich-ml-metal ;;
+    DOCLING_PROJECT_DIR)         echo /Users/mac/projects/docling-serve ;;
+    IOGPU_WIRED_LIMIT_MB)        echo 30720 ;;
+    OLLAMA_PORT)                 echo 11434 ;;
+    OLLAMA_MODELS)               echo /Users/mac/.ollama/models ;;
+    OLLAMA_MAX_LOADED_MODELS)    echo 1 ;;
+    OLLAMA_NUM_PARALLEL)         echo 1 ;;
+    OLLAMA_FLASH_ATTENTION)      echo 1 ;;
+    OLLAMA_KV_CACHE_TYPE)        echo q8_0 ;;
+    OLLAMA_KEEP_ALIVE)           echo -1 ;;
+    OLLAMA_LOAD_TIMEOUT)         echo 15m ;;
+    ML_PUBLIC_PORT)              echo 3003 ;;
+    ML_BACKEND_PORT)             echo 13003 ;;
+    DOCLING_PUBLIC_PORT)         echo 5001 ;;
+    DOCLING_BACKEND_PORT)        echo 15001 ;;
+    IDLE_TIMEOUT_IMMICH)         echo 900 ;;
+    IDLE_TIMEOUT_DOCLING)        echo 900 ;;
+    STARTUP_TIMEOUT_IMMICH)      echo 60 ;;
+    STARTUP_TIMEOUT_DOCLING)     echo 120 ;;
+    AUTOUPDATE_WEEKDAY)          echo 6 ;;
+    AUTOUPDATE_HOUR)             echo 6 ;;
+    AUTOUPDATE_MINUTE)           echo 0 ;;
+    NODE_EXPORTER_PORT)          echo 9100 ;;
+    SILICON_EXPORTER_PORT)       echo 9101 ;;
+    OLLAMA_EXPORTER_PORT)        echo 9102 ;;
+    INSTALL_IMMICH)              echo 1 ;;
+    INSTALL_DOCLING)             echo 1 ;;
+    INSTALL_EXPORTERS)           echo 1 ;;
+    INSTALL_WATCHDOG)            echo 1 ;;
+    WATCHDOG_PRESSURE_THRESHOLD) echo warn ;;
+    WATCHDOG_AUTO_RESTORE)       echo 0 ;;
+    AUTO_ACCEPT)                 echo 0 ;;
+    *)                           echo "" ;;
+  esac
+}
+
+config_hint() {
+  case "$1" in
+    IOGPU_WIRED_LIMIT_MB)        echo "GPU wired memory ceiling in MB (28672–30720 on 32 GB; 2048 headroom for OS)" ;;
+    OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: -1=forever, 24h, 1h, 5m" ;;
+    OLLAMA_KV_CACHE_TYPE)        echo "KV cache precision: q8_0 (recommended), q4_0 (aggressive), fp16 (default)" ;;
+    IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
+    IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
+    AUTOUPDATE_WEEKDAY)          echo "launchd weekday: 0=Sun 1=Mon … 6=Sat" ;;
+    AUTO_ACCEPT)                 echo "1 = skip all 'press Enter to proceed' prompts in TUI" ;;
+    WATCHDOG_PRESSURE_THRESHOLD) echo "warn | critical — when watchdog offloads optional services" ;;
+    *)                           echo "" ;;
+  esac
+}
 
 # --- Colors -----------------------------------------------------------------
 if [ -t 1 ]; then
@@ -225,7 +235,7 @@ write_default_config() {
     echo "# Free-form edits are respected; unknown keys are preserved."
     echo
     for k in "${CONFIG_KEYS[@]}"; do
-      printf '%s=%s\n' "$k" "${CONFIG_DEFAULTS[$k]}"
+      printf '%s=%s\n' "$k" "$(config_default "$k")"
     done
   } >"$CONF_FILE"
   /bin/chmod 644 "$CONF_FILE"
@@ -251,7 +261,7 @@ load_config() {
       echo ""
       echo "# keys added on $(date '+%F')"
       for k in "${missing[@]}"; do
-        printf '%s=%s\n' "$k" "${CONFIG_DEFAULTS[$k]}"
+        printf '%s=%s\n' "$k" "$(config_default "$k")"
       done
     } >>"$CONF_FILE"
   fi
@@ -635,7 +645,7 @@ menu_settings() {
     printf "\n${C_BOLD}── Change settings ────────────────────────────${C_RST}\n"
     local i=1
     for k in "${CONFIG_KEYS[@]}"; do
-      local hint="${CONFIG_HINTS[$k]:-}"
+      local hint; hint=$(config_hint "$k")
       printf "  %2d) %-28s = %-12s %s\n" "$i" "$k" "${!k:-}" "${hint:+($hint)}"
       i=$((i+1))
     done
@@ -660,7 +670,7 @@ menu_settings() {
         if [ "$c" -ge 1 ] && [ "$c" -lt "$i" ]; then
           local key="${CONFIG_KEYS[$((c-1))]}"
           local cur="${!key:-}"
-          local hint="${CONFIG_HINTS[$key]:-}"
+          local hint; hint=$(config_hint "$key")
           printf "%s current value: %s\n" "$key" "$cur"
           [ -n "$hint" ] && printf "  hint: %s\n" "$hint"
           read -r -p "  new value (empty = keep): " newv

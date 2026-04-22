@@ -268,9 +268,7 @@ change is a ~3 s first-request latency after cold start.
 ├── daemons/                    plist templates (@VAR@ substitution)
 ├── services/                   long-running helpers (proxy, exporters, watchdog, autoupdate)
 ├── grafana/                    Grafana dashboard JSON
-├── README.md                   this file
-├── CLAUDE.md                   instructions for AI agents
-└── _OLD/                       archived previous iteration — not shipped to Mac
+└── README.md                   this file
 ```
 
 On the Mac after `setup.sh --apply`:
@@ -305,5 +303,5 @@ your `~/.ollama/models/` untouched. To also remove Ollama:
 
 ## Credits / license
 
-MIT. Bits of the memory-pressure watchdog and service-control tooling were
-evolved from an earlier iteration of this project (see `_OLD/AlternativeSkripte/`).
+MIT. The memory-pressure watchdog and service-control tooling were
+refined over several iterations before arriving at this layout.
