@@ -5,9 +5,6 @@
 .vscode/
 .claude/
 
-# Archived local repo state
-_OLD/
-
 # Project docs not part of shipped repo
 CLAUDE.md
 

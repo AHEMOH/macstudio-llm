@@ -1,0 +1,558 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus instance scraping mac-system (9100), mac-silicon (9101), mac-ollama (9102), mac-ondemand (9103).",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.4.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "panel", "id": "stat", "name": "Stat", "version": "" },
+    { "type": "panel", "id": "gauge", "name": "Gauge", "version": "" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
+    { "type": "panel", "id": "table", "name": "Table", "version": "" },
+    { "type": "panel", "id": "state-timeline", "name": "State timeline", "version": "" }
+  ],
+  "annotations": { "list": [] },
+  "description": "MacStudio headless LLM server — Ollama state, Apple Silicon power/thermal, system metrics, and on-demand service health. Works with scrape jobs: mac-system / mac-silicon / mac-ollama / mac-ondemand.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "stat",
+      "id": 1,
+      "title": "Ollama",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "ollama_up", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" }
+    },
+    {
+      "type": "stat",
+      "id": 2,
+      "title": "Loaded model",
+      "gridPos": { "h": 4, "w": 6, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "instant": true, "format": "time_series", "expr": "ollama_loaded_model_info", "legendFormat": "{{name}} ({{quantization}})", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "none resident",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] },
+          "color": { "mode": "fixed", "fixedColor": "blue" }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "textMode": "name" }
+    },
+    {
+      "type": "gauge",
+      "id": 3,
+      "title": "VRAM usage vs wired limit",
+      "gridPos": { "h": 4, "w": 5, "x": 10, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "sum(ollama_loaded_model_size_bytes) / on(instance) group_left() ollama_iogpu_wired_limit_bytes", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "noValue": "0",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0.8 }, { "color": "red", "value": 0.95 } ] },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showThresholdLabels": false, "showThresholdMarkers": true }
+    },
+    {
+      "type": "stat",
+      "id": 4,
+      "title": "Thermal pressure",
+      "gridPos": { "h": 4, "w": 5, "x": 15, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "apple_silicon_thermal_pressure_level", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": {
+              "0": { "text": "Nominal", "color": "green" },
+              "1": { "text": "Fair", "color": "yellow" },
+              "2": { "text": "Serious", "color": "orange" },
+              "3": { "text": "Critical", "color": "red" },
+              "4": { "text": "Unknown", "color": "grey" }
+            } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "orange", "value": 2 }, { "color": "red", "value": 3 } ] },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "textMode": "value" }
+    },
+    {
+      "type": "stat",
+      "id": 5,
+      "title": "Package power",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "apple_silicon_package_power_watts", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "decimals": 2,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 40 }, { "color": "orange", "value": 70 }, { "color": "red", "value": 90 } ] },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "textMode": "value" }
+    },
+
+    {
+      "type": "timeseries",
+      "id": 10,
+      "title": "Loaded model VRAM over time",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "ollama_loaded_model_size_bytes", "legendFormat": "{{name}}", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "B", "expr": "ollama_iogpu_wired_limit_bytes", "legendFormat": "iogpu wired limit", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 25, "showPoints": "never", "stacking": { "mode": "none" } }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "iogpu wired limit" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash" } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 0 } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "table",
+      "id": 11,
+      "title": "Ollama config (from macstudio.conf)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "instant": true, "format": "table", "expr": "ollama_config_info", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "Value": true, "job": true, "instance": true }, "indexByName": {}, "renameByName": {} } }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "align": "left" } }, "overrides": [] },
+      "options": { "showHeader": true }
+    },
+
+    {
+      "type": "table",
+      "id": 12,
+      "title": "Installed models (on disk)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "instant": true, "format": "table", "expr": "ollama_installed_model_size_bytes", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true }, "indexByName": { "name": 0, "Value": 1 }, "renameByName": { "name": "Model", "Value": "Size" } } }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "left" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Size" }, "properties": [ { "id": "unit", "value": "bytes" }, { "id": "custom.align", "value": "right" } ] }
+        ]
+      },
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "timeseries",
+      "id": 13,
+      "title": "Exporter scrape health",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "ollama_exporter_scrape_duration_seconds", "legendFormat": "ollama", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "B", "expr": "apple_silicon_exporter_scrape_duration_seconds", "legendFormat": "silicon", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "C", "expr": "ondemand_exporter_scrape_duration_seconds", "legendFormat": "ondemand", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "D", "expr": "sum(rate(ollama_exporter_scrape_errors_total[5m]))", "legendFormat": "ollama err/s", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "E", "expr": "sum(rate(ondemand_exporter_scrape_errors_total[5m]))", "legendFormat": "ondemand err/s", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": ".*err/s" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+
+    {
+      "type": "timeseries",
+      "id": 20,
+      "title": "SoC power (W)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "apple_silicon_cpu_power_watts", "legendFormat": "CPU", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "B", "expr": "apple_silicon_gpu_power_watts", "legendFormat": "GPU", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "C", "expr": "apple_silicon_ane_power_watts", "legendFormat": "ANE", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "D", "expr": "apple_silicon_dram_power_watts", "legendFormat": "DRAM", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "E", "expr": "apple_silicon_package_power_watts", "legendFormat": "Package", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "watt", "decimals": 2, "custom": { "drawStyle": "line", "fillOpacity": 15, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Package" }, "properties": [ { "id": "custom.lineWidth", "value": 2 }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "timeseries",
+      "id": 21,
+      "title": "GPU activity",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "apple_silicon_gpu_active_ratio * 100", "legendFormat": "active %", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "B", "expr": "apple_silicon_gpu_freq_hz / 1000000", "legendFormat": "freq MHz", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "active %" }, "properties": [ { "id": "unit", "value": "percent" }, { "id": "max", "value": 100 }, { "id": "min", "value": 0 } ] },
+          { "matcher": { "id": "byName", "options": "freq MHz" }, "properties": [ { "id": "unit", "value": "MHz" }, { "id": "custom.axisPlacement", "value": "right" } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+
+    {
+      "type": "timeseries",
+      "id": 22,
+      "title": "CPU cluster utilization",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "apple_silicon_cpu_cluster_active_ratio * 100", "legendFormat": "{{cluster}}", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "drawStyle": "line", "fillOpacity": 15, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "timeseries",
+      "id": 23,
+      "title": "CPU cluster frequencies",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "apple_silicon_cpu_cluster_freq_hz / 1000000", "legendFormat": "{{cluster}}", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "MHz", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+
+    {
+      "type": "state-timeline",
+      "id": 24,
+      "title": "Pressure (thermal + memory)",
+      "gridPos": { "h": 6, "w": 18, "x": 0, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "apple_silicon_thermal_pressure_level", "legendFormat": "thermal", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "B", "expr": "apple_silicon_memory_pressure_level", "legendFormat": "memory", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": {
+              "0": { "text": "Normal", "color": "green" },
+              "1": { "text": "Warn", "color": "yellow" },
+              "2": { "text": "Serious/Critical", "color": "orange" },
+              "3": { "text": "Critical", "color": "red" },
+              "4": { "text": "Unknown", "color": "grey" }
+            } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "orange", "value": 2 }, { "color": "red", "value": 3 } ] },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": { "mergeValues": true, "showValue": "auto", "alignValue": "left", "rowHeight": 0.8, "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true } }
+    },
+    {
+      "type": "stat",
+      "id": 25,
+      "title": "Sampler freshness",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "apple_silicon_last_sample_age_seconds", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 1,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 10 } ] },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "textMode": "value" }
+    },
+
+    {
+      "type": "timeseries",
+      "id": 30,
+      "title": "Memory composition",
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 42 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "node_memory_wired_bytes",      "legendFormat": "wired",      "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "B", "expr": "node_memory_compressed_bytes", "legendFormat": "compressed", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "C", "expr": "node_memory_active_bytes",     "legendFormat": "active",     "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "D", "expr": "node_memory_inactive_bytes",   "legendFormat": "inactive",   "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "E", "expr": "node_memory_free_bytes",       "legendFormat": "free",       "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 40, "showPoints": "never", "stacking": { "mode": "normal" } } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "timeseries",
+      "id": 31,
+      "title": "Swap",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 42 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "node_memory_swap_used_bytes",  "legendFormat": "used",  "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "B", "expr": "node_memory_swap_total_bytes", "legendFormat": "total", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 15, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+
+    {
+      "type": "timeseries",
+      "id": 32,
+      "title": "Load & CPU by mode",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 50 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "node_load1",  "legendFormat": "load1",  "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "B", "expr": "node_load5",  "legendFormat": "load5",  "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "C", "expr": "node_load15", "legendFormat": "load15", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "D", "expr": "avg by (mode) (rate(node_cpu_seconds_total[1m]))", "legendFormat": "cpu {{mode}}", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": "^load.*" }, "properties": [ { "id": "unit", "value": "short" } ] },
+          { "matcher": { "id": "byRegexp", "options": "^cpu .*" }, "properties": [ { "id": "unit", "value": "percentunit" }, { "id": "custom.axisPlacement", "value": "right" } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "timeseries",
+      "id": 33,
+      "title": "Filesystem used %",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 50 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "(1 - node_filesystem_avail_bytes{fstype!~\"devfs|autofs|nullfs\"} / node_filesystem_size_bytes{fstype!~\"devfs|autofs|nullfs\"}) * 100", "legendFormat": "{{mountpoint}}", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "drawStyle": "line", "fillOpacity": 15, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+
+    {
+      "type": "timeseries",
+      "id": 34,
+      "title": "Network I/O (top 5 interfaces)",
+      "gridPos": { "h": 6, "w": 16, "x": 0, "y": 58 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "topk(5, rate(node_network_receive_bytes_total{device!~\"lo0|utun.*|llw.*|anpi.*|ap.*|awdl.*\"}[1m]))",  "legendFormat": "rx {{device}}", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "B", "expr": "-topk(5, rate(node_network_transmit_bytes_total{device!~\"lo0|utun.*|llw.*|anpi.*|ap.*|awdl.*\"}[1m]))", "legendFormat": "tx {{device}}", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "Bps", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "stat",
+      "id": 35,
+      "title": "Uptime",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 58 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "node_time_seconds - node_boot_time_seconds", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "color": { "mode": "fixed", "fixedColor": "blue" }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "textMode": "value" }
+    },
+
+    {
+      "type": "state-timeline",
+      "id": 40,
+      "title": "On-demand backend state",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 64 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "ondemand_backend_up", "legendFormat": "{{service}}", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "asleep", "color": "dark-blue" }, "1": { "text": "awake", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "dark-blue", "value": null }, { "color": "green", "value": 1 } ] },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": { "mergeValues": true, "showValue": "auto", "alignValue": "left", "rowHeight": 0.8, "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true } }
+    },
+    {
+      "type": "table",
+      "id": 41,
+      "title": "Scrape targets",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 64 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "instant": true, "format": "table", "expr": "up{job=~\"mac-.*\"}", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "instance": true }, "indexByName": { "job": 0, "Value": 1 }, "renameByName": { "job": "Job", "Value": "Up" } } }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "left" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Up" }, "properties": [
+            { "id": "mappings", "value": [ { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } } ] },
+            { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } }
+          ] }
+        ]
+      },
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "stat",
+      "id": 42,
+      "title": "Proxies listening",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 64 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "ondemand_proxy_listening", "legendFormat": "{{service}}", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
+        { "refId": "B", "expr": "ondemand_watchdog_up", "legendFormat": "watchdog", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "down", "color": "red" }, "1": { "text": "ok", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" }
+    },
+
+    {
+      "type": "timeseries",
+      "id": 43,
+      "title": "On-demand backend PIDs (wake/sleep transitions)",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 70 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "ondemand_backend_pid", "legendFormat": "{{service}} pid", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 0, "showPoints": "always", "pointSize": 4 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["macstudio", "llm", "ollama"],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "refresh": 1,
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "current": {}
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "MacStudio LLM Server",
+  "uid": "macstudio-llm",
+  "version": 1,
+  "weekStart": ""
+}

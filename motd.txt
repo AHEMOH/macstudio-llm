@@ -5,8 +5,9 @@
   On-demand:  immich-ml     :@ML_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_IMMICH@m)
               docling-serve :@DOCLING_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_DOCLING@m)
   Monitoring: node_exporter :@NODE_EXPORTER_PORT@
-              silicon       :@SILICON_EXPORTER_PORT@   (GPU, power, thermal)
-              ollama        :@OLLAMA_EXPORTER_PORT@   (loaded model, sizes)
+              silicon       :@SILICON_EXPORTER_PORT@   (GPU, power, thermal, mem-pressure)
+              ollama        :@OLLAMA_EXPORTER_PORT@   (loaded model, sizes, config)
+              ondemand      :@ONDEMAND_EXPORTER_PORT@   (immich/docling proxy + backend state)
 ══════════════════════════════════════════════════════════════════════
   Commands (type them directly — already on PATH):
     llm-status                      full service + memory overview

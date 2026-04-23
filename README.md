@@ -22,7 +22,9 @@ more RAM — just edit one config key.
   macOS minor/security updates (with auto-reboot if needed).
 - **Prometheus exporters** for your Proxmox Grafana stack: node_exporter
   (:9100), Apple-Silicon metrics via `powermetrics` (:9101, GPU %, power,
-  thermal pressure), Ollama state (:9102, loaded model, size, KV cache).
+  thermal + memory pressure), Ollama state (:9102, loaded model, size,
+  running config), and on-demand stack state (:9103, immich/docling backend
+  + proxy + watchdog liveness).
 - **Memory-pressure watchdog** as a safety net — offloads optional services
   if macOS reports RAM pressure while Ollama is active.
 - **Auto-restart on power loss**, sleep disabled, `caffeinate` daemon,
@@ -42,6 +44,7 @@ Always on  (LaunchDaemon, KeepAlive=true, RunAtLoad=true):
   com.local.node.exporter          :9100    Prometheus system metrics
   com.local.silicon.exporter       :9101    GPU / power / thermal metrics
   com.local.ollama.exporter        :9102    Ollama /api/ps exporter
+  com.local.ondemand.exporter      :9103    on-demand backend + proxy liveness
   com.local.llm.watchdog                    memory-pressure safety net
   com.local.preventsleep                    caffeinate
 
@@ -234,12 +237,6 @@ Every action is **idempotent**. Re-running on a healthy system is a
 inspects `/Library/LaunchDaemons/`, `sysctl`, `launchctl print`, file hashes,
 and `brew list` to decide what needs touching.
 
-**Leftovers from previous installs** (stale `com.local.*` plists from an
-older layout, orphan files in `/usr/local/libexec/`, leftover `LM Studio.app`
-or `Ollama.app`) are detected at the start of every interactive install,
-listed, and removed only with your confirmation. Menu 6 runs the same scan
-on demand.
-
 ## Configuration reference
 
 All tunables live in **`/usr/local/etc/macstudio.conf`** (key=value, shell-
@@ -271,6 +268,8 @@ run `sudo bash setup.sh --apply`.
 | `NODE_EXPORTER_PORT`         | `9100`       | Prometheus node_exporter |
 | `SILICON_EXPORTER_PORT`      | `9101`       | GPU/power/thermal exporter |
 | `OLLAMA_EXPORTER_PORT`       | `9102`       | Ollama state exporter |
+| `ONDEMAND_EXPORTER_PORT`     | `9103`       | On-demand backend/proxy/watchdog exporter |
+| `SILICON_SAMPLE_INTERVAL_MS` | `1000`       | Background powermetrics cadence (ms); lower = fresher but more CPU |
 | `INSTALL_IMMICH`             | `1`          | 0 to skip installing the immich-ml on-demand service |
 | `INSTALL_DOCLING`            | `1`          | 0 to skip installing the docling-serve on-demand service |
 | `INSTALL_EXPORTERS`          | `1`          | 0 to skip Prometheus exporters |
@@ -305,12 +304,15 @@ scrape_configs:
     static_configs: [{ targets: ['mac.home.arpa:9101'] }]
   - job_name: mac-ollama
     static_configs: [{ targets: ['mac.home.arpa:9102'] }]
+  - job_name: mac-ondemand
+    static_configs: [{ targets: ['mac.home.arpa:9103'] }]
 ```
 
 Then import in Grafana:
 - Dashboard **1860** (node_exporter full) for system metrics.
-- Custom dashboard JSON shipped in `grafana/mac-llm-dashboard.json` for the
-  Ollama + silicon-specific panels.
+- `grafana/mac-llm-dashboard.json` for the Ollama, Apple Silicon, and
+  on-demand panels. Grafana's import wizard prompts for the Prometheus
+  data source on first load; no hardcoded UID.
 
 ## How on-demand works
 

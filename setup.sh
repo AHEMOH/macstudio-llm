@@ -35,6 +35,7 @@ ALWAYS_ON_LABELS=(
   com.local.node.exporter
   com.local.silicon.exporter
   com.local.ollama.exporter
+  com.local.ondemand.exporter
   com.local.llm.watchdog
   com.local.preventsleep
   com.local.iogpu.wiredlimit
@@ -77,6 +78,8 @@ CONFIG_KEYS=(
   NODE_EXPORTER_PORT
   SILICON_EXPORTER_PORT
   OLLAMA_EXPORTER_PORT
+  ONDEMAND_EXPORTER_PORT
+  SILICON_SAMPLE_INTERVAL_MS
   INSTALL_IMMICH
   INSTALL_DOCLING
   INSTALL_EXPORTERS
@@ -117,6 +120,8 @@ config_default() {
     NODE_EXPORTER_PORT)          echo 9100 ;;
     SILICON_EXPORTER_PORT)       echo 9101 ;;
     OLLAMA_EXPORTER_PORT)        echo 9102 ;;
+    ONDEMAND_EXPORTER_PORT)      echo 9103 ;;
+    SILICON_SAMPLE_INTERVAL_MS)  echo 1000 ;;
     INSTALL_IMMICH)              echo 1 ;;
     INSTALL_DOCLING)             echo 1 ;;
     INSTALL_EXPORTERS)           echo 1 ;;
@@ -287,7 +292,7 @@ load_config() {
     case "$_lbl" in
       com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || continue ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || continue ;;
-      com.local.node.exporter|com.local.silicon.exporter|com.local.ollama.exporter)
+      com.local.node.exporter|com.local.silicon.exporter|com.local.ollama.exporter|com.local.ondemand.exporter)
         [ "${INSTALL_EXPORTERS:-1}" = 1 ] || continue ;;
       com.local.llm.watchdog)
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || continue ;;
@@ -322,6 +327,7 @@ label_log() {
     com.local.node.exporter)     echo "$LOG_DIR/node-exporter.log" ;;
     com.local.silicon.exporter)  echo "$LOG_DIR/silicon-exporter.log" ;;
     com.local.ollama.exporter)   echo "$LOG_DIR/ollama-exporter.log" ;;
+    com.local.ondemand.exporter) echo "$LOG_DIR/ondemand-exporter.log" ;;
     com.local.llm.watchdog)      echo "$LOG_DIR/watchdog.log" ;;
     com.local.preventsleep)      echo "$LOG_DIR/preventsleep.log" ;;
     com.local.iogpu.wiredlimit)  echo "$LOG_DIR/iogpu-wired-limit.log" ;;
@@ -588,7 +594,7 @@ render_all_plists() {
     case "$label" in
       com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
-      com.local.node.exporter|com.local.silicon.exporter|com.local.ollama.exporter)
+      com.local.node.exporter|com.local.silicon.exporter|com.local.ollama.exporter|com.local.ondemand.exporter)
         [ "${INSTALL_EXPORTERS:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.llm.watchdog)
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
@@ -676,10 +682,6 @@ apply_everything() {
   need_root "$@"
   dbg "step: load_config";            load_config
   dbg "step: ensure_dirs";             ensure_dirs
-  if [ "$INTERACTIVE" = 1 ]; then
-    dbg "step: apply_leftover_cleanup_interactive"
-    apply_leftover_cleanup_interactive
-  fi
   dbg "step: write_repo_pointer";      write_repo_pointer
   dbg "step: ensure_xcode_clt";        ensure_xcode_clt || true
   dbg "step: ensure_homebrew";         ensure_homebrew || true
@@ -766,81 +768,8 @@ verify_and_summary() {
 }
 
 # ===========================================================================
-# Leftover detection & interactive service selection
+# Interactive service selection
 # ===========================================================================
-
-# scan_leftovers — print TAB-separated "KIND<TAB>PATH" lines for anything
-# on disk that looks like it's from a previous (incompatible) install.
-# KINDs: foreign-plist, orphan-libexec, legacy-app. Returns 0 always.
-scan_leftovers() {
-  local known_plists=" ${ALL_LABELS[*]} "
-  local f lbl
-  for f in "$PLIST_DIR"/com.local.*.plist; do
-    [ -f "$f" ] || continue
-    lbl=$(basename "$f" .plist)
-    case "$known_plists" in
-      *" $lbl "*) : ;;
-      *)          printf 'foreign-plist\t%s\n' "$f" ;;
-    esac
-  done
-  # Build "expected libexec basenames" from what the repo actually ships.
-  local expected=" "
-  for f in "$REPO_DIR"/wrappers/*.sh "$REPO_DIR"/services/*.py "$REPO_DIR"/services/*.sh; do
-    [ -f "$f" ] || continue
-    expected+="$(basename "$f") "
-  done
-  for f in "$LIBEXEC_DIR"/start-*.sh \
-           "$LIBEXEC_DIR"/*-exporter.py \
-           "$LIBEXEC_DIR"/*-proxy.py \
-           "$LIBEXEC_DIR"/llm-watchdog.sh; do
-    [ -f "$f" ] || continue
-    case "$expected" in
-      *" $(basename "$f") "*) : ;;
-      *)                       printf 'orphan-libexec\t%s\n' "$f" ;;
-    esac
-  done
-  # GUI apps that must not coexist with this headless daemon stack.
-  [ -d "/Applications/LM Studio.app" ] && printf 'legacy-app\t%s\n' "/Applications/LM Studio.app"
-  [ -d "/Applications/Ollama.app" ]     && printf 'legacy-app\t%s\n' "/Applications/Ollama.app"
-  return 0
-}
-
-apply_leftover_cleanup_interactive() {
-  local output
-  output=$(scan_leftovers)
-  if [ -z "$output" ]; then
-    dbg "no leftovers detected"
-    return 0
-  fi
-  printf "\n${C_BOLD}── Leftovers detected from previous installs ─${C_RST}\n"
-  printf '%s\n' "$output" | while IFS=$'\t' read -r kind path; do
-    printf "  %-15s %s\n" "[$kind]" "$path"
-  done
-  echo
-  if ! confirm "Clean these up now? (plists are bootout'ed + removed; legacy apps flagged for manual removal)"; then
-    warn "leftovers left in place — re-run setup.sh to clean later"
-    return 0
-  fi
-  local kind path lbl
-  while IFS=$'\t' read -r kind path; do
-    case "$kind" in
-      foreign-plist)
-        lbl=$(basename "$path" .plist)
-        bootout_plist "$lbl"
-        /bin/rm -f "$path"
-        ok "removed foreign plist: $lbl"
-        ;;
-      orphan-libexec)
-        /bin/rm -f "$path"
-        ok "removed orphan file: $path"
-        ;;
-      legacy-app)
-        warn "manual uninstall required: drag '$path' to Trash, or run:"
-        warn "  sudo rm -rf \"$path\""
-        ;;
-    esac
-  done <<< "$output"
-}
 
 onoff_label() { [ "$1" = 1 ] && printf 'on ' || printf 'off'; }
 
@@ -871,9 +800,10 @@ menu_select_services() {
       INSTALL_IMMICH    "$(onoff_label "${INSTALL_IMMICH:-1}")"    "${ML_PUBLIC_PORT:-3003}"
     printf "  2) %-18s [%s]   docling-serve on-demand OCR/VLM (:%s)\n" \
       INSTALL_DOCLING   "$(onoff_label "${INSTALL_DOCLING:-1}")"   "${DOCLING_PUBLIC_PORT:-5001}"
-    printf "  3) %-18s [%s]   Prometheus exporters (:%s :%s :%s)\n" \
+    printf "  3) %-18s [%s]   Prometheus exporters (:%s :%s :%s :%s)\n" \
       INSTALL_EXPORTERS "$(onoff_label "${INSTALL_EXPORTERS:-1}")" \
-      "${NODE_EXPORTER_PORT:-9100}" "${SILICON_EXPORTER_PORT:-9101}" "${OLLAMA_EXPORTER_PORT:-9102}"
+      "${NODE_EXPORTER_PORT:-9100}" "${SILICON_EXPORTER_PORT:-9101}" \
+      "${OLLAMA_EXPORTER_PORT:-9102}" "${ONDEMAND_EXPORTER_PORT:-9103}"
     printf "  4) %-18s [%s]   Memory-pressure safety watchdog\n" \
       INSTALL_WATCHDOG  "$(onoff_label "${INSTALL_WATCHDOG:-1}")"
     echo
@@ -1034,7 +964,7 @@ menu_uninstall() {
   done
   /bin/rm -rf "$LIBEXEC_DIR"/start-*.sh "$LIBEXEC_DIR"/ondemand-proxy.py \
               "$LIBEXEC_DIR"/ollama-exporter.py "$LIBEXEC_DIR"/silicon-exporter.py \
-              "$LIBEXEC_DIR"/llm-watchdog.sh
+              "$LIBEXEC_DIR"/ondemand-exporter.py "$LIBEXEC_DIR"/llm-watchdog.sh
   /bin/rm -f "$SBIN_DIR/set-iogpu-wired-limit.sh" "$SBIN_DIR/weekly-autoupdate.sh"
   for b in llm-status llm-restart llm-update llm-service-ctl llm-logs; do
     /bin/rm -f "$BIN_DIR/$b"
@@ -1078,10 +1008,9 @@ main_menu() {
     echo "  3) Change settings…"
     echo "  4) Service control…"
     echo "  5) Run weekly autoupdate now"
-    echo "  6) Scan for leftovers from previous installs"
-    echo "  7) Clean-up tasks…"
-    echo "  8) View logs…"
-    echo "  9) Uninstall everything this tool installed"
+    echo "  6) Clean-up tasks…"
+    echo "  7) View logs…"
+    echo "  8) Uninstall everything this tool installed"
     echo "  q) Quit"
     read -r -p "Choice: " choice
     case "$choice" in
@@ -1090,10 +1019,9 @@ main_menu() {
       3) menu_settings ;;
       4) menu_service_ctl ;;
       5) log "running weekly-autoupdate.sh NOW"; /bin/bash "$SBIN_DIR/weekly-autoupdate.sh" || true; pause_enter ;;
-      6) apply_leftover_cleanup_interactive; pause_enter ;;
-      7) menu_cleanup ;;
-      8) menu_logs ;;
-      9) menu_uninstall ;;
+      6) menu_cleanup ;;
+      7) menu_logs ;;
+      8) menu_uninstall ;;
       q|Q|"") exit 0 ;;
       *) warn "unknown choice: $choice"; sleep 1 ;;
     esac

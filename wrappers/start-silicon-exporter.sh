@@ -8,5 +8,6 @@ CONF=/usr/local/etc/macstudio.conf
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 export LISTEN_PORT="${SILICON_EXPORTER_PORT:-9101}"
+export SAMPLE_INTERVAL_MS="${SILICON_SAMPLE_INTERVAL_MS:-1000}"
 
 exec /usr/bin/python3 /usr/local/libexec/silicon-exporter.py
