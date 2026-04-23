@@ -24,4 +24,12 @@
   Settings:     sudo bash /opt/macstudio/setup.sh
   Logs:         tail -F /var/log/macstudio/ollama.log
   Weekly auto:  @AUTOUPDATE_HUMAN@ → /var/log/macstudio/autoupdate.log
+
+  Maintenance (FileVault is ON — reboot needs a key):
+    sudo fdesetup authrestart       reboot headlessly, stays unattended
+    sudo fdesetup authrestart -delayminutes N   reboot after N minutes
+    cat /var/macstudio/reboot-pending  shows if weekly autoupdate is waiting
+                                      on a reboot (run authrestart to clear)
+    NEVER use plain 'sudo reboot' or 'shutdown -r' — the Mac will wait at
+    the FileVault prompt until someone types a password at the console.
 ══════════════════════════════════════════════════════════════════════

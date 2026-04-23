@@ -38,7 +38,11 @@ SERVICE_NAME = os.environ.get("SERVICE_NAME", BACKEND_LABEL.split(".")[-1])
 
 IDLE_CHECK_INTERVAL_SEC = 30
 last_request_ts = 0.0
-startup_lock = asyncio.Lock()
+# Created inside main() so the Lock binds to the running loop. Python 3.9's
+# asyncio.Lock() at module scope binds to the default loop, which differs
+# from the one `asyncio.run(main())` creates → "Future attached to a
+# different loop" when two clients race the lock.
+startup_lock: "asyncio.Lock | None" = None
 
 
 def log(msg: str) -> None:
@@ -171,6 +175,12 @@ async def idle_watchdog() -> None:
 
 
 async def main() -> None:
+    global startup_lock, last_request_ts
+    startup_lock = asyncio.Lock()
+    # Treat proxy startup as a fresh activity timestamp so the idle_watchdog
+    # doesn't immediately stop a backend that was kickstarted out-of-band
+    # (e.g. by a prior proxy instance or manual launchctl).
+    last_request_ts = time.time()
     server = await asyncio.start_server(handle_client, LISTEN_HOST, LISTEN_PORT)
     addrs = ", ".join(str(s.getsockname()) for s in server.sockets or [])
     log(f"listening on {addrs} → {BACKEND_HOST}:{BACKEND_PORT} ({BACKEND_LABEL})")

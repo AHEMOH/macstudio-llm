@@ -374,6 +374,41 @@ ensure_dirs() {
   /bin/mkdir -p "$LOG_DIR" "$LIBEXEC_DIR" "$SBIN_DIR" "$BIN_DIR" "$PLIST_DIR" \
                 "$(dirname "$CONF_FILE")"
   /bin/chmod 755 "$LOG_DIR"
+  # Daemons run as TARGET_USER (via plist UserName); launchd opens
+  # StandardOutPath/StandardErrorPath as that user, so the log dir must be
+  # writable by it. Without this, every daemon fails init with EX_CONFIG.
+  /usr/sbin/chown -R "${TARGET_USER:-mac}:admin" "$LOG_DIR" 2>/dev/null || true
+}
+
+ensure_xcode_clt() {
+  # A fresh macOS has /usr/bin/git as a stub that pops a GUI prompt. The
+  # softwareupdate flow below is the documented headless install path.
+  if /usr/bin/xcode-select -p >/dev/null 2>&1; then
+    ok "Xcode Command Line Tools present"
+    return 0
+  fi
+  log "Xcode Command Line Tools missing — installing headlessly (several minutes)"
+  /usr/bin/touch /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+  local label
+  label=$(/usr/sbin/softwareupdate -l 2>/dev/null \
+    | /usr/bin/grep -E 'Label:.*Command Line Tools for Xcode' \
+    | /usr/bin/sed -E 's/.*Label: //; s/ *$//' \
+    | /usr/bin/head -1)
+  if [ -z "$label" ]; then
+    warn "softwareupdate did not advertise a Command Line Tools package"
+    warn "fallback: run  xcode-select --install  at the GUI and re-run setup.sh"
+    /bin/rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+    return 1
+  fi
+  /usr/sbin/softwareupdate -i "$label" --verbose >/dev/null 2>&1 \
+    || warn "softwareupdate -i '$label' exited non-zero"
+  /bin/rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+  if /usr/bin/xcode-select -p >/dev/null 2>&1; then
+    ok "Xcode Command Line Tools installed: $label"
+  else
+    warn "Xcode Command Line Tools install did not complete"
+    return 1
+  fi
 }
 
 ensure_homebrew() {
@@ -381,9 +416,40 @@ ensure_homebrew() {
     ok "homebrew present"
     return 0
   fi
-  warn "homebrew not installed — please install manually first:"
-  warn '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
-  return 1
+  log "homebrew missing — running official installer non-interactively"
+  # Homebrew's installer aborts if invoked as root, so it must run as
+  # TARGET_USER. NONINTERACTIVE=1 stops the "Press RETURN to continue"
+  # prompt, but the installer still shells out to sudo for chown /opt/homebrew
+  # and writing /etc/paths.d/homebrew. Grant passwordless sudo *for the
+  # duration of this install only*, then revoke.
+  local sudoers_tmp=/etc/sudoers.d/99-macstudio-bootstrap
+  /bin/cat >"$sudoers_tmp" <<EOF
+${TARGET_USER} ALL=(ALL) NOPASSWD: ALL
+EOF
+  /usr/sbin/chown root:wheel "$sudoers_tmp"
+  /bin/chmod 440 "$sudoers_tmp"
+  local rc=0
+  /usr/bin/sudo -u "$TARGET_USER" -H \
+    /usr/bin/env NONINTERACTIVE=1 CI=1 \
+    /bin/bash -c "$(/usr/bin/curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+    >/dev/null 2>&1 || rc=$?
+  /bin/rm -f "$sudoers_tmp"
+  if [ "$rc" -ne 0 ] || [ ! -x /opt/homebrew/bin/brew ]; then
+    warn "homebrew install failed (rc=$rc). Install manually, then re-run:"
+    warn '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+    return 1
+  fi
+  # Persist brew shellenv in TARGET_USER's .zprofile for future SSH logins.
+  local zprofile="$TARGET_HOME/.zprofile"
+  if [ ! -f "$zprofile" ] || ! /usr/bin/grep -q 'brew shellenv' "$zprofile"; then
+    {
+      [ -f "$zprofile" ] && echo ''
+      echo '# Added by macstudio-llm setup.sh'
+      echo 'eval "$(/opt/homebrew/bin/brew shellenv zsh)"'
+    } >> "$zprofile"
+    /usr/sbin/chown "$TARGET_USER:staff" "$zprofile"
+  fi
+  ok "homebrew installed"
 }
 
 brew_() { sudo -u "$TARGET_USER" -H /opt/homebrew/bin/brew "$@"; }
@@ -412,6 +478,19 @@ ensure_formulas() {
   fi
 }
 
+ensure_modern_python() {
+  # docling-serve's wheels (torch, tokenizers, …) require Python ≥ 3.10;
+  # macOS ships /usr/bin/python3 at 3.9. Install python@3.12 via brew so
+  # the docling venv has a compatible interpreter. Safe to skip if docling
+  # is off.
+  [ "${INSTALL_DOCLING:-1}" = 1 ] || return 0
+  if [ -x /opt/homebrew/bin/python3.12 ]; then
+    ok "python@3.12 present (needed by docling venv)"
+    return 0
+  fi
+  ensure_formula python@3.12
+}
+
 ensure_immich_venv() {
   [ "${INSTALL_IMMICH:-1}" = 1 ] || return 0
   if [ -x "$IMMICH_PROJECT_DIR/.venv/bin/python" ]; then
@@ -424,12 +503,35 @@ ensure_immich_venv() {
 
 ensure_docling_venv() {
   [ "${INSTALL_DOCLING:-1}" = 1 ] || return 0
-  if [ -x "$DOCLING_PROJECT_DIR/.venv/bin/docling-serve" ]; then
-    ok "docling-serve venv present"
+  local pydir="${DOCLING_PROJECT_DIR:-$TARGET_HOME/projects/docling-serve}"
+  if [ -x "$pydir/.venv/bin/docling-serve" ]; then
+    ok "docling-serve venv present at $pydir"
     return 0
   fi
-  warn "docling-serve venv missing at $DOCLING_PROJECT_DIR/.venv — create it manually:"
-  warn "  cd $DOCLING_PROJECT_DIR && python3 -m venv .venv && .venv/bin/pip install 'docling[ocrmac,vlm,htmlrender,easyocr]' 'docling-serve[ui]'"
+  if [ ! -x /opt/homebrew/bin/python3.12 ]; then
+    warn "docling-serve needs python@3.12, which is not installed yet."
+    warn "Re-run 'sudo bash setup.sh --apply' after Homebrew is available."
+    return 1
+  fi
+  log "Building docling-serve venv at $pydir (~2 GB of wheels; several minutes)"
+  /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$pydir"
+  if [ ! -x "$pydir/.venv/bin/python" ]; then
+    /usr/bin/sudo -u "$TARGET_USER" -H /opt/homebrew/bin/python3.12 -m venv "$pydir/.venv"
+  fi
+  /usr/bin/sudo -u "$TARGET_USER" -H "$pydir/.venv/bin/pip" install --upgrade pip wheel >/dev/null 2>&1 \
+    || warn "pip upgrade inside venv returned non-zero"
+  log "pip install 'docling[ocrmac,vlm,htmlrender,easyocr]' 'docling-serve[ui]' — this downloads torch/transformers/easyocr"
+  if ! /usr/bin/sudo -u "$TARGET_USER" -H "$pydir/.venv/bin/pip" install \
+        'docling[ocrmac,vlm,htmlrender,easyocr]' 'docling-serve[ui]' >/var/log/macstudio/docling-venv-install.log 2>&1; then
+    warn "docling pip install failed; see /var/log/macstudio/docling-venv-install.log"
+    return 1
+  fi
+  if [ -x "$pydir/.venv/bin/docling-serve" ]; then
+    ok "docling-serve venv built at $pydir (first backend wake will also fetch ~1 GB of models from HuggingFace)"
+  else
+    warn "docling pip install succeeded but .venv/bin/docling-serve is missing"
+    return 1
+  fi
 }
 
 render_wrappers() {
@@ -572,17 +674,19 @@ write_repo_pointer() {
 
 apply_everything() {
   need_root "$@"
-  dbg "step: load_config";           load_config
-  dbg "step: ensure_dirs";            ensure_dirs
+  dbg "step: load_config";            load_config
+  dbg "step: ensure_dirs";             ensure_dirs
   if [ "$INTERACTIVE" = 1 ]; then
     dbg "step: apply_leftover_cleanup_interactive"
     apply_leftover_cleanup_interactive
   fi
-  dbg "step: write_repo_pointer";     write_repo_pointer
-  dbg "step: ensure_homebrew";        ensure_homebrew || true
-  dbg "step: ensure_formulas";        ensure_formulas
-  dbg "step: ensure_immich_venv";     ensure_immich_venv
-  dbg "step: ensure_docling_venv";    ensure_docling_venv
+  dbg "step: write_repo_pointer";      write_repo_pointer
+  dbg "step: ensure_xcode_clt";        ensure_xcode_clt || true
+  dbg "step: ensure_homebrew";         ensure_homebrew || true
+  dbg "step: ensure_formulas";         ensure_formulas
+  dbg "step: ensure_modern_python";    ensure_modern_python || true
+  dbg "step: ensure_immich_venv";      ensure_immich_venv
+  dbg "step: ensure_docling_venv";     ensure_docling_venv
   dbg "step: render_wrappers";        render_wrappers
   dbg "step: render_services";        render_services
   dbg "step: render_bin";             render_bin

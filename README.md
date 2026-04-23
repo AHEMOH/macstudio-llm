@@ -61,7 +61,28 @@ within the idle window are instant.
 
 ## Quick start
 
-### 1. From your PC — copy SSH key once (PowerShell/macOS/Linux)
+### 1. On the Mac — enable remote access
+
+Before anything can reach the Mac from another machine, turn on these
+toggles on the Mac itself (one-time, GUI required — do it at the
+physical console or via screen-sharing):
+
+**System Settings → General → Sharing**
+
+| Toggle | Why | Required? |
+|---|---|---|
+| **Remote Login** | Enables the SSH daemon — without this, you can't `ssh` in or `git push`/`pull` remotely. | **Required** |
+| **Remote Management** | Lets you connect with Apple Remote Desktop / screen-sharing for GUI repair when headless. | Recommended |
+| **Remote Application Scripting** | Allows running AppleScript/`osascript` commands over SSH (handy for `defaults write`, workflow scripting). | Recommended |
+
+Under **Remote Login**, tick **"Allow full disk access for remote users"**
+so scheduled tasks can read system directories without a user-at-console
+TCC prompt. Under **Remote Management**, click *Options…* and grant at
+least *Observe* and *Control* to your admin user.
+
+After this the Mac can go fully headless — unplug display, keyboard, mouse.
+
+### 2. From your PC — copy SSH key once (PowerShell/macOS/Linux)
 
 **Windows PowerShell:**
 ```powershell
@@ -80,10 +101,21 @@ ssh-copy-id mac@mac.home.arpa
 ssh mac@mac.home.arpa 'echo ok'
 ```
 
-### 2. On the Mac — clone and install
+### 3. On the Mac — clone and install
+
+On a freshly-installed macOS, `/usr/bin/git` is a stub that triggers a GUI
+prompt. `setup.sh` will auto-install the **Xcode Command Line Tools**,
+**Homebrew**, **python@3.12** (for the docling venv), and **Ollama** for
+you — but it still needs a working `git` just to pull the repo. The
+one-liner below installs CLT headlessly first (no GUI prompt), then
+clones and runs the installer:
 
 ```bash
-# SSH into the Mac, then:
+# SSH into the Mac, then (one-time CLT bootstrap so `git clone` works):
+sudo softwareupdate -i "$(softwareupdate -l 2>/dev/null \
+  | awk -F'Label: ' '/Command Line Tools for Xcode/ {print $2; exit}' \
+  | sed 's/ *$//')" --verbose
+
 cd ~
 git clone https://github.com/<you>/macstudio-llm.git
 cd macstudio-llm
@@ -91,18 +123,23 @@ cd macstudio-llm
 # Interactive TUI (recommended for the first run):
 sudo bash setup.sh
 
-# …or non-interactive one-shot:
+# …or non-interactive one-shot (installs everything needed: CLT, Homebrew,
+# Ollama, node_exporter, python@3.12, docling-serve venv — ~3 GB, ~5 min):
 sudo bash setup.sh --apply
 ```
 
-### 3. Pull and run your model
+`setup.sh` is idempotent: re-running it after the first install is a
+~5-second no-op. See [Prerequisites installed automatically](#prerequisites-installed-automatically)
+for what it fetches.
+
+### 4. Pull and run your model
 
 ```bash
 ollama pull gemma4:31b-nvfp4          # or whatever fits your VRAM
 ollama run  gemma4:31b-nvfp4 "hello"  # stays loaded forever
 ```
 
-### 4. Later — update everything
+### 5. Later — update everything
 
 ```bash
 cd ~/macstudio-llm
@@ -112,6 +149,32 @@ sudo bash setup.sh --apply
 
 Or let it happen automatically every Saturday at 06:00 (and reboot if macOS
 updates require it).
+
+## Prerequisites installed automatically
+
+`setup.sh --apply` will install these for you on first run, in this order.
+Each is hash/presence-checked — already installed? no-op.
+
+| Prerequisite | How | When |
+|---|---|---|
+| **Xcode Command Line Tools** | `softwareupdate -i` (headless, no GUI prompt) | Always, unless already installed |
+| **Homebrew** | Official installer, `NONINTERACTIVE=1`, run as `TARGET_USER` | If `/opt/homebrew/bin/brew` absent |
+| **ollama** (formula) | `brew install ollama` | Always |
+| **node_exporter** (formula) | `brew install node_exporter` | If `INSTALL_EXPORTERS=1` |
+| **pipx + asitop** | `brew install pipx`, `pipx install asitop` | If `INSTALL_EXPORTERS=1` |
+| **python@3.12** (formula) | `brew install python@3.12` | If `INSTALL_DOCLING=1` (docling-serve wheels require ≥3.10) |
+| **docling-serve venv** | `python3.12 -m venv` + `pip install 'docling[ocrmac,vlm,htmlrender,easyocr]' 'docling-serve[ui]'` | If `INSTALL_DOCLING=1` and venv absent. ~2 GB of wheels + ~1 GB of models fetched at first backend boot. |
+
+The only thing `setup.sh` **does not** auto-build is the **immich-ml venv**
+— it needs a fork you've already cloned into `IMMICH_PROJECT_DIR` (varies
+by which immich-ml-metal branch you use). The script prints the exact
+command to finish it.
+
+Homebrew's installer refuses to run as root and requires passwordless
+sudo for the target user during install. `setup.sh` handles this by
+writing `/etc/sudoers.d/99-macstudio-bootstrap` for the duration of the
+Homebrew install and removing it immediately after — you never see a
+password prompt, and no persistent change to sudoers is made.
 
 ## Hardware assumptions
 
@@ -308,6 +371,8 @@ On the Mac after `setup.sh --apply`:
 | MOTD banner doesn't show on SSH | `grep -i printmotd /etc/ssh/sshd_config` — must be `yes` (default). macOS SSH may also show only on interactive sessions. |
 | `sysctl iogpu.wired_limit_mb` returns 0 | You're on an older macOS. 13.4+ required. |
 | Exporter :9101 returns only `apple_silicon_up 0` | `powermetrics` needs root. The daemon runs without `UserName` so should have root — check `/var/log/macstudio/silicon-exporter.log`. |
+| Mac doesn't come back on its own after reboot / power loss | **FileVault is ON** and there's no console operator to type the password. Either disable FileVault, or for *planned* reboots use `sudo fdesetup authrestart` (survives a single reboot without prompting). **Never** use plain `sudo reboot` / `shutdown -r` on a FileVault-protected headless Mac. |
+| `/var/macstudio/reboot-pending` file exists | Weekly autoupdate installed an update that needs a restart but refused to reboot itself (FileVault would block). Clear it with: `sudo fdesetup authrestart`. |
 
 ## Uninstalling
 
