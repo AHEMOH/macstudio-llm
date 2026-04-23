@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import os
 import plistlib
-import re
 import subprocess
 import sys
 import threading
@@ -41,7 +40,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9101"))
 SAMPLE_INTERVAL_MS = int(os.environ.get("SAMPLE_INTERVAL_MS", "1000"))
 POWERMETRICS = "/usr/bin/powermetrics"
-MEMORY_PRESSURE_BIN = "/usr/bin/memory_pressure"
+SYSCTL = "/usr/sbin/sysctl"
 
 THERMAL_PRESSURE_MAP = {
     "Nominal": 0, "nominal": 0,
@@ -49,12 +48,9 @@ THERMAL_PRESSURE_MAP = {
     "Serious": 2, "serious": 2,
     "Critical": 3, "critical": 3,
 }
-MEMORY_PRESSURE_MAP = {
-    "normal":   0,
-    "warn":     1,
-    "warning":  1,
-    "critical": 2,
-}
+# kern.memorystatus_vm_pressure_level → Prometheus level.
+# Dispatch source flags: NORMAL=1, WARN=2, CRITICAL=4.
+MEMORY_PRESSURE_MAP = {1: 0, 2: 1, 4: 2}
 
 # Snapshot written by the sampler thread, read by HTTP handlers. Dict reference
 # swap is atomic under the GIL, so no lock is needed.
@@ -92,27 +88,27 @@ def sample_powermetrics() -> dict | None:
 
 
 def sample_memory_pressure() -> int | None:
-    """Run `memory_pressure -Q` and map its status line to 0/1/2, or None.
+    """Map `kern.memorystatus_vm_pressure_level` to 0/1/2, or None.
 
-    The macOS tool prints e.g. `System-wide memory pressure status: normal`.
-    If the binary is missing or exits non-zero, we return None so the metric
-    is emitted as absent rather than as a false 0/Normal.
+    The sysctl returns the dispatch-source flag (1=Normal, 2=Warn, 4=Critical)
+    and is cheap (no fork/exec beyond sysctl itself). If the sysctl is
+    missing or unparseable, return None so the metric is emitted as absent
+    rather than as a false 0/Normal.
     """
-    if not os.path.exists(MEMORY_PRESSURE_BIN):
-        return None
     try:
         proc = subprocess.run(
-            [MEMORY_PRESSURE_BIN, "-Q"],
-            capture_output=True, timeout=3, text=True,
+            [SYSCTL, "-n", "kern.memorystatus_vm_pressure_level"],
+            capture_output=True, timeout=2, text=True,
         )
     except Exception:
         return None
     if proc.returncode != 0:
         return None
-    m = re.search(r"memory pressure status:\s*(\w+)", proc.stdout, re.IGNORECASE)
-    if not m:
+    try:
+        raw = int(proc.stdout.strip())
+    except ValueError:
         return None
-    return MEMORY_PRESSURE_MAP.get(m.group(1).lower())
+    return MEMORY_PRESSURE_MAP.get(raw)
 
 
 def sampler_loop() -> None:
