@@ -683,7 +683,10 @@ apply_tui_sudoers() {
     fi
     return 0
   fi
-  local desired='Defaults secure_path += "/opt/homebrew/bin"'
+  # secure_path is a single string in sudo 1.9.x, not a list — `+=` is
+  # rejected, so we set the full path here. /opt/homebrew/bin first so brew
+  # binaries win over identically-named system tools.
+  local desired='Defaults secure_path = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"'
   if [ -f "$f" ] && /usr/bin/grep -qxF "$desired" "$f"; then
     ok "$f present"
     return 0
