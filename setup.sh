@@ -83,6 +83,7 @@ CONFIG_KEYS=(
   INSTALL_IMMICH
   INSTALL_DOCLING
   INSTALL_EXPORTERS
+  INSTALL_TUI
   INSTALL_WATCHDOG
   WATCHDOG_PRESSURE_THRESHOLD
   WATCHDOG_AUTO_RESTORE
@@ -125,6 +126,7 @@ config_default() {
     INSTALL_IMMICH)              echo 1 ;;
     INSTALL_DOCLING)             echo 1 ;;
     INSTALL_EXPORTERS)           echo 1 ;;
+    INSTALL_TUI)                 echo 1 ;;
     INSTALL_WATCHDOG)            echo 1 ;;
     WATCHDOG_PRESSURE_THRESHOLD) echo warn ;;
     WATCHDOG_AUTO_RESTORE)       echo 0 ;;
@@ -142,6 +144,7 @@ config_hint() {
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
     AUTOUPDATE_WEEKDAY)          echo "launchd weekday: 0=Sun 1=Mon … 6=Sat" ;;
     AUTO_ACCEPT)                 echo "1 = skip all 'press Enter to proceed' prompts in TUI" ;;
+    INSTALL_TUI)                 echo "Install mactop + macmon (live TUI for GPU/ANE/CPU/power; needs sudo)" ;;
     WATCHDOG_PRESSURE_THRESHOLD) echo "warn | critical — when watchdog offloads optional services" ;;
     *)                           echo "" ;;
   esac
@@ -473,14 +476,9 @@ ensure_formula() {
 ensure_formulas() {
   ensure_formula ollama
   [ "${INSTALL_EXPORTERS:-1}" = 1 ] && ensure_formula node_exporter
-  # pipx is optional; used for asitop
-  if ! command -v pipx >/dev/null 2>&1 && [ "${INSTALL_EXPORTERS:-1}" = 1 ]; then
-    ensure_formula pipx
-    brew_ postinstall pipx >/dev/null 2>&1 || true
-  fi
-  if command -v pipx >/dev/null 2>&1 && ! sudo -u "$TARGET_USER" -H pipx list 2>/dev/null | /usr/bin/grep -qi asitop; then
-    log "pipx install asitop (optional ad-hoc TUI)"
-    sudo -u "$TARGET_USER" -H pipx install asitop >/dev/null 2>&1 || true
+  if [ "${INSTALL_TUI:-1}" = 1 ]; then
+    ensure_formula mactop
+    ensure_formula macmon
   fi
 }
 
@@ -674,6 +672,33 @@ write_repo_pointer() {
   /bin/chmod 644 "$REPO_POINTER_FILE"
 }
 
+# Extend sudo's secure_path with /opt/homebrew/bin so `sudo mactop` /
+# `sudo macmon` work without typing a full path. Removed cleanly when
+# INSTALL_TUI=0. Validated with `visudo -cf` before being kept.
+apply_tui_sudoers() {
+  local f=/etc/sudoers.d/macstudio-tui
+  if [ "${INSTALL_TUI:-1}" != 1 ]; then
+    if [ -e "$f" ]; then
+      /bin/rm -f "$f" && ok "removed $f"
+    fi
+    return 0
+  fi
+  local desired='Defaults secure_path += "/opt/homebrew/bin"'
+  if [ -f "$f" ] && /usr/bin/grep -qxF "$desired" "$f"; then
+    ok "$f present"
+    return 0
+  fi
+  printf '%s\n' "$desired" >"$f"
+  /usr/sbin/chown root:wheel "$f"
+  /bin/chmod 440 "$f"
+  if ! /usr/sbin/visudo -cf "$f" >/dev/null 2>&1; then
+    warn "$f failed visudo check — removing"
+    /bin/rm -f "$f"
+    return 1
+  fi
+  ok "wrote $f"
+}
+
 # ===========================================================================
 # Orchestration
 # ===========================================================================
@@ -686,6 +711,7 @@ apply_everything() {
   dbg "step: ensure_xcode_clt";        ensure_xcode_clt || true
   dbg "step: ensure_homebrew";         ensure_homebrew || true
   dbg "step: ensure_formulas";         ensure_formulas
+  dbg "step: apply_tui_sudoers";       apply_tui_sudoers || true
   dbg "step: ensure_modern_python";    ensure_modern_python || true
   dbg "step: ensure_immich_venv";      ensure_immich_venv
   dbg "step: ensure_docling_venv";     ensure_docling_venv

@@ -164,7 +164,7 @@ Each is hash/presence-checked — already installed? no-op.
 | **Homebrew** | Official installer, `NONINTERACTIVE=1`, run as `TARGET_USER` | If `/opt/homebrew/bin/brew` absent |
 | **ollama** (formula) | `brew install ollama` | Always |
 | **node_exporter** (formula) | `brew install node_exporter` | If `INSTALL_EXPORTERS=1` |
-| **pipx + asitop** | `brew install pipx`, `pipx install asitop` | If `INSTALL_EXPORTERS=1` |
+| **mactop + macmon** | `brew install mactop macmon` (live Apple-Silicon TUIs) | If `INSTALL_TUI=1` |
 | **python@3.12** (formula) | `brew install python@3.12` | If `INSTALL_DOCLING=1` (docling-serve wheels require ≥3.10) |
 | **docling-serve venv** | `python3.12 -m venv` + `pip install 'docling[ocrmac,vlm,htmlrender,easyocr]' 'docling-serve[ui]'` | If `INSTALL_DOCLING=1` and venv absent. ~2 GB of wheels + ~1 GB of models fetched at first backend boot. |
 
@@ -287,7 +287,8 @@ run `sudo bash setup.sh --apply`.
 | `llm-update` | Run the weekly autoupdate job right now |
 | `llm-service-ctl wake\|sleep\|status immich\|docling\|all` | Manual on-demand override |
 | `llm-logs [name]` | `tail -F` a service's log file |
-| `asitop` | Interactive Apple-Silicon TUI (installed via pipx) |
+| `sudo mactop` | Live Apple-Silicon TUI: GPU, ANE, CPU, RAM, power |
+| `sudo macmon` | Alternative Apple-Silicon TUI |
 
 Plus the vanilla Ollama CLI: `ollama list`, `ollama ps`, `ollama pull <m>`,
 `ollama run <m>`.

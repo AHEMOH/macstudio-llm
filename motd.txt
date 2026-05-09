@@ -16,6 +16,8 @@
     llm-service-ctl wake  immich    force-wake on-demand service
     llm-service-ctl sleep docling   force-sleep on-demand service
     llm-logs [service]              tail /var/log/macstudio/<svc>.log
+    sudo mactop                     live GPU/ANE/CPU/RAM/power TUI
+    sudo macmon                     alternative Apple-Silicon TUI
 
   Ollama basics:
     ollama list                     installed models
