@@ -37,6 +37,7 @@ ALWAYS_ON_LABELS=(
   com.local.ollama.exporter
   com.local.ondemand.exporter
   com.local.llm.watchdog
+  com.local.inference.watchdog
   com.local.preventsleep
   com.local.iogpu.wiredlimit
   com.local.weekly.autoupdate
@@ -87,6 +88,9 @@ CONFIG_KEYS=(
   INSTALL_WATCHDOG
   WATCHDOG_PRESSURE_THRESHOLD
   WATCHDOG_AUTO_RESTORE
+  INFERENCE_STALL_TIMEOUT_MIN
+  INFERENCE_WATCHDOG_POLL_SEC
+  INFERENCE_WATCHDOG_GPU_THRESHOLD
   AUTO_ACCEPT
 )
 # Bash-3.2 safe (macOS ships /bin/bash 3.2): lookup functions instead of
@@ -101,11 +105,11 @@ config_default() {
     IOGPU_WIRED_LIMIT_MB)        echo 30720 ;;
     OLLAMA_PORT)                 echo 11434 ;;
     OLLAMA_MODELS)               echo /Users/mac/.ollama/models ;;
-    OLLAMA_MAX_LOADED_MODELS)    echo 1 ;;
+    OLLAMA_MAX_LOADED_MODELS)    echo 2 ;;
     OLLAMA_NUM_PARALLEL)         echo 1 ;;
     OLLAMA_FLASH_ATTENTION)      echo 1 ;;
     OLLAMA_KV_CACHE_TYPE)        echo q8_0 ;;
-    OLLAMA_KEEP_ALIVE)           echo -1 ;;
+    OLLAMA_KEEP_ALIVE)           echo 10m ;;
     OLLAMA_LOAD_TIMEOUT)         echo 15m ;;
     ML_PUBLIC_PORT)              echo 3003 ;;
     ML_BACKEND_PORT)             echo 13003 ;;
@@ -130,6 +134,9 @@ config_default() {
     INSTALL_WATCHDOG)            echo 1 ;;
     WATCHDOG_PRESSURE_THRESHOLD) echo warn ;;
     WATCHDOG_AUTO_RESTORE)       echo 0 ;;
+    INFERENCE_STALL_TIMEOUT_MIN)      echo 15 ;;
+    INFERENCE_WATCHDOG_POLL_SEC)      echo 30 ;;
+    INFERENCE_WATCHDOG_GPU_THRESHOLD) echo 0.5 ;;
     AUTO_ACCEPT)                 echo 0 ;;
     *)                           echo "" ;;
   esac
@@ -138,7 +145,8 @@ config_default() {
 config_hint() {
   case "$1" in
     IOGPU_WIRED_LIMIT_MB)        echo "GPU wired memory ceiling in MB (28672–30720 on 32 GB; 2048 headroom for OS)" ;;
-    OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: -1=forever, 24h, 1h, 5m" ;;
+    OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: 10m (default), 1h, 24h, -1=forever" ;;
+    OLLAMA_MAX_LOADED_MODELS)    echo "Max models in VRAM at once: 2 (default; e.g. text + OCR), 1 = single-model mode" ;;
     OLLAMA_KV_CACHE_TYPE)        echo "KV cache precision: q8_0 (recommended), q4_0 (aggressive), fp16 (default)" ;;
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
@@ -146,6 +154,9 @@ config_hint() {
     AUTO_ACCEPT)                 echo "1 = skip all 'press Enter to proceed' prompts in TUI" ;;
     INSTALL_TUI)                 echo "Install mactop + macmon (live TUI for GPU/ANE/CPU/power; needs sudo)" ;;
     WATCHDOG_PRESSURE_THRESHOLD) echo "warn | critical — when watchdog offloads optional services" ;;
+    INFERENCE_STALL_TIMEOUT_MIN) echo "Minutes of stuck inference (GPU active + no GIN 200 + open TCP) before kill" ;;
+    INFERENCE_WATCHDOG_POLL_SEC) echo "How often the inference watchdog polls (seconds)" ;;
+    INFERENCE_WATCHDOG_GPU_THRESHOLD) echo "gpu_active_ratio threshold (0..1) above which the GPU is considered busy" ;;
     *)                           echo "" ;;
   esac
 }
@@ -297,7 +308,7 @@ load_config() {
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || continue ;;
       com.local.node.exporter|com.local.silicon.exporter|com.local.ollama.exporter|com.local.ondemand.exporter)
         [ "${INSTALL_EXPORTERS:-1}" = 1 ] || continue ;;
-      com.local.llm.watchdog)
+      com.local.llm.watchdog|com.local.inference.watchdog)
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || continue ;;
     esac
     ACTIVE_LABELS+=("$_lbl")
@@ -332,6 +343,7 @@ label_log() {
     com.local.ollama.exporter)   echo "$LOG_DIR/ollama-exporter.log" ;;
     com.local.ondemand.exporter) echo "$LOG_DIR/ondemand-exporter.log" ;;
     com.local.llm.watchdog)      echo "$LOG_DIR/watchdog.log" ;;
+    com.local.inference.watchdog) echo "$LOG_DIR/inference-watchdog.log" ;;
     com.local.preventsleep)      echo "$LOG_DIR/preventsleep.log" ;;
     com.local.iogpu.wiredlimit)  echo "$LOG_DIR/iogpu-wired-limit.log" ;;
     com.local.weekly.autoupdate) echo "$LOG_DIR/autoupdate.log" ;;
@@ -594,7 +606,7 @@ render_all_plists() {
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.node.exporter|com.local.silicon.exporter|com.local.ollama.exporter|com.local.ondemand.exporter)
         [ "${INSTALL_EXPORTERS:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
-      com.local.llm.watchdog)
+      com.local.llm.watchdog|com.local.inference.watchdog)
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
     esac
     local before_hash; before_hash=$(hash_file "$dst")
@@ -635,6 +647,43 @@ render_motd() {
      && /usr/bin/grep -qiE '^\s*PrintMotd\s+no' /etc/ssh/sshd_config; then
     warn "/etc/ssh/sshd_config has 'PrintMotd no' — banner will not show on SSH login"
   fi
+}
+
+ensure_ollama_models() {
+  # Walk modelfiles/*.Modelfile and create/update each Ollama model tag.
+  # Idempotent: stages the source file to /usr/local/etc/macstudio-models/
+  # via install_if_different, and only calls `ollama create` when the source
+  # actually changed. This avoids spamming `ollama create` on every --apply
+  # while still picking up any edit you push via git pull.
+  [ -d "$REPO_DIR/modelfiles" ] || return 0
+  local target_dir=/usr/local/etc/macstudio-models
+  /bin/mkdir -p "$target_dir"
+  local changed_any=0
+  local src tag dst
+  # ollama serve must be up for `ollama create` to work — give it a moment
+  # if render_all_plists just (re)started it.
+  if ! /usr/bin/curl -fsS -m 3 "http://127.0.0.1:${OLLAMA_PORT:-11434}/api/tags" >/dev/null 2>&1; then
+    warn "ollama API not reachable on :${OLLAMA_PORT:-11434} — skipping model creation"
+    warn "(ollama may still be starting up; re-run 'sudo bash setup.sh --apply' in 30 s)"
+    return 0
+  fi
+  for src in "$REPO_DIR"/modelfiles/*.Modelfile; do
+    [ -f "$src" ] || continue
+    tag=$(basename "$src" .Modelfile)
+    dst="$target_dir/$tag.Modelfile"
+    if install_if_different "$src" "$dst" 644; then
+      log "creating/updating ollama model: $tag"
+      if sudo -u "$TARGET_USER" -H /opt/homebrew/bin/ollama create "$tag" -f "$dst"; then
+        ok "ollama model created/updated: $tag"
+        changed_any=1
+      else
+        warn "ollama create failed for $tag (is the base model from FROM pulled?)"
+      fi
+    else
+      dbg "ollama modelfile unchanged: $tag"
+    fi
+  done
+  [ "$changed_any" = 0 ] && ok "ollama models up to date"
 }
 
 apply_iogpu_wired_limit() {
@@ -724,6 +773,7 @@ apply_everything() {
   dbg "step: render_all_plists";      render_all_plists
   dbg "step: render_motd";            render_motd
   dbg "step: apply_iogpu_wired_limit"; apply_iogpu_wired_limit
+  dbg "step: ensure_ollama_models";    ensure_ollama_models
   dbg "step: apply_pmset";            apply_pmset
   dbg "step: apply_os_trim";          apply_os_trim
   echo
@@ -993,7 +1043,9 @@ menu_uninstall() {
   done
   /bin/rm -rf "$LIBEXEC_DIR"/start-*.sh "$LIBEXEC_DIR"/ondemand-proxy.py \
               "$LIBEXEC_DIR"/ollama-exporter.py "$LIBEXEC_DIR"/silicon-exporter.py \
-              "$LIBEXEC_DIR"/ondemand-exporter.py "$LIBEXEC_DIR"/llm-watchdog.sh
+              "$LIBEXEC_DIR"/ondemand-exporter.py "$LIBEXEC_DIR"/llm-watchdog.sh \
+              "$LIBEXEC_DIR"/inference-watchdog.py
+  /bin/rm -rf /usr/local/etc/macstudio-models
   /bin/rm -f "$SBIN_DIR/set-iogpu-wired-limit.sh" "$SBIN_DIR/weekly-autoupdate.sh"
   for b in llm-status llm-restart llm-update llm-service-ctl llm-logs; do
     /bin/rm -f "$BIN_DIR/$b"

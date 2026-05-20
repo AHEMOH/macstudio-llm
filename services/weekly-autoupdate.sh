@@ -25,22 +25,36 @@ IMMICH_PROJECT_DIR="${IMMICH_PROJECT_DIR:-$TARGET_HOME/projects/immich-ml-metal}
 DOCLING_PROJECT_DIR="${DOCLING_PROJECT_DIR:-$TARGET_HOME/projects/docling-serve}"
 
 LOG_DIR=/var/log/macstudio
+LOG_FILE="$LOG_DIR/autoupdate.log"
 mkdir -p "$LOG_DIR"
-exec >>"$LOG_DIR/autoupdate.log" 2>&1
+
+# When run by launchd there is no terminal — write everything to the logfile.
+# When invoked interactively (e.g. via `llm-update`) it's frustrating to see
+# nothing happen for several minutes; tee the same stream to the terminal too.
+if [ -t 1 ]; then
+  exec > >(/usr/bin/tee -a "$LOG_FILE") 2>&1
+else
+  exec >>"$LOG_FILE" 2>&1
+fi
+
+# step() — a single, clearly marked progress line per phase so a human watching
+# the terminal can see what's actively in flight. Same output in the log.
+step() { printf "\n=== [%s] %s ===\n" "$(date '+%H:%M:%S')" "$*"; }
 
 echo
 echo "=== $(date '+%F %T') weekly autoupdate begin ==="
+echo "log: $LOG_FILE"
 
 run_as_user() { sudo -u "$TARGET_USER" -H bash -lc "$*"; }
 
-echo "--- Homebrew update & upgrade ---"
+step "Homebrew update & upgrade"
 run_as_user '/opt/homebrew/bin/brew update' || true
 run_as_user '/opt/homebrew/bin/brew upgrade ollama' || true
 run_as_user '/opt/homebrew/bin/brew upgrade node_exporter' || true
 run_as_user '/opt/homebrew/bin/brew cleanup -s --prune=7' || true
 
 if [ "${INSTALL_IMMICH:-1}" = "1" ] && [ -d "$IMMICH_PROJECT_DIR/.venv" ]; then
-  echo "--- immich-ml venv upgrade ---"
+  step "immich-ml venv upgrade"
   run_as_user "cd '$IMMICH_PROJECT_DIR' && .venv/bin/pip install --upgrade pip" || true
   if [ -f "$IMMICH_PROJECT_DIR/requirements.txt" ]; then
     run_as_user "cd '$IMMICH_PROJECT_DIR' && .venv/bin/pip install --upgrade -r requirements.txt" || true
@@ -48,12 +62,12 @@ if [ "${INSTALL_IMMICH:-1}" = "1" ] && [ -d "$IMMICH_PROJECT_DIR/.venv" ]; then
 fi
 
 if [ "${INSTALL_DOCLING:-1}" = "1" ] && [ -d "$DOCLING_PROJECT_DIR/.venv" ]; then
-  echo "--- docling-serve venv upgrade ---"
+  step "docling-serve venv upgrade"
   run_as_user "cd '$DOCLING_PROJECT_DIR' && .venv/bin/pip install --upgrade pip" || true
   run_as_user "cd '$DOCLING_PROJECT_DIR' && .venv/bin/pip install --upgrade 'docling[ocrmac,vlm,htmlrender,easyocr]' 'docling-serve[ui]'" || true
 fi
 
-echo "--- restart long-running services ---"
+step "restart long-running services"
 /bin/launchctl kickstart -k system/com.local.ollama.headless || true
 /bin/launchctl kickstart -k system/com.local.immich.proxy   2>/dev/null || true
 /bin/launchctl kickstart -k system/com.local.docling.proxy  2>/dev/null || true
@@ -61,7 +75,7 @@ echo "--- restart long-running services ---"
 /bin/launchctl kickstart -k system/com.local.silicon.exporter 2>/dev/null || true
 /bin/launchctl kickstart -k system/com.local.ollama.exporter 2>/dev/null || true
 
-echo "--- macOS minor / security updates (no --restart; FileVault-aware) ---"
+step "macOS minor / security updates (no --restart; FileVault-aware)"
 su_out=$(/usr/bin/mktemp)
 /usr/sbin/softwareupdate --install --all --agree-to-license 2>&1 | /usr/bin/tee "$su_out"
 if /usr/bin/grep -qiE 'require that you restart|\[restart\]|restart.* required|action: restart' "$su_out"; then
@@ -81,4 +95,5 @@ else
 fi
 /bin/rm -f "$su_out"
 
+echo
 echo "=== $(date '+%F %T') weekly autoupdate end ==="

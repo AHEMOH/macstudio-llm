@@ -26,6 +26,7 @@ LABELS=(
   "com.local.silicon.exporter"
   "com.local.ollama.exporter"
   "com.local.llm.watchdog"
+  "com.local.inference.watchdog"
   "com.local.preventsleep"
   "com.local.weekly.autoupdate"
 )
