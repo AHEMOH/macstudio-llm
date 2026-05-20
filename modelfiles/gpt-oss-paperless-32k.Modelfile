@@ -1,31 +1,42 @@
 FROM gpt-oss:20b
 
 # =============================================================================
-# gpt-oss-paperless — paperless-gpt-tuned variant of gpt-oss:20b
+# gpt-oss-paperless-32k — paperless-gpt-tuned variant of gpt-oss:20b
 #
-# Purpose: prevent the endless generation loops that occasionally trap
-# gpt-oss:20b when called from paperless-gpt's batch processor over /api/chat.
+# One of five context-length variants (8k / 16k / 32k / 64k / 128k). All share
+# identical PARAMETER and SYSTEM blocks except for `num_ctx`. The variants
+# exist so paperless-gpt can pick a fit per workload via `LLM_MODEL`, without
+# OLLAMA_CONTEXT_LENGTH leaking across into the OCR model. Switching variants
+# costs one model reload (~30-60 s) because KV-cache allocations differ.
 #
-# Background: paperless-gpt has no client-side HTTP timeout (PR #972 open) and
-# no num_predict cap on the text LLM path (only the OCR path sets MaxTokens).
-# Combined with gpt-oss's known reasoning loop (ollama#12606), a single doc
-# can pin the GPU for hours until the client connection is killed manually.
-# Capping output tokens at the model level is the only deterministic fix.
+# Purpose of the family: prevent the endless generation loops that occasionally
+# trap gpt-oss:20b when called from paperless-gpt's batch processor over
+# /api/chat. paperless-gpt has no client-side HTTP timeout (PR #972 open) and
+# no num_predict cap on the text-LLM path (only OCR sets MaxTokens). Combined
+# with gpt-oss's known reasoning loop (ollama#12606), a single doc can pin the
+# GPU for hours. Capping output tokens at the model level is the only
+# deterministic fix.
 # =============================================================================
 
 # --- Generation limits ------------------------------------------------------
 
-# Hard cap on output tokens. paperless-gpt outputs (Title <120 chars,
-# Custom-Fields JSON, single-name Correspondent) are all well under 500
-# tokens; 1024 leaves comfortable headroom but kills any loop after ~30-60s.
-PARAMETER num_predict 1024
+# Hard cap on output tokens. paperless-gpt outputs:
+#   - Title:        <120 chars  (~30 tokens)
+#   - Correspondent: single name (~10 tokens)
+#   - Custom Fields JSON: Summary up to 500 chars + Advice up to 300 chars
+#                         + 5 smaller fields → realistically 1200-1500 tokens
+#                         for a fully populated response
+# 2048 leaves comfortable headroom even for the maxed-out JSON case while
+# still bounding any loop to ~70 s at ~30 t/s on M1 Max. 1024 was too tight
+# for long Summary+Advice combinations.
+PARAMETER num_predict 2048
 
-# Context window. 8192 covers typical paperless documents including 50-page
-# OCR'd letters. Acts only as the Modelfile default — request-level num_ctx
-# from paperless-gpt's OLLAMA_CONTEXT_LENGTH env var would override this,
-# so OLLAMA_CONTEXT_LENGTH must be UNSET in the paperless-gpt config for
-# this default to take effect.
-PARAMETER num_ctx 8192
+# Context window — THIS is what varies between the five variants.
+# 32768 tokens for long contracts or Bescheide with attachments
+# KV-cache cost ~2 GB at q8_0.
+# Acts as the Modelfile default — paperless-gpt must NOT set
+# OLLAMA_CONTEXT_LENGTH (it would override this on the request).
+PARAMETER num_ctx 32768
 
 # Mild repetition damping in the Ollama-recommended range. Aggressive values
 # (>1.3) do not help and degrade quality (ollama#12741).
@@ -42,7 +53,7 @@ PARAMETER temperature 0.6
 # PARAMETER stop would REPLACE the inherited list and break the chat template.
 # The stock list is inherited automatically via FROM.
 
-# --- System prompt ----------------------------------------------------------
+# --- System prompt (identical across all five ctx variants) -----------------
 #
 # Universal rules that previously lived in every paperless-gpt user prompt
 # (no-redaction, no-refusal, no-preface, language rule) are lifted to SYSTEM:
