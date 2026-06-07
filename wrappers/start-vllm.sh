@@ -58,7 +58,7 @@ if [ -z "$CACHE_MB" ]; then
 fi
 
 echo "[start-vllm] serving main='$MODEL_ID' repo='$REPO' engine='${ENGINE:-vllm}' on 127.0.0.1:${VLLM_BACKEND_PORT:-18000}"
-echo "[start-vllm] reasoning='${RP:-none}' tool='${TP:-none}' kv=${MKV:-${VLLM_MAX_MODEL_LEN:-131072}} seqs=${MNS:-${VLLM_MAX_NUM_SEQS:-4}} kv_bits='${VLLM_KV_BITS:-8}' cache_mb='${CACHE_MB:-auto}'"
+echo "[start-vllm] reasoning='${RP:-none}' tool='${TP:-none}' kv=${MKV:-${VLLM_MAX_MODEL_LEN:-131072}} seqs=${MNS:-${VLLM_MAX_NUM_SEQS:-4}} kv_bits='${VLLM_KV_BITS:-8}' cache_mb='${CACHE_MB:-auto}' timeout=${LLM_REQUEST_TIMEOUT:-1200}s"
 
 # Flags verified against `vllm-mlx serve --help` on macOS 26.5 (mlx build):
 #   --use-paged-cache / --enable-prefix-cache  paged KV (no reload on ctx change)
@@ -77,6 +77,7 @@ ARGS=( serve "$REPO"
   --enable-prefix-cache
   --max-kv-size  "${MKV:-${VLLM_MAX_MODEL_LEN:-131072}}"
   --max-num-seqs "${MNS:-${VLLM_MAX_NUM_SEQS:-4}}"
+  --timeout      "${LLM_REQUEST_TIMEOUT:-1200}"
   --enable-metrics )
 [ -n "${RP:-}" ] && ARGS+=( --reasoning-parser "$RP" )
 [ -n "${TP:-}" ] && ARGS+=( --enable-auto-tool-choice --tool-call-parser "$TP" )

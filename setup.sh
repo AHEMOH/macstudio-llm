@@ -75,6 +75,7 @@ CONFIG_KEYS=(
   VLLM_KV_BITS
   VLLM_CACHE_MEMORY_MB
   VLLM_CACHE_RESERVE_MB
+  LLM_REQUEST_TIMEOUT
   LITELLM_PORT
   GLMOCR_PUBLIC_PORT
   GLMOCR_BACKEND_PORT
@@ -140,6 +141,7 @@ config_default() {
     VLLM_KV_BITS)                echo 8 ;;
     VLLM_CACHE_MEMORY_MB)        echo "" ;;
     VLLM_CACHE_RESERVE_MB)       echo 4096 ;;
+    LLM_REQUEST_TIMEOUT)         echo 1200 ;;
     LITELLM_PORT)                echo 11434 ;;
     GLMOCR_PUBLIC_PORT)          echo 5002 ;;
     GLMOCR_BACKEND_PORT)         echo 15002 ;;
@@ -200,6 +202,7 @@ config_hint() {
     VLLM_KV_BITS)                echo "KV-cache quantization bits: 8 (recommended, halves KV RAM), 4 (max ctx), 0/empty=off" ;;
     VLLM_CACHE_MEMORY_MB)        echo "KV cache pool size in MB; empty = auto (wired - model_gb - reserve). Override only to pin it" ;;
     VLLM_CACHE_RESERVE_MB)       echo "RAM (MB) the auto cache pool leaves free for OS + on-demand GLM-OCR (default 4096)" ;;
+    LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for vllm-mlx + LiteLLM (default 1200 = 20 min; long docs/OCR)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
     IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend sleeps; -1 = never sleep (stay warm)" ;;
     OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: 10m (default), 1h, 24h, -1=forever" ;;
@@ -806,6 +809,10 @@ render_litellm_config() {
     fi
     echo "litellm_settings:"
     echo "  drop_params: true"
+    # Long docs/OCR generations can run minutes — raise the gateway timeout and
+    # do NOT retry (re-running a 20-min generation 2x is wasteful, not helpful).
+    printf '  request_timeout: %s\n' "${LLM_REQUEST_TIMEOUT:-1200}"
+    echo "  num_retries: 0"
   } >"$tmp"
 
   if [ "$(hash_file "$tmp")" = "$(hash_file "$LITELLM_CONFIG_FILE")" ]; then
@@ -1581,21 +1588,49 @@ menu_cleanup() {
   done
 }
 
+# Follow a log live; Ctrl-C returns to the menu (trap keeps the TUI alive).
+# For vllm.log we filter to the lines that show what the model is actually
+# doing (requests, completions, running/queued, errors) — the rest is polling noise.
+follow_log() {
+  local f=$1
+  printf "\n${C_DIM}── live: %s  (Ctrl-C to stop) ──${C_RST}\n" "$f"
+  trap 'true' INT
+  case "$f" in
+    *vllm.log)
+      /usr/bin/tail -n 20 -F "$f" 2>/dev/null \
+        | /usr/bin/grep --line-buffered -E 'REQUEST|Chat completion|tok/s|running=|ABORTED|schedule|Error|Traceback|mllm=' || true ;;
+    *)
+      /usr/bin/tail -n 40 -F "$f" 2>/dev/null || true ;;
+  esac
+  trap - INT
+  printf "\n${C_DIM}(stopped)${C_RST}\n"
+}
+
 menu_logs() {
   printf "\n${C_BOLD}── Logs in %s ──${C_RST}\n" "$LOG_DIR"
   local files=()
   for f in "$LOG_DIR"/*.log; do [ -f "$f" ] && files+=("$f"); done
   if [ "${#files[@]}" = 0 ]; then warn "no logs found"; pause_enter; return 0; fi
   local i=1
-  for f in "${files[@]}"; do printf "  %2d) %s\n" "$i" "$f"; i=$((i+1)); done
+  for f in "${files[@]}"; do printf "  %2d) %s\n" "$i" "$(basename "$f")"; i=$((i+1)); done
   echo "   q) Back"
-  read -r -p "Tail which? " c
-  [ "$c" = q ] || [ "$c" = Q ] || [ -z "$c" ] && return 0
+  echo "   Tip: prefix with 'f' to FOLLOW live (e.g. 'f 1'); a number alone = last 100 lines."
+  read -r -p "View which? " c
+  local follow=0
   case "$c" in
+    f\ *|F\ *) follow=1; c=${c#* } ;;
+    f*|F*)     follow=1; c=${c#?} ;;
+  esac
+  case "$c" in
+    q|Q|"") return 0 ;;
     *[!0-9]*) return 0 ;;
   esac
   if [ "$c" -ge 1 ] && [ "$c" -le "${#files[@]}" ]; then
-    /usr/bin/tail -n 100 "${files[$((c-1))]}"
+    if [ "$follow" = 1 ]; then
+      follow_log "${files[$((c-1))]}"
+    else
+      /usr/bin/tail -n 100 "${files[$((c-1))]}"
+    fi
     pause_enter
   fi
 }
