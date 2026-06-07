@@ -65,7 +65,7 @@ if [ "${INSTALL_MLX:-1}" = "1" ]; then
   [ -x "$VENV_DIR/mlxvlm/bin/pip" ]  && run_as_user "'$VENV_DIR/mlxvlm/bin/pip' install --upgrade mlx-vlm 'huggingface_hub[cli]'" || true
 
   step "refresh active MLX models from HuggingFace"
-  hf="$VENV_DIR/vllm/bin/huggingface-cli"; [ -x "$hf" ] || hf="$VENV_DIR/mlxvlm/bin/huggingface-cli"
+  hf="$VENV_DIR/vllm/bin/hf"; [ -x "$hf" ] || hf="$VENV_DIR/mlxvlm/bin/hf"
   if [ -x "$hf" ] && [ -f "$CATALOG_FILE" ]; then
     for id in "${ALIAS_MAIN:-}" "${ALIAS_OCR:-}"; do
       [ -z "$id" ] && continue

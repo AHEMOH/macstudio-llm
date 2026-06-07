@@ -1214,11 +1214,12 @@ menu_settings() {
 # Model & alias manager (TUI)  — `llm-models` / setup.sh --models
 # ===========================================================================
 
-# Path to the huggingface-cli installed inside one of the MLX venvs.
+# Path to the `hf` CLI inside one of the MLX venvs. (huggingface_hub >= 1.0
+# renamed `huggingface-cli` -> `hf`; the old name is a deprecated no-op shim.)
 hf_cli() {
   local base="${VENV_DIR:-/Users/mac/.macstudio-venvs}"
-  if [ -x "$base/vllm/bin/huggingface-cli" ]; then echo "$base/vllm/bin/huggingface-cli"
-  else echo "$base/mlxvlm/bin/huggingface-cli"; fi
+  if [ -x "$base/vllm/bin/hf" ]; then echo "$base/vllm/bin/hf"
+  else echo "$base/mlxvlm/bin/hf"; fi
 }
 
 ram_guard_warn() {
@@ -1237,10 +1238,14 @@ download_model() {
   [ -z "${id:-}" ] && { err "usage: d <id>"; return 1; }
   repo=$(catalog_repo "$id"); [ -z "$repo" ] && { err "unknown id: $id"; return 1; }
   cli=$(hf_cli)
-  [ -x "$cli" ] || { err "huggingface-cli missing — run 'sudo bash setup.sh --apply' first"; return 1; }
+  [ -x "$cli" ] || { err "hf CLI missing — run 'sudo bash setup.sh --apply' first"; return 1; }
   log "downloading '$id' ($repo) into ${HF_CACHE_DIR:-~/.cache/huggingface} — can be many GB…"
-  out=$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
-        "$cli" download "$repo" 2>&1); rc=$?
+  # tee so the user sees live progress AND we can classify failures afterwards.
+  local logf=/tmp/macstudio-hf-download.log
+  /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
+        "$cli" download "$repo" 2>&1 | /usr/bin/tee "$logf"
+  rc=${PIPESTATUS[0]}
+  out=$(/usr/bin/tail -40 "$logf" 2>/dev/null)
   if [ "$rc" -eq 0 ] && [ "$(model_status "$repo")" = ok ]; then
     ok "downloaded + verified '$id' — selectable now ('s $id' for main, 'o $id' for ocr)"
     return 0
@@ -1300,17 +1305,17 @@ set_model_alias() {
 set_hf_token() {
   local t cli
   cli=$(hf_cli)
-  [ -x "$cli" ] || { err "huggingface-cli missing — run 'sudo bash setup.sh --apply' first"; return 1; }
+  [ -x "$cli" ] || { err "hf CLI missing — run 'sudo bash setup.sh --apply' first"; return 1; }
   read -r -p "Paste HF token (input visible; blank = logout): " t
   if [ -z "$t" ]; then
     /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
-      "$cli" logout >/dev/null 2>&1 || true
+      "$cli" auth logout >/dev/null 2>&1 || true
     ok "HF token cleared (logged out)"
   elif /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
-      "$cli" login --token "$t" >/dev/null 2>&1; then
+      "$cli" auth login --token "$t" >/dev/null 2>&1; then
     ok "HF token stored in the user's HF cache (mode 600, not in macstudio.conf)"
   else
-    err "huggingface-cli login failed"
+    err "hf auth login failed (check the token value)"
   fi
 }
 
