@@ -10,7 +10,8 @@ if [ -r "$POINTER" ]; then
   . "$POINTER"
 fi
 SETUP="${SETUP_SH:-}"
-if [ -x "$SETUP" ]; then
+# Invoked via `/bin/bash "$SETUP"` → readable is enough (setup.sh ships w/o +x).
+if [ -r "$SETUP" ]; then
   exec /bin/bash "$SETUP" --status "$@"
 fi
 

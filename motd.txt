@@ -13,6 +13,8 @@
   Commands (type them directly — already on PATH):
     llm-status                      full service + memory overview
     llm-models                      download MLX models, pick the active main/ocr
+                                    (in there: 't' stores your HuggingFace token,
+                                     needed for gated repos like Gemma — never in git)
     llm-restart [service|all]       restart services
     llm-update                      run brew+pip+softwareupdate now
     llm-service-ctl wake  glmocr    force-wake on-demand service

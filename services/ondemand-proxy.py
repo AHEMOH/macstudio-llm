@@ -166,6 +166,11 @@ async def handle_client(client_reader: asyncio.StreamReader, client_writer: asyn
 
 
 async def idle_watchdog() -> None:
+    # IDLE_TIMEOUT_SEC <= 0 means "never sleep" — once woken, the backend stays
+    # resident (e.g. IDLE_TIMEOUT_GLMOCR=-1 to keep GLM-OCR permanently warm).
+    if IDLE_TIMEOUT_SEC <= 0:
+        log("idle timeout <= 0 — never auto-sleeping this backend")
+        return
     while True:
         await asyncio.sleep(IDLE_CHECK_INTERVAL_SEC)
         idle_for = time.time() - last_request_ts if last_request_ts > 0 else float("inf")

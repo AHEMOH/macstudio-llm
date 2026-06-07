@@ -10,8 +10,10 @@ if [ -r "$POINTER" ]; then
   . "$POINTER"
 fi
 SETUP="${SETUP_SH:-}"
-if [ ! -x "$SETUP" ]; then
-  echo "setup.sh not found (expected via $POINTER) — run the installer first" >&2
+# setup.sh is invoked via `/bin/bash "$SETUP"`, so it only needs to be readable,
+# not executable (it ships without the +x bit).
+if [ ! -r "$SETUP" ]; then
+  echo "setup.sh not found/readable (expected via $POINTER) — run the installer first" >&2
   exit 1
 fi
 

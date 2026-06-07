@@ -66,12 +66,12 @@ CONFIG_KEYS=(
   VENV_DIR
   HF_CACHE_DIR
   ALIAS_MAIN
-  ALIAS_CODING
   ALIAS_OCR
   MODEL_PIN_MAIN
   VLLM_BACKEND_PORT
   VLLM_MAX_MODEL_LEN
   VLLM_MAX_NUM_SEQS
+  VLLM_KV_BITS
   LITELLM_PORT
   GLMOCR_PUBLIC_PORT
   GLMOCR_BACKEND_PORT
@@ -128,12 +128,12 @@ config_default() {
     VENV_DIR)                    echo /Users/mac/.macstudio-venvs ;;
     HF_CACHE_DIR)                echo /Users/mac/.cache/huggingface ;;
     ALIAS_MAIN)                  echo qwen36-35b-a3b ;;
-    ALIAS_CODING)                echo "" ;;
     ALIAS_OCR)                   echo glm-ocr ;;
     MODEL_PIN_MAIN)              echo 1 ;;
     VLLM_BACKEND_PORT)           echo 18000 ;;
-    VLLM_MAX_MODEL_LEN)          echo 32768 ;;
+    VLLM_MAX_MODEL_LEN)          echo 131072 ;;
     VLLM_MAX_NUM_SEQS)           echo 4 ;;
+    VLLM_KV_BITS)                echo 8 ;;
     LITELLM_PORT)                echo 11434 ;;
     GLMOCR_PUBLIC_PORT)          echo 5002 ;;
     GLMOCR_BACKEND_PORT)         echo 15002 ;;
@@ -185,14 +185,14 @@ config_hint() {
     INSTALL_OLLAMA)              echo "0 = Ollama kept as a code/install OPTION only (no daemon/dirs); 1 = run it too" ;;
     VENV_DIR)                    echo "Where the vllm/litellm/mlxvlm Python venvs live (owned by TARGET_USER)" ;;
     HF_CACHE_DIR)                echo "HuggingFace model cache (HF_HOME) — where downloaded MLX models land" ;;
-    ALIAS_MAIN)                  echo "Catalog id of the ONE active main model (manage via 'llm-models')" ;;
-    ALIAS_CODING)               echo "Catalog id for the 'coding' alias; empty = point coding at main (0 GB extra)" ;;
+    ALIAS_MAIN)                  echo "Catalog id of the ONE active main/text model (manage via 'llm-models')" ;;
     ALIAS_OCR)                   echo "Catalog id of the on-demand OCR model (engine mlxvlm)" ;;
     MODEL_PIN_MAIN)              echo "1 = keep the main model permanently warm (agentic main load)" ;;
-    VLLM_MAX_MODEL_LEN)          echo "Max context vllm-mlx allocates (paged KV). Cap vs RAM; raise after measuring" ;;
-    VLLM_MAX_NUM_SEQS)           echo "Max concurrent sequences (continuous batching). Higher = more KV RAM" ;;
+    VLLM_MAX_MODEL_LEN)          echo "max-kv-size: max context tokens (paged KV). 131072=128K. Per-model override in catalog" ;;
+    VLLM_MAX_NUM_SEQS)           echo "Max concurrent sequences (continuous batching); excess requests queue" ;;
+    VLLM_KV_BITS)                echo "KV-cache quantization bits: 8 (recommended, halves KV RAM), 4 (max ctx), 0/empty=off" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
-    IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend is put to sleep" ;;
+    IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend sleeps; -1 = never sleep (stay warm)" ;;
     OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: 10m (default), 1h, 24h, -1=forever" ;;
     OLLAMA_MAX_LOADED_MODELS)    echo "Max models in VRAM at once: 2 (default; e.g. text + OCR), 1 = single-model mode" ;;
     OLLAMA_KV_CACHE_TYPE)        echo "KV cache precision: q8_0 (recommended), q4_0 (aggressive), fp16 (default)" ;;
@@ -616,15 +616,17 @@ CATALOG_FILE="$CATALOG_DIR/catalog.tsv"
 LITELLM_CONFIG_FILE=/usr/local/etc/litellm.config.yaml
 
 # catalog_field <id> <column-number> — print a single field from the live
-# catalog, skipping comment lines. Columns:
-#   1 id  2 hf_repo  3 engine  4 params  5 quant  6 gb  7 gated
-#   8 agentic  9 coding  10 de_docs  11 notes
+# catalog, skipping comment lines. Columns (schema v2):
+#   1 id  2 hf_repo  3 role  4 engine  5 quant  6 gb  7 gated
+#   8 reasoning_parser  9 tool_parser  10 max_kv_size  11 max_num_seqs
+#   12 rating  13 notes
 catalog_field() {
   [ -f "$CATALOG_FILE" ] || return 0
   /usr/bin/awk -F'|' -v id="$1" -v n="$2" '!/^#/ && $1==id {print $n; exit}' "$CATALOG_FILE"
 }
 catalog_repo()   { catalog_field "$1" 2; }
-catalog_engine() { catalog_field "$1" 3; }
+catalog_role()   { catalog_field "$1" 3; }
+catalog_engine() { catalog_field "$1" 4; }
 catalog_gb()     { catalog_field "$1" 6; }
 catalog_gated()  { catalog_field "$1" 7; }
 
@@ -709,39 +711,51 @@ ensure_python_venvs() {
   _ensure_venv mlxvlm  mod:mlx_vlm   mlx-vlm 'huggingface_hub[cli]'
 }
 
+catalog_schema_ver() {
+  # Read the "# schema: N" header line; default 1 if absent.
+  local v; v=$(/usr/bin/awk -F: '/^# schema:/{gsub(/[^0-9]/,"",$2); print $2; exit}' "$1" 2>/dev/null)
+  echo "${v:-1}"
+}
+
 ensure_model_catalog() {
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   /bin/mkdir -p "$CATALOG_DIR"
-  # SEED ONCE: the repo's models/catalog.tsv is only a starting point. After
-  # the live file exists, the TUI owns it — never clobber the user's edits or
-  # a later `git pull`'s changes onto it.
+  local seed="$REPO_DIR/models/catalog.tsv"
+  [ -f "$seed" ] || { warn "repo seed models/catalog.tsv missing"; return 0; }
+  local seedver; seedver=$(catalog_schema_ver "$seed")
+  # SEED ONCE per schema: after the live file exists the TUI owns it (downloads
+  # + alias picks persist). On a schema bump we back up the old file and re-seed
+  # so column indices stay valid — alias assignments live in macstudio.conf and
+  # downloaded models live in the HF cache, so neither is lost.
   if [ ! -f "$CATALOG_FILE" ]; then
-    if [ -f "$REPO_DIR/models/catalog.tsv" ]; then
-      /usr/bin/install -m 644 "$REPO_DIR/models/catalog.tsv" "$CATALOG_FILE"
-      ok "seeded model catalog → $CATALOG_FILE"
-    else
-      warn "repo seed models/catalog.tsv missing"
-    fi
+    /usr/bin/install -m 644 "$seed" "$CATALOG_FILE"
+    ok "seeded model catalog → $CATALOG_FILE (schema $seedver)"
+    return 0
+  fi
+  local livever; livever=$(catalog_schema_ver "$CATALOG_FILE")
+  if [ "$livever" != "$seedver" ]; then
+    local bak="$CATALOG_FILE.bak.$(date +%Y%m%d-%H%M%S)"
+    /bin/cp -f "$CATALOG_FILE" "$bak"
+    /usr/bin/install -m 644 "$seed" "$CATALOG_FILE"
+    warn "model catalog migrated schema $livever → $seedver (backup: $bak)"
+    warn "  re-check your picks via 'llm-models' (downloads + alias assignments preserved)"
   else
-    ok "model catalog present ($CATALOG_FILE) — left as-is (TUI-managed)"
+    ok "model catalog present ($CATALOG_FILE, schema $livever) — left as-is (TUI-managed)"
   fi
 }
 
 # Generate /usr/local/etc/litellm.config.yaml from the active alias
-# assignments. `main` and `coding` both route to the ONE loaded vllm-mlx
-# model (only one big model fits); `ocr` routes to the on-demand GLM-OCR
-# proxy. Only rewrites + reloads LiteLLM on a real change.
+# assignments. Two roles only: `main` (the ONE loaded vllm-mlx text model) and
+# `ocr` (the on-demand GLM-OCR proxy). Only rewrites + reloads on a real change.
 render_litellm_config() {
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
-  local main_repo coding_repo ocr_repo tmp
+  local main_repo ocr_repo tmp
   main_repo=$(catalog_repo "${ALIAS_MAIN:-}")
   if [ -z "$main_repo" ]; then
     warn "ALIAS_MAIN='${ALIAS_MAIN:-}' has no catalog repo — LiteLLM config not (re)written"
     warn "(download a model and set it as main via 'llm-models')"
     return 0
   fi
-  # With a single loaded model, the coding alias is just a second name for it.
-  coding_repo="$main_repo"
   ocr_repo=$(catalog_repo "${ALIAS_OCR:-}")
 
   tmp=$(/usr/bin/mktemp -t macstudio-litellm)
@@ -751,8 +765,6 @@ render_litellm_config() {
     echo "model_list:"
     printf '  - model_name: main\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
       "$main_repo" "${VLLM_BACKEND_PORT:-18000}"
-    printf '  - model_name: coding\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
-      "$coding_repo" "${VLLM_BACKEND_PORT:-18000}"
     if [ -n "$ocr_repo" ]; then
       printf '  - model_name: ocr\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
         "$ocr_repo" "${GLMOCR_PUBLIC_PORT:-5002}"
@@ -1251,17 +1263,22 @@ download_model() {
 }
 
 set_model_alias() {
-  local slot=$1 id=$2 key repo st
+  local slot=$1 id=$2 key repo st role want_role
   [ -z "${id:-}" ] && { err "usage: ${slot:0:1} <id>"; return 1; }
   repo=$(catalog_repo "$id"); [ -z "$repo" ] && { err "unknown id: $id"; return 1; }
   st=$(model_status "$repo")
   [ "$st" = ok ] || { err "'$id' is not fully downloaded (status=$st) — run 'd $id' first"; return 1; }
   case "$slot" in
-    main)   key=ALIAS_MAIN ;;
-    coding) key=ALIAS_CODING ;;
-    ocr)    key=ALIAS_OCR ;;
+    main)   key=ALIAS_MAIN; want_role=text ;;
+    ocr)    key=ALIAS_OCR;  want_role=ocr  ;;
     *) err "bad slot: $slot"; return 1 ;;
   esac
+  # Two roles only: text models go to 'main' (vllm), ocr models to 'ocr' (mlxvlm).
+  role=$(catalog_role "$id"); role=${role:-text}
+  if [ "$role" != "$want_role" ]; then
+    err "'$id' has role '$role' but slot '$slot' needs role '$want_role' — wrong list"
+    return 1
+  fi
   save_config_key "$key" "$id"
   eval "$key=\$id"
   ok "$key = $id"
@@ -1308,19 +1325,27 @@ delete_local_model() {
 }
 
 catalog_add_entry() {
-  local id repo engine quant gb gated
+  # Columns v2: id|hf_repo|role|engine|quant|gb|gated|reasoning|tool|max_kv|max_seqs|rating|notes
+  local id repo role engine quant gb gated rp tp
   read -r -p "new id (short slug): " id;       [ -z "$id" ] && return 0
   if catalog_repo "$id" >/dev/null && [ -n "$(catalog_repo "$id")" ]; then
     err "id '$id' already exists — use 'e $id' to edit"; return 0
   fi
   read -r -p "HF repo-id (org/name, MUST be a ready MLX build): " repo; [ -z "$repo" ] && return 0
-  read -r -p "engine [vllm/mlxvlm] (default vllm): " engine; engine=${engine:-vllm}
+  read -r -p "role [text/ocr] (default text): " role; role=${role:-text}
+  if [ "$role" = ocr ]; then engine=mlxvlm; else engine=vllm; fi
   read -r -p "quant (e.g. 4bit): " quant;       quant=${quant:-?}
   read -r -p "approx GB: " gb;                  gb=${gb:-?}
   read -r -p "gated? [yes/no] (default no): " gated; gated=${gated:-no}
-  printf '%s|%s|%s|?|%s|%s|%s|0|0|0|added via TUI\n' \
-    "$id" "$repo" "$engine" "$quant" "$gb" "$gated" >> "$CATALOG_FILE"
-  ok "added '$id' → $repo  (download it with 'd $id')"
+  rp=""; tp=""
+  if [ "$role" = text ]; then
+    read -r -p "reasoning_parser [qwen3/glm4/gemma4/gpt_oss/deepseek_r1/empty]: " rp
+    read -r -p "tool_parser [hermes/qwen/qwen3_coder/glm47/gemma4/granite/gpt-oss/empty]: " tp
+  fi
+  # reasoning(8) tool(9) max_kv(10) max_seqs(11) left for per-model override later; rating(12)=3
+  printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|||3|added via TUI\n' \
+    "$id" "$repo" "$role" "$engine" "$quant" "$gb" "$gated" "$rp" "$tp" >> "$CATALOG_FILE"
+  ok "added '$id' (role=$role) → $repo  (download it with 'd $id')"
 }
 
 catalog_edit_entry() {
@@ -1328,19 +1353,24 @@ catalog_edit_entry() {
   [ -z "${id:-}" ] && { err "usage: e <id>"; return 1; }
   line=$(/usr/bin/grep -E "^${id}\|" "$CATALOG_FILE" | /usr/bin/head -1)
   [ -z "$line" ] && { err "unknown id: $id"; return 0; }
-  local f_id f_repo f_engine f_params f_quant f_gb f_gated f_a f_c f_de f_notes
-  IFS='|' read -r f_id f_repo f_engine f_params f_quant f_gb f_gated f_a f_c f_de f_notes <<EOF
+  local f_id f_repo f_role f_engine f_quant f_gb f_gated f_rp f_tp f_kv f_seqs f_rating f_notes
+  IFS='|' read -r f_id f_repo f_role f_engine f_quant f_gb f_gated f_rp f_tp f_kv f_seqs f_rating f_notes <<EOF
 $line
 EOF
-  local n_repo n_gb n_gated
+  local n_repo n_gb n_gated n_rp n_tp n_kv n_seqs
   read -r -p "HF repo [$f_repo]: " n_repo;     n_repo=${n_repo:-$f_repo}
   read -r -p "approx GB [$f_gb]: " n_gb;        n_gb=${n_gb:-$f_gb}
   read -r -p "gated [$f_gated]: " n_gated;      n_gated=${n_gated:-$f_gated}
+  read -r -p "reasoning_parser [$f_rp]: " n_rp; n_rp=${n_rp:-$f_rp}
+  read -r -p "tool_parser [$f_tp]: " n_tp;      n_tp=${n_tp:-$f_tp}
+  read -r -p "max_kv_size (empty=global) [$f_kv]: " n_kv;     n_kv=${n_kv:-$f_kv}
+  read -r -p "max_num_seqs (empty=global) [$f_seqs]: " n_seqs; n_seqs=${n_seqs:-$f_seqs}
   local tmp; tmp=$(/usr/bin/mktemp)
   /usr/bin/awk -F'|' -v OFS='|' -v id="$id" -v repo="$n_repo" -v gb="$n_gb" -v gated="$n_gated" \
-    '!/^#/ && $1==id { $2=repo; $6=gb; $7=gated } { print }' "$CATALOG_FILE" >"$tmp" \
-    && /bin/mv -f "$tmp" "$CATALOG_FILE"
-  ok "updated '$id'"
+      -v rp="$n_rp" -v tp="$n_tp" -v kv="$n_kv" -v seqs="$n_seqs" \
+    '!/^#/ && $1==id { $2=repo; $6=gb; $7=gated; $8=rp; $9=tp; $10=kv; $11=seqs } { print }' \
+    "$CATALOG_FILE" >"$tmp" && /bin/mv -f "$tmp" "$CATALOG_FILE"
+  ok "updated '$id' (restart vllm with 's $id' if it's the active main)"
 }
 
 catalog_remove_entry() {
@@ -1354,19 +1384,18 @@ catalog_remove_entry() {
 }
 
 print_catalog_table() {
-  printf "  %-16s %-6s %-7s %-4s %-5s %-3s %-7s %s\n" ID STATUS ENGINE GB GATED AGT ALIAS REPO
-  printf "  %-16s %-6s %-7s %-4s %-5s %-3s %-7s %s\n" ---------------- ------ ------- ---- ----- --- ------- ----
-  local id repo engine params quant gb gated agentic coding de notes
-  while IFS='|' read -r id repo engine params quant gb gated agentic coding de notes; do
+  printf "  %-16s %-5s %-6s %-7s %-4s %-5s %-3s %-6s %s\n" ID ROLE STATUS ENGINE GB GATED RAT ALIAS REPO
+  printf "  %-16s %-5s %-6s %-7s %-4s %-5s %-3s %-6s %s\n" ---------------- ---- ------ ------- ---- ----- --- ------ ----
+  local id repo role engine quant gb gated rp tp kv seqs rating notes
+  while IFS='|' read -r id repo role engine quant gb gated rp tp kv seqs rating notes; do
     case "$id" in ''|\#*) continue ;; esac
     local st mark tag=""
     st=$(model_status "$repo")
     case "$st" in ok) mark="ok" ;; partial) mark="PART" ;; *) mark="-" ;; esac
-    [ "$id" = "${ALIAS_MAIN:-}" ]   && tag="${tag}main "
-    [ "$id" = "${ALIAS_CODING:-}" ] && tag="${tag}cod "
-    [ "$id" = "${ALIAS_OCR:-}" ]    && tag="${tag}ocr "
-    printf "  %-16s %-6s %-7s %-4s %-5s %-3s %-7s %s\n" \
-      "$id" "$mark" "$engine" "$gb" "$gated" "$agentic" "${tag:-}" "$repo"
+    [ "$id" = "${ALIAS_MAIN:-}" ] && tag="${tag}main "
+    [ "$id" = "${ALIAS_OCR:-}" ]  && tag="${tag}ocr "
+    printf "  %-16s %-5s %-6s %-7s %-4s %-5s %-3s %-6s %s\n" \
+      "$id" "${role:-text}" "$mark" "$engine" "$gb" "$gated" "$rating" "${tag:-}" "$repo"
   done <"$CATALOG_FILE"
 }
 
@@ -1377,11 +1406,12 @@ menu_models() {
   while true; do
     clear 2>/dev/null || true
     printf "${C_BOLD}── Models & aliases ───────────────────────────${C_RST}\n"
-    printf "Active:  main=%s  coding=%s  ocr=%s   (only ONE big model loads; switch = restart)\n\n" \
-      "${ALIAS_MAIN:-none}" "${ALIAS_CODING:-=main}" "${ALIAS_OCR:-none}"
+    printf "Active:  main=%s  ocr=%s   (ONE text model loads; switch = explicit restart, no hot-swap)\n\n" \
+      "${ALIAS_MAIN:-none}" "${ALIAS_OCR:-none}"
     print_catalog_table
     printf "\nSource: HuggingFace (repo-ids, not URLs). STATUS ok = downloaded+verified, only ok is selectable.\n"
-    printf "Actions:  d <id> download   s <id> set main   o <id> set ocr   c <id> set coding\n"
+    printf "Roles: text -> 's' (alias main, vllm)   ocr -> 'o' (alias ocr, on-demand mlx-vlm)\n"
+    printf "Actions:  d <id> download   s <id> set TEXT/main   o <id> set OCR\n"
     printf "          a add   e <id> edit   x <id> remove   r <id> delete-local   t HF token   q back\n"
     read -r -p "models> " line || return 0
     local cmd arg
@@ -1391,7 +1421,6 @@ menu_models() {
       d) download_model "$arg";        pause_enter ;;
       s) set_model_alias main "$arg";  pause_enter ;;
       o) set_model_alias ocr "$arg";   pause_enter ;;
-      c) set_model_alias coding "$arg";pause_enter ;;
       a) catalog_add_entry;            pause_enter ;;
       e) catalog_edit_entry "$arg";    pause_enter ;;
       x) catalog_remove_entry "$arg";  pause_enter ;;
