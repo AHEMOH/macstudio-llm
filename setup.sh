@@ -1398,6 +1398,7 @@ catalog_add_entry() {
   # reasoning(8) tool(9) max_kv(10) max_seqs(11) left for per-model override later; rating(12)=3
   printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|||3|added via TUI\n' \
     "$id" "$repo" "$role" "$engine" "$quant" "$gb" "$gated" "$rp" "$tp" >> "$CATALOG_FILE"
+  /bin/chmod 644 "$CATALOG_FILE"   # keep readable by the daemon user (mac)
   ok "added '$id' (role=$role) → $repo  (download it with 'd $id')"
 }
 
@@ -1423,6 +1424,7 @@ EOF
       -v rp="$n_rp" -v tp="$n_tp" -v kv="$n_kv" -v seqs="$n_seqs" \
     '!/^#/ && $1==id { $2=repo; $6=gb; $7=gated; $8=rp; $9=tp; $10=kv; $11=seqs } { print }' \
     "$CATALOG_FILE" >"$tmp" && /bin/mv -f "$tmp" "$CATALOG_FILE"
+  /bin/chmod 644 "$CATALOG_FILE"   # mktemp+mv leaves 600 → restore daemon-readable mode
   ok "updated '$id' (restart vllm with 's $id' if it's the active main)"
 }
 
@@ -1433,6 +1435,7 @@ catalog_remove_entry() {
   confirm "remove catalog entry '$id' (downloaded files are kept)?" || return 0
   local tmp; tmp=$(/usr/bin/mktemp)
   /usr/bin/grep -vE "^${id}\|" "$CATALOG_FILE" >"$tmp" && /bin/mv -f "$tmp" "$CATALOG_FILE"
+  /bin/chmod 644 "$CATALOG_FILE"   # mktemp+mv leaves 600 → restore daemon-readable mode
   ok "removed catalog entry '$id'"
 }
 

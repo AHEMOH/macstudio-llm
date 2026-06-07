@@ -37,6 +37,16 @@ if [ -z "${REPO:-}" ]; then
 fi
 ENGINE=$(field 4)  # vllm | vllm-mllm (multimodal) — ocr models go via mlx-vlm, not here
 GB=$(field 6)      # model footprint in GB (drives the auto KV-cache pool size)
+# Fail fast with a clear message if the model isn't downloaded yet. Otherwise
+# the daemon blocks/loops trying to serve a missing model and just looks like
+# "the server won't start". Download happens only via the TUI (llm-models -> d).
+HUB="$HF_HOME/hub/models--${REPO//\//--}"
+if ! /usr/bin/find "$HUB/snapshots" -name '*.safetensors' 2>/dev/null | /usr/bin/grep -q .; then
+  echo "[start-vllm] model '$REPO' (id '$MODEL_ID') is NOT downloaded — run: llm-models -> d $MODEL_ID" >&2
+  echo "[start-vllm] refusing to start until the model is present in $HF_HOME" >&2
+  exit 78   # EX_CONFIG
+fi
+
 RP=$(field 8)      # reasoning_parser   (empty = omit)
 TP=$(field 9)      # tool_parser        (empty = omit)
 MKV=$(field 10)    # per-model max_kv_size  (empty = global default)
