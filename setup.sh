@@ -1401,8 +1401,9 @@ catalog_remove_entry() {
 }
 
 print_catalog_table() {
-  printf "  %-16s %-5s %-6s %-7s %-4s %-5s %-3s %-6s %s\n" ID ROLE STATUS ENGINE GB GATED RAT ALIAS REPO
-  printf "  %-16s %-5s %-6s %-7s %-4s %-5s %-3s %-6s %s\n" ---------------- ---- ------ ------- ---- ----- --- ------ ----
+  local fmt="  %-16s %-5s %-6s %-10s %-4s %-5s %-3s %-6s %s\n"
+  printf "$fmt" ID ROLE STATUS ENGINE GB GATED RAT ALIAS REPO
+  printf "$fmt" ---------------- ---- ------ ---------- ---- ----- --- ------ ----
   local id repo role engine quant gb gated rp tp kv seqs rating notes
   while IFS='|' read -r id repo role engine quant gb gated rp tp kv seqs rating notes; do
     case "$id" in ''|\#*) continue ;; esac
@@ -1411,7 +1412,7 @@ print_catalog_table() {
     case "$st" in ok) mark="ok" ;; partial) mark="PART" ;; *) mark="-" ;; esac
     [ "$id" = "${ALIAS_MAIN:-}" ] && tag="${tag}main "
     [ "$id" = "${ALIAS_OCR:-}" ]  && tag="${tag}ocr "
-    printf "  %-16s %-5s %-6s %-7s %-4s %-5s %-3s %-6s %s\n" \
+    printf "$fmt" \
       "$id" "${role:-text}" "$mark" "$engine" "$gb" "$gated" "$rating" "${tag:-}" "$repo"
   done <"$CATALOG_FILE"
 }
