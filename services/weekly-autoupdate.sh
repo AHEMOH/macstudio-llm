@@ -2,11 +2,14 @@
 # Launched by com.local.weekly.autoupdate at the time set in
 # /usr/local/etc/macstudio.conf (AUTOUPDATE_* keys). Default: Sat 06:00.
 #
-# Updates:
-#   1. Homebrew formulas (node_exporter, brew itself; ollama only if installed)
-#   2. MLX stack venvs (vllm-mlx / litellm / mlx-vlm) + refresh active models
-#   3. Python venvs for immich-ml and docling-serve
-#   4. macOS minor / security updates (no auto-reboot — see below)
+# Updates ONLY the OS + system packages — the model/LLM stack is intentionally
+# frozen (a surprise version jump broke a model once):
+#   1. Homebrew: brew update, upgrade node_exporter, cleanup
+#   2. macOS minor / security updates (no auto-reboot — see below)
+# NOT touched here: vllm-mlx (pinned via VLLM_MLX_VERSION), mlx-vlm, litellm,
+# immich-ml, docling, Ollama, and the models. Upgrade those deliberately via
+# `setup.sh` ("Check for updates" → set the pin → Install/update everything).
+# The run logs available-but-held versions so you can see when an update exists.
 #
 # Reboots are FileVault-aware: we NEVER pass --restart to softwareupdate,
 # because a plain reboot hangs at the FileVault pre-boot prompt. If an
@@ -52,43 +55,32 @@ VENV_DIR="${VENV_DIR:-$TARGET_HOME/.macstudio-venvs}"
 HF_CACHE_DIR="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}"
 CATALOG_FILE=/usr/local/etc/macstudio-models/catalog.tsv
 
-step "Homebrew update & upgrade"
+step "Homebrew: update + system packages only (LLM/model stack is frozen)"
 run_as_user '/opt/homebrew/bin/brew update' || true
-[ "${INSTALL_OLLAMA:-0}" = "1" ] && run_as_user '/opt/homebrew/bin/brew upgrade ollama' || true
 run_as_user '/opt/homebrew/bin/brew upgrade node_exporter' || true
 run_as_user '/opt/homebrew/bin/brew cleanup -s --prune=7' || true
 
-if [ "${INSTALL_MLX:-1}" = "1" ]; then
-  step "MLX stack venv upgrades (vllm-mlx / litellm / mlx-vlm)"
-  [ -x "$VENV_DIR/vllm/bin/pip" ]    && run_as_user "'$VENV_DIR/vllm/bin/pip' install --upgrade vllm-mlx 'huggingface_hub[cli]'" || true
-  [ -x "$VENV_DIR/litellm/bin/pip" ] && run_as_user "'$VENV_DIR/litellm/bin/pip' install --upgrade 'litellm[proxy]'" || true
-  [ -x "$VENV_DIR/mlxvlm/bin/pip" ]  && run_as_user "'$VENV_DIR/mlxvlm/bin/pip' install --upgrade mlx-vlm 'huggingface_hub[cli]'" || true
-
-  step "refresh active MLX models from HuggingFace"
-  hf="$VENV_DIR/vllm/bin/hf"; [ -x "$hf" ] || hf="$VENV_DIR/mlxvlm/bin/hf"
-  if [ -x "$hf" ] && [ -f "$CATALOG_FILE" ]; then
-    for id in "${ALIAS_MAIN:-}" "${ALIAS_OCR:-}"; do
-      [ -z "$id" ] && continue
-      repo=$(/usr/bin/awk -F'|' -v i="$id" '!/^#/ && $1==i{print $2; exit}' "$CATALOG_FILE")
-      [ -z "$repo" ] && continue
-      run_as_user "HF_HOME='$HF_CACHE_DIR' '$hf' download '$repo'" || true
-    done
-  fi
-fi
-
-if [ "${INSTALL_IMMICH:-1}" = "1" ] && [ -d "$IMMICH_PROJECT_DIR/.venv" ]; then
-  step "immich-ml venv upgrade"
-  run_as_user "cd '$IMMICH_PROJECT_DIR' && .venv/bin/pip install --upgrade pip" || true
-  if [ -f "$IMMICH_PROJECT_DIR/requirements.txt" ]; then
-    run_as_user "cd '$IMMICH_PROJECT_DIR' && .venv/bin/pip install --upgrade -r requirements.txt" || true
-  fi
-fi
-
-if [ "${INSTALL_DOCLING:-1}" = "1" ] && [ -d "$DOCLING_PROJECT_DIR/.venv" ]; then
-  step "docling-serve venv upgrade"
-  run_as_user "cd '$DOCLING_PROJECT_DIR' && .venv/bin/pip install --upgrade pip" || true
-  run_as_user "cd '$DOCLING_PROJECT_DIR' && .venv/bin/pip install --upgrade 'docling[ocrmac,vlm,htmlrender,easyocr]' 'docling-serve[ui]'" || true
-fi
+# DELIBERATELY NOT auto-upgraded: a surprise version jump broke a model before.
+# vllm-mlx is pinned via VLLM_MLX_VERSION; mlx-vlm, litellm, immich-ml, docling
+# and Ollama stay at their installed versions. Upgrade them on purpose with
+# `setup.sh` (menu: Check for updates -> set the pin -> Install/update everything).
+step "held versions (available but NOT auto-upgraded — bump deliberately)"
+for pair in "vllm:vllm-mlx" "mlxvlm:mlx-vlm" "litellm:litellm"; do
+  vn=${pair%%:*}; pk=${pair##*:}
+  py="$VENV_DIR/$vn/bin/python"; [ -x "$py" ] || continue
+  "$py" - "$pk" <<'PY' 2>/dev/null || true
+import sys, json, urllib.request, importlib.metadata as M
+pkg=sys.argv[1]
+try: cur=M.version(pkg)
+except Exception: cur="?"
+try:
+    d=json.load(urllib.request.urlopen("https://pypi.org/pypi/%s/json"%pkg, timeout=8))
+    print("  %-10s installed=%s  latest_stable=%s"%(pkg,cur,d["info"]["version"]))
+except Exception:
+    print("  %-10s installed=%s  (pypi check n/a)"%(pkg,cur))
+PY
+done
+echo "  -> to upgrade the LLM stack on purpose: VLLM_MLX_VERSION + 'sudo bash setup.sh --apply'"
 
 step "restart long-running services"
 if [ "${INSTALL_MLX:-1}" = "1" ]; then

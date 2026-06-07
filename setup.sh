@@ -65,6 +65,7 @@ CONFIG_KEYS=(
   INSTALL_OLLAMA
   VENV_DIR
   HF_CACHE_DIR
+  VLLM_MLX_VERSION
   ALIAS_MAIN
   ALIAS_OCR
   MODEL_PIN_MAIN
@@ -129,6 +130,7 @@ config_default() {
     INSTALL_OLLAMA)              echo 0 ;;
     VENV_DIR)                    echo /Users/mac/.macstudio-venvs ;;
     HF_CACHE_DIR)                echo /Users/mac/.cache/huggingface ;;
+    VLLM_MLX_VERSION)            echo 0.3.0 ;;
     ALIAS_MAIN)                  echo qwen36-35b-a3b ;;
     ALIAS_OCR)                   echo glm-ocr ;;
     MODEL_PIN_MAIN)              echo 1 ;;
@@ -189,6 +191,7 @@ config_hint() {
     INSTALL_OLLAMA)              echo "0 = Ollama kept as a code/install OPTION only (no daemon/dirs); 1 = run it too" ;;
     VENV_DIR)                    echo "Where the vllm/litellm/mlxvlm Python venvs live (owned by TARGET_USER)" ;;
     HF_CACHE_DIR)                echo "HuggingFace model cache (HF_HOME) — where downloaded MLX models land" ;;
+    VLLM_MLX_VERSION)            echo "Pinned vllm-mlx version (alpha pkg). empty=latest. Bump deliberately + --apply; e.g. 0.4.0rc1" ;;
     ALIAS_MAIN)                  echo "Catalog id of the ONE active main/text model (manage via 'llm-models')" ;;
     ALIAS_OCR)                   echo "Catalog id of the on-demand OCR model (engine mlxvlm)" ;;
     MODEL_PIN_MAIN)              echo "1 = keep the main model permanently warm (agentic main load)" ;;
@@ -712,9 +715,35 @@ ensure_python_venvs() {
     fi
   }
 
-  _ensure_venv vllm    bin:vllm-mlx  vllm-mlx 'huggingface_hub[cli]'
+  # vllm-mlx is alpha → pin an explicit version so neither a fresh build nor the
+  # weekly autoupdate floats it unexpectedly. mlx-vlm/litellm stay at the version
+  # they were first built with (no auto-upgrade).
+  local vllm_spec="vllm-mlx"
+  [ -n "${VLLM_MLX_VERSION:-}" ] && vllm_spec="vllm-mlx==${VLLM_MLX_VERSION}"
+  _ensure_venv vllm    bin:vllm-mlx  "$vllm_spec" 'huggingface_hub[cli]'
   _ensure_venv litellm bin:litellm   'litellm[proxy]'
   _ensure_venv mlxvlm  mod:mlx_vlm   mlx-vlm 'huggingface_hub[cli]'
+
+  # Version-sync: if the pin changed since the venv was built, switch to it and
+  # restart vllm so the new version is actually live. This is how the user
+  # upgrades/downgrades — set VLLM_MLX_VERSION + `--apply`.
+  if [ -n "${VLLM_MLX_VERSION:-}" ] && [ -x "$vdir/vllm/bin/python" ]; then
+    local cur_v
+    cur_v=$(/usr/bin/sudo -u "$TARGET_USER" -H "$vdir/vllm/bin/python" -c \
+      'import importlib.metadata as m; print(m.version("vllm-mlx"))' 2>/dev/null)
+    if [ -n "$cur_v" ] && [ "$cur_v" != "$VLLM_MLX_VERSION" ]; then
+      log "vllm-mlx pin: $cur_v -> $VLLM_MLX_VERSION (reinstalling)"
+      if /usr/bin/sudo -u "$TARGET_USER" -H "$vdir/vllm/bin/pip" install "vllm-mlx==${VLLM_MLX_VERSION}" \
+            >"$LOG_DIR/vllm-pin-install.log" 2>&1; then
+        ok "vllm-mlx pinned to $VLLM_MLX_VERSION"
+        daemon_loaded com.local.vllm.mlx \
+          && /bin/launchctl kickstart -k system/com.local.vllm.mlx >/dev/null 2>&1 \
+          && ok "restarted vllm-mlx to apply the version change"
+      else
+        warn "vllm-mlx pin install failed; see $LOG_DIR/vllm-pin-install.log"
+      fi
+    fi
+  fi
 }
 
 catalog_schema_ver() {
@@ -1450,6 +1479,46 @@ menu_models() {
   done
 }
 
+# Read-only "what could be updated" view. Changes NOTHING — the LLM stack is
+# frozen on purpose; the user bumps it deliberately via VLLM_MLX_VERSION.
+menu_updates() {
+  load_config
+  printf "\n${C_BOLD}── Check for updates (read-only) ──────────────${C_RST}\n"
+  printf "vllm-mlx pin: VLLM_MLX_VERSION=%s   (alpha pkg — frozen unless you bump it)\n\n" \
+    "${VLLM_MLX_VERSION:-<float=latest>}"
+  printf "LLM stack (installed vs PyPI):\n"
+  local pair vn pk py
+  for pair in vllm:vllm-mlx mlxvlm:mlx-vlm litellm:litellm; do
+    vn=${pair%%:*}; pk=${pair##*:}
+    py="${VENV_DIR:-/Users/mac/.macstudio-venvs}/$vn/bin/python"
+    if [ ! -x "$py" ]; then printf "  %-10s (venv not built)\n" "$pk"; continue; fi
+    /usr/bin/sudo -u "$TARGET_USER" -H "$py" - "$pk" <<'PY' 2>/dev/null || printf "  %-10s (check failed)\n" "$pk"
+import sys, json, urllib.request, importlib.metadata as M
+pkg = sys.argv[1]
+try: cur = M.version(pkg)
+except Exception: cur = "?"
+try:
+    d = json.load(urllib.request.urlopen("https://pypi.org/pypi/%s/json" % pkg, timeout=8))
+    stable = d["info"]["version"]
+    try:
+        from packaging.version import Version
+        newest = str(max(Version(v) for v in d["releases"].keys()))
+    except Exception:
+        newest = stable
+    flag = "" if cur in (stable, newest) else "   <-- newer available"
+    print("  %-10s installed=%-11s stable=%-11s newest=%-11s%s" % (pkg, cur, stable, newest, flag))
+except Exception:
+    print("  %-10s installed=%-11s (PyPI n/a — offline?)" % (pkg, cur))
+PY
+  done
+  printf "\nHomebrew packages (auto-updated weekly):\n"
+  brew_ outdated 2>/dev/null | /usr/bin/sed 's/^/  /' || echo "  (brew n/a)"
+  printf "macOS updates:\n"
+  /usr/sbin/softwareupdate -l 2>&1 | /usr/bin/grep -iE 'label:|recommended|^\* |no new software' | /usr/bin/sed 's/^/  /' | /usr/bin/head -8
+  printf "\n${C_DIM}Upgrade the LLM stack on purpose: menu 4 -> set VLLM_MLX_VERSION (e.g. 0.4.0rc1) -> menu 1.${C_RST}\n"
+  pause_enter
+}
+
 menu_service_ctl() {
   load_config
   while true; do
@@ -1591,10 +1660,11 @@ main_menu() {
     echo "  3) Models & aliases…             (download MLX models, pick main / ocr)"
     echo "  4) Change settings…"
     echo "  5) Service control…"
-    echo "  6) Run weekly autoupdate now"
-    echo "  7) Clean-up tasks…"
-    echo "  8) View logs…"
-    echo "  9) Uninstall everything this tool installed"
+    echo "  6) Check for updates…           (versions: LLM stack / brew / macOS — read-only)"
+    echo "  7) Run weekly autoupdate now     (OS + brew system packages only)"
+    echo "  8) Clean-up tasks…"
+    echo "  9) View logs…"
+    echo " 10) Uninstall everything this tool installed"
     echo "  q) Quit"
     read -r -p "Choice: " choice
     case "$choice" in
@@ -1603,10 +1673,11 @@ main_menu() {
       3) menu_models ;;
       4) menu_settings ;;
       5) menu_service_ctl ;;
-      6) log "running weekly-autoupdate.sh NOW"; /bin/bash "$SBIN_DIR/weekly-autoupdate.sh" || true; pause_enter ;;
-      7) menu_cleanup ;;
-      8) menu_logs ;;
-      9) menu_uninstall ;;
+      6) menu_updates ;;
+      7) log "running weekly-autoupdate.sh NOW"; /bin/bash "$SBIN_DIR/weekly-autoupdate.sh" || true; pause_enter ;;
+      8) menu_cleanup ;;
+      9) menu_logs ;;
+      10) menu_uninstall ;;
       q|Q|"") exit 0 ;;
       *) warn "unknown choice: $choice"; sleep 1 ;;
     esac
@@ -1694,6 +1765,7 @@ case "${1:-}" in
   --apply)  APPLY_MODE=1; INTERACTIVE=0; shift; apply_everything "$@" ;;
   --status) INTERACTIVE=0; load_config; verify_and_summary ;;
   --models) need_root "$@"; menu_models ;;
+  --check-updates) need_root "$@"; menu_updates ;;
   --help|-h) show_help ;;
   "") main_menu "$@" ;;
   *) err "unknown flag: $1"; show_help; exit 2 ;;

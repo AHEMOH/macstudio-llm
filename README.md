@@ -37,9 +37,13 @@ raise a couple of config keys.
 - **On-demand companions** on :3003 (immich-ml) and :5001 (docling-serve),
   optional — public ports always listen; the real backend wakes on request and
   sleeps after 15 min, freeing RAM.
-- **Weekly auto-update** (Sat 06:00): brew, the three MLX venvs (`vllm-mlx`,
-  `litellm`, `mlx-vlm`), a refresh of the active models, and macOS
-  minor/security updates.
+- **Weekly auto-update** (Sat 06:00): **OS + brew system packages only**
+  (`brew update`, `node_exporter`, macOS security updates). The model/LLM stack
+  is **frozen** — `vllm-mlx` (alpha) is pinned via `VLLM_MLX_VERSION`, and
+  `mlx-vlm`/`litellm`/Ollama/models are never auto-upgraded (a surprise version
+  jump once broke a model). The run logs which LLM versions are available but
+  held. Bump them deliberately via **Check for updates** → set the pin →
+  Install/update.
 - **Prometheus exporters** for Grafana: node_exporter (:9100), Apple-Silicon
   metrics (:9101), on-demand stack state (:9103). vllm-mlx and LiteLLM expose
   their own `/metrics`.
@@ -335,6 +339,7 @@ use the menu) to change a live box.
 | `INSTALL_OLLAMA` | `0` | Opt-in Ollama fallback (kept in repo, off by default) |
 | `VENV_DIR` | `/Users/mac/.macstudio-venvs` | Where the vllm/litellm/mlxvlm venvs live |
 | `HF_CACHE_DIR` | `/Users/mac/.cache/huggingface` | HF model cache (`HF_HOME`) + token store |
+| `VLLM_MLX_VERSION` | `0.3.0` | Pinned vllm-mlx version (alpha pkg). Bump deliberately + `--apply`; empty = latest |
 | `ALIAS_MAIN` | `qwen36-35b-a3b` | Catalog id of the active text model |
 | `ALIAS_OCR` | `glm-ocr` | Catalog id of the on-demand OCR model |
 | `MODEL_PIN_MAIN` | `1` | Keep the main model permanently warm |
@@ -364,6 +369,25 @@ use the menu) to change a live box.
 > **Port note:** LiteLLM and Ollama both default to :11434. They only collide if
 > you run **both** (`INSTALL_MLX=1` *and* `INSTALL_OLLAMA=1`) — then change
 > `OLLAMA_PORT`. With the default (Ollama off) there's no conflict.
+
+## Updating & version pinning
+
+`vllm-mlx` is **alpha** software — a floating auto-upgrade once broke a loaded
+model. So the weekly job updates **only the OS and brew system packages**;
+everything that serves a model (`vllm-mlx`, `mlx-vlm`, `litellm`, `immich-ml`,
+`docling`, Ollama, and the model weights) stays put until you change it on
+purpose.
+
+- **See what's available** (read-only): `sudo bash setup.sh --check-updates`
+  (or main-menu *Check for updates*). Shows installed vs PyPI (stable + newest
+  incl. pre-release) for the LLM stack, `brew outdated`, and macOS updates.
+- **Upgrade vllm-mlx on purpose:** set `VLLM_MLX_VERSION` (menu 4 → e.g.
+  `0.4.0rc1`, or edit `macstudio.conf`) then `sudo bash setup.sh --apply`. The
+  installer reinstalls that exact version and restarts vllm-mlx.
+- **Roll back:** set `VLLM_MLX_VERSION` back (e.g. `0.3.0`) and `--apply` again.
+  It's an isolated venv, so up/down-grades are clean and reversible.
+- `mlx-vlm`/`litellm` stay at their built version; bump manually in the venv if
+  ever needed (`<venv>/bin/pip install -U …`).
 
 ## Commands (installed to `/usr/local/bin`)
 
