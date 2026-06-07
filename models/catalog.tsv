@@ -34,7 +34,7 @@
 # columns:
 # id|hf_repo|role|engine|quant|gb|gated|reasoning_parser|tool_parser|max_kv_size|max_num_seqs|rating|notes
 qwen36-35b-a3b|mlx-community/Qwen3.6-35B-A3B-4bit-DWQ|text|vllm|4bit-DWQ|20|no|qwen3|hermes|131072|2|5|Default main. Tool use + multilingual, MoE = fast, tiny KV (2 kv-heads). reasoning_parser=qwen3 -> Open WebUI shows thinking as a collapsible block, then the answer. native max: 262144 (256K)
-laguna-xs2|OsaurusAI/Laguna-XS.2-mxfp4|text|vllm|mxfp4|22|no||hermes|131072|2|5|Agentic + long-horizon; confirm vllm-mlx FP4. native max: 131072 (128K)
+laguna-xs2|OsaurusAI/Laguna-XS.2-mxfp4|text|vllm|mxfp4|22|no||hermes|131072|2|5|BROKEN on vllm-mlx 0.3.0 (mlx_lm: "Model type laguna not supported" - fails at load) - needs mlx_lm support. Agentic + long-horizon. native max: 131072 (128K)
 gemma4-31b|mlx-community/gemma-4-31B-it-OptiQ-4bit|text|vllm-mllm|4bit-OptiQ|18|yes|gemma4|gemma4|131072|2|4|BROKEN on vllm-mlx 0.3.0 + 0.4.0rc1 (shared_kv vs mlx-vlm 0.6.2) - needs upstream fix. German + multimodal; gated. native max: 262144 (256K)
 gemma4-26b|mlx-community/gemma-4-26b-a4b-it-4bit|text|vllm-mllm|4bit|16|yes|gemma4|gemma4|131072|3|4|BROKEN on vllm-mlx 0.3.0 + 0.4.0rc1 (shared_kv) - needs upstream fix. 26B-A4B MoE, multimodal; gated. native max: 262144 (256K)
 gemma4-12b|mlx-community/gemma-4-12B-it-4bit|text|vllm-mllm|4bit|8|yes|gemma4|gemma4|131072|6|4|BROKEN on vllm-mlx 0.3.0 + 0.4.0rc1 (shared_kv) - needs upstream fix. 12B multimodal, great German; gated. native max: 262144 (256K)
