@@ -14,8 +14,12 @@
 # Download status (—/PART/ok) is computed by the TUI from HF_CACHE_DIR.
 #
 # Roles & engines (the backend is fixed per role):
-#   role=text -> engine=vllm   (served by vllm-mlx, exposed as alias 'main')
-#   role=ocr  -> engine=mlxvlm (served by mlx-vlm,  exposed as alias 'ocr', on-demand)
+#   role=text -> engine=vllm       (vllm-mlx, alias 'main', text only)
+#   role=text -> engine=vllm-mllm  (vllm-mlx + --mllm: multimodal/vision text model)
+#   role=ocr  -> engine=mlxvlm     (mlx-vlm, alias 'ocr', on-demand)
+# max_num_seqs is set per model by footprint; the KV cache pool is auto-sized from
+# the model's gb (see start-vllm.sh). max_kv_size is left empty = global 128K
+# (set it per row only for a model whose native context is < 128K).
 #
 # reasoning_parser / tool_parser apply ONLY to engine=vllm (mlx_vlm ignores them).
 #   empty cell = omit the flag. Values come from `vllm-mlx serve` choices:
@@ -26,15 +30,15 @@
 #
 # columns:
 # id|hf_repo|role|engine|quant|gb|gated|reasoning_parser|tool_parser|max_kv_size|max_num_seqs|rating|notes
-qwen36-35b-a3b|mlx-community/Qwen3.6-35B-A3B-4bit-DWQ|text|vllm|4bit-DWQ|20|no|qwen3|hermes|||5|Default main. Tool use + multilingual, MoE = fast. Tiny KV (2 kv-heads) -> long ctx cheap
-laguna-xs2|OsaurusAI/Laguna-XS.2-mxfp4|text|vllm|mxfp4|22|no||hermes|||5|Agentic + long-horizon, 128K ctx; confirm vllm-mlx FP4 support
-gemma4-31b|mlx-community/gemma-4-31B-it-OptiQ-4bit|text|vllm|4bit-OptiQ|18|yes|gemma4|gemma4|||4|Best German + multimodal; needs HF token + licence
-gemma4-26b|mlx-community/gemma-4-26b-a4b-it-4bit|text|vllm|4bit|16|yes|gemma4|gemma4|||4|Gemma 4 26B-A4B MoE (4B active -> fast), multimodal, strong German; gated
-gemma4-12b|mlx-community/gemma-4-12B-it-4bit|text|vllm|4bit|8|yes|gemma4|gemma4|||4|Gemma 4 12B dense, fast, great German, lots of headroom for OCR co-residency; gated
-granite41-30b|mlx-community/granite-4.1-30b-mxfp4|text|vllm|mxfp4|17|no||granite|||4|Enterprise/RAG, long docs; confirm vllm-mlx FP4 support
-glm47-flash|mlx-community/GLM-4.7-Flash-4bit|text|vllm|4bit|19|no|glm4|glm47|||4|Strong coding
-qwen36-27b|mlx-community/Qwen3.6-27B-4bit|text|vllm|4bit|16|no|qwen3|hermes|||4|Dense alternative to 35B-A3B
-gptoss-20b|mlx-community/gpt-oss-20b-mlx-q8|text|vllm|8bit|13|no|gpt_oss|gpt-oss|||4|Small -> leaves docling headroom; previously tuned for paperless
-lfm25-8b|LiquidAI/LFM2.5-8B-A1B-MLX-8bit|text|vllm|8bit|5|no|||||3|Very fast: cheap pre-classification / routing
+qwen36-35b-a3b|mlx-community/Qwen3.6-35B-A3B-4bit-DWQ|text|vllm|4bit-DWQ|20|no|qwen3|hermes||2|5|Default main. Tool use + multilingual, MoE = fast. Tiny KV (2 kv-heads) -> long ctx cheap
+laguna-xs2|OsaurusAI/Laguna-XS.2-mxfp4|text|vllm|mxfp4|22|no||hermes||2|5|Agentic + long-horizon, 128K ctx; confirm vllm-mlx FP4 support
+gemma4-31b|mlx-community/gemma-4-31B-it-OptiQ-4bit|text|vllm-mllm|4bit-OptiQ|18|yes|gemma4|gemma4||2|4|Best German + multimodal (--mllm); needs HF token + licence
+gemma4-26b|mlx-community/gemma-4-26b-a4b-it-4bit|text|vllm-mllm|4bit|16|yes|gemma4|gemma4||3|4|Gemma 4 26B-A4B MoE (4B active -> fast), multimodal, strong German; gated
+gemma4-12b|mlx-community/gemma-4-12B-it-4bit|text|vllm-mllm|4bit|8|yes|gemma4|gemma4||6|4|Gemma 4 12B dense, fast, great German, multimodal, lots of headroom; gated
+granite41-30b|mlx-community/granite-4.1-30b-mxfp4|text|vllm|mxfp4|17|no||granite||2|4|Enterprise/RAG, long docs; confirm vllm-mlx FP4 support
+glm47-flash|mlx-community/GLM-4.7-Flash-4bit|text|vllm|4bit|19|no|glm4|glm47||2|4|Strong coding
+qwen36-27b|mlx-community/Qwen3.6-27B-4bit|text|vllm|4bit|16|no|qwen3|hermes||2|4|Dense alternative to 35B-A3B
+gptoss-20b|mlx-community/gpt-oss-20b-mlx-q8|text|vllm|8bit|13|no|gpt_oss|gpt-oss||4|4|Small -> leaves docling headroom; previously tuned for paperless
+lfm25-8b|LiquidAI/LFM2.5-8B-A1B-MLX-8bit|text|vllm|8bit|5|no||||8|3|Very fast: cheap pre-classification / routing
 qwen35-9b-vl|mlx-community/Qwen3.5-9B-MLX-8bit|ocr|mlxvlm|8bit|9|no|||||3|Vision-language alternative to GLM-OCR
 glm-ocr|mlx-community/GLM-OCR-4bit|ocr|mlxvlm|4bit|2|no|||||5|Default ocr, on-demand. #1 OmniDocBench. alt: mlx-community/GLM-OCR-bf16

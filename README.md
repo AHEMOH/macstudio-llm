@@ -214,8 +214,21 @@ Two roles are selectable: **`text`** (served by vllm-mlx as alias `main`) and
 
 Per-model columns the catalog carries: `role`, `engine`, `quant`, `gb`,
 `gated`, `reasoning_parser`, `tool_parser`, `max_kv_size`, `max_num_seqs`,
-`rating`, `notes`. Parsers/overrides apply only to text (vllm) models and are
-passed straight to `vllm-mlx serve`.
+`rating`, `notes`. Parsers/overrides apply only to text models and are passed
+straight to `vllm-mlx serve`.
+
+**Engines:** `vllm` (text), `vllm-mllm` (text **+** vision/audio — adds `--mllm`,
+e.g. Gemma 4), `mlxvlm` (the on-demand OCR role). The `a`/`e` TUI actions ask
+"multimodal?" for text models to pick `vllm` vs `vllm-mllm`.
+
+**Per-model tuning:** `max_num_seqs` is set per model by footprint (big models
+2, small ones up to 8); excess parallel requests queue. `max_kv_size` is left
+empty = the global 128K (set per row only for a model whose native context is
+< 128K). The **KV cache pool is auto-sized per active model** by
+`start-vllm.sh`: `pool = IOGPU_WIRED_LIMIT_MB − model_gb − VLLM_CACHE_RESERVE_MB`
+— so an 8 GB model automatically gets a big pool (lots of context/concurrency)
+and a 20 GB model a small one, with no manual per-model knob. Pin it explicitly
+with `VLLM_CACHE_MEMORY_MB` if you ever need to.
 
 **HuggingFace token:** set it via `llm-models` → `t`. It is stored in the user's
 HF cache (`$HF_CACHE_DIR/.../token`, mode 600) — **never** in `macstudio.conf`
@@ -227,7 +240,9 @@ Seeded models (all verified to exist as ready MLX builds):
 |---|---|---|---|
 | `qwen36-35b-a3b` | text | 20 | **default main** — agentic, multilingual, MoE (fast), tiny KV |
 | `laguna-xs2` | text | 22 | agentic + long-horizon, 128K (mxfp4 — confirm FP4 support) |
-| `gemma4-31b` | text | 18 | best German + multimodal (**gated**) |
+| `gemma4-31b` | text | 18 | German + multimodal, `vllm-mllm` (**gated**) |
+| `gemma4-26b` | text | 16 | Gemma 4 26B-A4B MoE, multimodal, fast (**gated**) |
+| `gemma4-12b` | text | 8 | Gemma 4 12B, multimodal, lots of headroom for OCR (**gated**) |
 | `granite41-30b` | text | 17 | enterprise/RAG (mxfp4) |
 | `glm47-flash` | text | 19 | strong coding |
 | `qwen36-27b` | text | 16 | dense alternative |
@@ -328,6 +343,8 @@ use the menu) to change a live box.
 | `VLLM_MAX_MODEL_LEN` | `131072` | `--max-kv-size`: max context tokens (128K) |
 | `VLLM_MAX_NUM_SEQS` | `4` | Max concurrent sequences (excess requests queue) |
 | `VLLM_KV_BITS` | `8` | KV-cache quantization bits (8/4; `0`/empty = off) |
+| `VLLM_CACHE_MEMORY_MB` | _(empty)_ | KV cache pool size; empty = auto (wired − model_gb − reserve) |
+| `VLLM_CACHE_RESERVE_MB` | `4096` | RAM the auto pool leaves free for OS + on-demand GLM-OCR |
 | `GLMOCR_PUBLIC_PORT` | `5002` | Public GLM-OCR port (proxy) |
 | `GLMOCR_BACKEND_PORT` | `15002` | Internal GLM-OCR backend port |
 | `IDLE_TIMEOUT_GLMOCR` | `900` | Seconds before GLM-OCR sleeps; **`-1` = never sleep** |
@@ -433,6 +450,7 @@ On the Mac after `--apply`:
 | `vllm-mlx: unrecognized arguments` in `vllm.log` | A `vllm-mlx serve` flag changed. Check `vllm-mlx serve --help` in the venv and adjust `wrappers/start-vllm.sh`. |
 | vllm-mlx flapping in `vllm.log` | No model downloaded yet, or `ALIAS_MAIN` points at a model that isn't `ok`. Run `llm-models` → `d` then `s`. |
 | Reasoning text leaks into the answer | The model doesn't emit `<think>` tags, so the parser can't split it. Use a model that does (e.g. `gptoss-20b`) or a "answer concisely" system prompt. |
+| Gemma 4 vision doesn't work as `main` | vllm-mlx documents vision for Gemma **3**, not 4. The `vllm-mllm` engine passes `--mllm`; if Gemma 4 images still fail, set the entry to `engine=vllm` (text-only) via `llm-models` → `e` and use GLM-OCR for images. |
 | Download is slow / rate-limited | Set your HF token: `llm-models` → `t`. |
 | `memory_pressure` reports `Warn` with a model loaded | Lower `VLLM_MAX_MODEL_LEN`/`VLLM_MAX_NUM_SEQS`, or `IOGPU_WIRED_LIMIT_MB` by 1024, via `setup.sh` menu 4. |
 | Mac doesn't come back after reboot / power loss | **FileVault is ON** and no console operator. Use `sudo fdesetup authrestart` for planned reboots; never plain `sudo reboot` on a headless FileVault Mac. |

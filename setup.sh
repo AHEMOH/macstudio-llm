@@ -72,6 +72,8 @@ CONFIG_KEYS=(
   VLLM_MAX_MODEL_LEN
   VLLM_MAX_NUM_SEQS
   VLLM_KV_BITS
+  VLLM_CACHE_MEMORY_MB
+  VLLM_CACHE_RESERVE_MB
   LITELLM_PORT
   GLMOCR_PUBLIC_PORT
   GLMOCR_BACKEND_PORT
@@ -134,6 +136,8 @@ config_default() {
     VLLM_MAX_MODEL_LEN)          echo 131072 ;;
     VLLM_MAX_NUM_SEQS)           echo 4 ;;
     VLLM_KV_BITS)                echo 8 ;;
+    VLLM_CACHE_MEMORY_MB)        echo "" ;;
+    VLLM_CACHE_RESERVE_MB)       echo 4096 ;;
     LITELLM_PORT)                echo 11434 ;;
     GLMOCR_PUBLIC_PORT)          echo 5002 ;;
     GLMOCR_BACKEND_PORT)         echo 15002 ;;
@@ -191,6 +195,8 @@ config_hint() {
     VLLM_MAX_MODEL_LEN)          echo "max-kv-size: max context tokens (paged KV). 131072=128K. Per-model override in catalog" ;;
     VLLM_MAX_NUM_SEQS)           echo "Max concurrent sequences (continuous batching); excess requests queue" ;;
     VLLM_KV_BITS)                echo "KV-cache quantization bits: 8 (recommended, halves KV RAM), 4 (max ctx), 0/empty=off" ;;
+    VLLM_CACHE_MEMORY_MB)        echo "KV cache pool size in MB; empty = auto (wired - model_gb - reserve). Override only to pin it" ;;
+    VLLM_CACHE_RESERVE_MB)       echo "RAM (MB) the auto cache pool leaves free for OS + on-demand GLM-OCR (default 4096)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
     IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend sleeps; -1 = never sleep (stay warm)" ;;
     OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: 10m (default), 1h, 24h, -1=forever" ;;
@@ -1338,7 +1344,13 @@ catalog_add_entry() {
   fi
   read -r -p "HF repo-id (org/name, MUST be a ready MLX build): " repo; [ -z "$repo" ] && return 0
   read -r -p "role [text/ocr] (default text): " role; role=${role:-text}
-  if [ "$role" = ocr ]; then engine=mlxvlm; else engine=vllm; fi
+  if [ "$role" = ocr ]; then
+    engine=mlxvlm
+  else
+    local mm
+    read -r -p "multimodal (vision/audio) text model? [y/N]: " mm
+    case "$mm" in y|Y|yes|YES) engine=vllm-mllm ;; *) engine=vllm ;; esac
+  fi
   read -r -p "quant (e.g. 4bit): " quant;       quant=${quant:-?}
   read -r -p "approx GB: " gb;                  gb=${gb:-?}
   read -r -p "gated? [yes/no] (default no): " gated; gated=${gated:-no}

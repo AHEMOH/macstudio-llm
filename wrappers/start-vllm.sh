@@ -35,13 +35,30 @@ if [ -z "${REPO:-}" ]; then
   echo "[start-vllm] run 'llm-models' to download a model and set it as main" >&2
   exit 78   # EX_CONFIG
 fi
+ENGINE=$(field 4)  # vllm | vllm-mllm (multimodal) — ocr models go via mlx-vlm, not here
+GB=$(field 6)      # model footprint in GB (drives the auto KV-cache pool size)
 RP=$(field 8)      # reasoning_parser   (empty = omit)
 TP=$(field 9)      # tool_parser        (empty = omit)
 MKV=$(field 10)    # per-model max_kv_size  (empty = global default)
 MNS=$(field 11)    # per-model max_num_seqs (empty = global default)
 
-echo "[start-vllm] serving main='$MODEL_ID' repo='$REPO' on 127.0.0.1:${VLLM_BACKEND_PORT:-18000}"
-echo "[start-vllm] reasoning_parser='${RP:-none}' tool_parser='${TP:-none}' kv=${MKV:-${VLLM_MAX_MODEL_LEN:-131072}} seqs=${MNS:-${VLLM_MAX_NUM_SEQS:-4}} kv_bits='${VLLM_KV_BITS:-8}'"
+# Auto-size the KV cache pool to the headroom left by THIS model, unless an
+# explicit VLLM_CACHE_MEMORY_MB override is set. pool = wired - weights - reserve
+# (reserve covers the OS + on-demand GLM-OCR). So an 8 GB model gets a big pool
+# (lots of context/concurrency), a 20 GB model a small one — no per-model knob.
+CACHE_MB="${VLLM_CACHE_MEMORY_MB:-}"
+if [ -z "$CACHE_MB" ]; then
+  case "${GB:-}" in
+    ''|*[!0-9]*) CACHE_MB="" ;;   # unknown gb -> let vllm auto-detect (~20%)
+    *)
+      CACHE_MB=$(( ${IOGPU_WIRED_LIMIT_MB:-30720} - GB*1024 - ${VLLM_CACHE_RESERVE_MB:-4096} ))
+      [ "$CACHE_MB" -lt 2048 ] && CACHE_MB=2048
+      ;;
+  esac
+fi
+
+echo "[start-vllm] serving main='$MODEL_ID' repo='$REPO' engine='${ENGINE:-vllm}' on 127.0.0.1:${VLLM_BACKEND_PORT:-18000}"
+echo "[start-vllm] reasoning='${RP:-none}' tool='${TP:-none}' kv=${MKV:-${VLLM_MAX_MODEL_LEN:-131072}} seqs=${MNS:-${VLLM_MAX_NUM_SEQS:-4}} kv_bits='${VLLM_KV_BITS:-8}' cache_mb='${CACHE_MB:-auto}'"
 
 # Flags verified against `vllm-mlx serve --help` on macOS 26.5 (mlx build):
 #   --use-paged-cache / --enable-prefix-cache  paged KV (no reload on ctx change)
@@ -66,5 +83,10 @@ ARGS=( serve "$REPO"
 case "${VLLM_KV_BITS:-8}" in
   4|8) ARGS+=( --kv-cache-quantization --kv-cache-quantization-bits "${VLLM_KV_BITS:-8}" ) ;;
 esac
+[ -n "$CACHE_MB" ] && ARGS+=( --cache-memory-mb "$CACHE_MB" )
+# Multimodal models (Gemma etc.) aren't auto-detected by name -> force --mllm.
+if [ "${ENGINE:-vllm}" = "vllm-mllm" ]; then
+  ARGS+=( --mllm --trust-remote-code )
+fi
 
 exec "$VENV_DIR/vllm/bin/vllm-mlx" "${ARGS[@]}"
