@@ -26,19 +26,22 @@
 #   reasoning {qwen3,deepseek_r1,gpt_oss,gemma4,glm4}
 #   tool      {qwen,qwen3_coder,hermes,gpt-oss,granite,gemma4,glm47,mistral,llama,...}
 # max_kv_size / max_num_seqs: empty = use the global VLLM_* default; set = per-model override.
+# max_kv_size is set to 131072 (128K) for all text models. "native max:" in notes = the
+# model's true ceiling — raise max_kv_size toward it (and check RAM) if you need more context.
+# (ocr/mlxvlm rows: max_kv_size is ignored by mlx-vlm, left empty.)
 # rating = 1..5 for THIS box (M1 Max 32 GB), agentic document work (hermes-agent), offline.
 #
 # columns:
 # id|hf_repo|role|engine|quant|gb|gated|reasoning_parser|tool_parser|max_kv_size|max_num_seqs|rating|notes
-qwen36-35b-a3b|mlx-community/Qwen3.6-35B-A3B-4bit-DWQ|text|vllm|4bit-DWQ|20|no|qwen3|hermes||2|5|Default main. Tool use + multilingual, MoE = fast. Tiny KV (2 kv-heads) -> long ctx cheap
-laguna-xs2|OsaurusAI/Laguna-XS.2-mxfp4|text|vllm|mxfp4|22|no||hermes||2|5|Agentic + long-horizon, 128K ctx; confirm vllm-mlx FP4 support
-gemma4-31b|mlx-community/gemma-4-31B-it-OptiQ-4bit|text|vllm-mllm|4bit-OptiQ|18|yes|gemma4|gemma4||2|4|BROKEN on vllm-mlx 0.3.0 + 0.4.0rc1 (shared_kv vs mlx-vlm 0.6.2) - needs upstream fix. German + multimodal; gated
-gemma4-26b|mlx-community/gemma-4-26b-a4b-it-4bit|text|vllm-mllm|4bit|16|yes|gemma4|gemma4||3|4|BROKEN on vllm-mlx 0.3.0 + 0.4.0rc1 (shared_kv vs mlx-vlm 0.6.2) - needs upstream fix. 26B-A4B MoE, multimodal; gated
-gemma4-12b|mlx-community/gemma-4-12B-it-4bit|text|vllm-mllm|4bit|8|yes|gemma4|gemma4||6|4|BROKEN on vllm-mlx 0.3.0 + 0.4.0rc1 (shared_kv vs mlx-vlm 0.6.2) - needs upstream fix. 12B multimodal, great German; gated
-granite41-30b|mlx-community/granite-4.1-30b-mxfp4|text|vllm|mxfp4|17|no||granite||2|4|Enterprise/RAG, long docs; confirm vllm-mlx FP4 support
-glm47-flash|mlx-community/GLM-4.7-Flash-4bit|text|vllm|4bit|19|no|glm4|glm47||2|4|Strong coding
-qwen36-27b|mlx-community/Qwen3.6-27B-4bit|text|vllm|4bit|16|no|qwen3|hermes||2|4|Dense alternative to 35B-A3B
-gptoss-20b|mlx-community/gpt-oss-20b-MXFP4-Q8|text|vllm|mxfp4-q8|12|no|gpt_oss|gpt-oss||8|4|Small (12GB) -> lots of headroom, clean output (no reasoning leak); good paperless main; FP4 verified on vllm-mlx 0.3.0
-lfm25-8b|LiquidAI/LFM2.5-8B-A1B-MLX-8bit|text|vllm|8bit|5|no||||8|3|Very fast: cheap pre-classification / routing
-qwen35-9b-vl|mlx-community/Qwen3.5-9B-MLX-8bit|ocr|mlxvlm|8bit|9|no|||||3|Vision-language alternative to GLM-OCR
-glm-ocr|mlx-community/GLM-OCR-4bit|ocr|mlxvlm|4bit|2|no|||||5|Default ocr, on-demand. #1 OmniDocBench. alt: mlx-community/GLM-OCR-bf16
+qwen36-35b-a3b|mlx-community/Qwen3.6-35B-A3B-4bit-DWQ|text|vllm|4bit-DWQ|20|no|qwen3|hermes|131072|2|5|Default main. Tool use + multilingual, MoE = fast, tiny KV (2 kv-heads). native max: 262144 (256K)
+laguna-xs2|OsaurusAI/Laguna-XS.2-mxfp4|text|vllm|mxfp4|22|no||hermes|131072|2|5|Agentic + long-horizon; confirm vllm-mlx FP4. native max: 131072 (128K)
+gemma4-31b|mlx-community/gemma-4-31B-it-OptiQ-4bit|text|vllm-mllm|4bit-OptiQ|18|yes|gemma4|gemma4|131072|2|4|BROKEN on vllm-mlx 0.3.0 + 0.4.0rc1 (shared_kv vs mlx-vlm 0.6.2) - needs upstream fix. German + multimodal; gated. native max: 262144 (256K)
+gemma4-26b|mlx-community/gemma-4-26b-a4b-it-4bit|text|vllm-mllm|4bit|16|yes|gemma4|gemma4|131072|3|4|BROKEN on vllm-mlx 0.3.0 + 0.4.0rc1 (shared_kv) - needs upstream fix. 26B-A4B MoE, multimodal; gated. native max: 262144 (256K)
+gemma4-12b|mlx-community/gemma-4-12B-it-4bit|text|vllm-mllm|4bit|8|yes|gemma4|gemma4|131072|6|4|BROKEN on vllm-mlx 0.3.0 + 0.4.0rc1 (shared_kv) - needs upstream fix. 12B multimodal, great German; gated. native max: 262144 (256K)
+granite41-30b|mlx-community/granite-4.1-30b-mxfp4|text|vllm|mxfp4|17|no||granite|131072|2|4|Enterprise/RAG; confirm vllm-mlx FP4. native max: 131072 (128K prod; up to 512K extended)
+glm47-flash|mlx-community/GLM-4.7-Flash-4bit|text|vllm|4bit|19|no|glm4|glm47|131072|2|4|Strong coding. native max: 204800 (200K)
+qwen36-27b|mlx-community/Qwen3.6-27B-4bit|text|vllm|4bit|16|no|qwen3|hermes|131072|2|4|Dense alternative to 35B-A3B. native max: 262144 (256K)
+gptoss-20b|mlx-community/gpt-oss-20b-MXFP4-Q8|text|vllm|mxfp4-q8|12|no|gpt_oss|gpt-oss|131072|8|4|Small (12GB), clean output (no reasoning leak), good paperless main; FP4 verified. native max: 131072 (128K)
+lfm25-8b|LiquidAI/LFM2.5-8B-A1B-MLX-8bit|text|vllm|8bit|5|no|||131072|8|3|Very fast: cheap pre-classification / routing. native max: 131072 (128K)
+qwen35-9b-vl|mlx-community/Qwen3.5-9B-MLX-8bit|ocr|mlxvlm|8bit|9|no|||||3|Vision-language alternative to GLM-OCR. native max: 262144 (256K; mlxvlm ignores max_kv_size)
+glm-ocr|mlx-community/GLM-OCR-4bit|ocr|mlxvlm|4bit|2|no|||||5|Default ocr, on-demand. #1 OmniDocBench. alt: mlx-community/GLM-OCR-bf16. page-level (mlxvlm ignores max_kv_size)
