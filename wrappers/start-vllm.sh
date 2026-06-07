@@ -95,6 +95,9 @@ case "${VLLM_KV_BITS:-8}" in
   4|8) ARGS+=( --kv-cache-quantization --kv-cache-quantization-bits "${VLLM_KV_BITS:-8}" ) ;;
 esac
 [ -n "$CACHE_MB" ] && ARGS+=( --cache-memory-mb "$CACHE_MB" )
+# Optional embedding model co-resident in the same instance -> /v1/embeddings
+# (LiteLLM alias 'embed'). Tiny; great for RAG/semantic search over documents.
+[ -n "${VLLM_EMBEDDING_MODEL:-}" ] && ARGS+=( --embedding-model "$VLLM_EMBEDDING_MODEL" )
 # Multimodal models (Gemma etc.) aren't auto-detected by name -> force --mllm.
 if [ "${ENGINE:-vllm}" = "vllm-mllm" ]; then
   ARGS+=( --mllm --trust-remote-code )

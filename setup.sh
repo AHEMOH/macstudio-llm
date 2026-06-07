@@ -76,6 +76,7 @@ CONFIG_KEYS=(
   VLLM_CACHE_MEMORY_MB
   VLLM_CACHE_RESERVE_MB
   LLM_REQUEST_TIMEOUT
+  VLLM_EMBEDDING_MODEL
   LITELLM_PORT
   GLMOCR_PUBLIC_PORT
   GLMOCR_BACKEND_PORT
@@ -142,6 +143,7 @@ config_default() {
     VLLM_CACHE_MEMORY_MB)        echo "" ;;
     VLLM_CACHE_RESERVE_MB)       echo 4096 ;;
     LLM_REQUEST_TIMEOUT)         echo 1200 ;;
+    VLLM_EMBEDDING_MODEL)        echo "" ;;
     LITELLM_PORT)                echo 11434 ;;
     GLMOCR_PUBLIC_PORT)          echo 5002 ;;
     GLMOCR_BACKEND_PORT)         echo 15002 ;;
@@ -203,6 +205,7 @@ config_hint() {
     VLLM_CACHE_MEMORY_MB)        echo "KV cache pool size in MB; empty = auto (wired - model_gb - reserve). Override only to pin it" ;;
     VLLM_CACHE_RESERVE_MB)       echo "RAM (MB) the auto cache pool leaves free for OS + on-demand GLM-OCR (default 4096)" ;;
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for vllm-mlx + LiteLLM (default 1200 = 20 min; long docs/OCR)" ;;
+    VLLM_EMBEDDING_MODEL)        echo "Optional HF embedding model served co-resident with main -> alias 'embed' (/v1/embeddings). empty=off. e.g. mlx-community/multilingual-e5-base-mlx" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
     IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend sleeps; -1 = never sleep (stay warm)" ;;
     OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: 10m (default), 1h, 24h, -1=forever" ;;
@@ -807,6 +810,10 @@ render_litellm_config() {
       printf '  - model_name: ocr\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
         "$ocr_repo" "${GLMOCR_PUBLIC_PORT:-5002}"
     fi
+    if [ -n "${VLLM_EMBEDDING_MODEL:-}" ]; then
+      printf '  - model_name: embed\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
+        "$VLLM_EMBEDDING_MODEL" "${VLLM_BACKEND_PORT:-18000}"
+    fi
     echo "litellm_settings:"
     echo "  drop_params: true"
     # Long docs/OCR generations can run minutes — raise the gateway timeout and
@@ -1326,6 +1333,14 @@ set_model_alias() {
     err "'$id' has role '$role' but slot '$slot' needs role '$want_role' — wrong list"
     return 1
   fi
+  # Refuse models the catalog flags BROKEN — selecting one just breaks the
+  # backend (server won't serve). Override only deliberately with FORCE_BROKEN=1.
+  if printf '%s' "$(catalog_field "$id" 13)" | /usr/bin/grep -qi 'BROKEN'; then
+    err "'$id' is flagged BROKEN on the current vllm-mlx — refusing (would break the server)."
+    warn "  see 'i $id' for the reason. Override (not advised): FORCE_BROKEN=1 …"
+    [ "${FORCE_BROKEN:-0}" = 1 ] || return 1
+    warn "FORCE_BROKEN=1 set — proceeding anyway."
+  fi
   save_config_key "$key" "$id"
   eval "$key=\$id"
   ok "$key = $id"
@@ -1440,20 +1455,50 @@ catalog_remove_entry() {
 }
 
 print_catalog_table() {
-  local fmt="  %-16s %-5s %-6s %-10s %-4s %-5s %-3s %-6s %s\n"
-  printf "$fmt" ID ROLE STATUS ENGINE GB GATED RAT ALIAS REPO
-  printf "$fmt" ---------------- ---- ------ ---------- ---- ----- --- ------ ----
+  local fmt="  %-16s %-5s %-6s %-7s %-10s %-4s %-5s %-3s %-6s %s\n"
+  printf "$fmt" ID ROLE STATUS FLAG ENGINE GB GATED RAT ALIAS REPO
+  printf "$fmt" ---------------- ---- ------ ------- ---------- ---- ----- --- ------ ----
   local id repo role engine quant gb gated rp tp kv seqs rating notes
   while IFS='|' read -r id repo role engine quant gb gated rp tp kv seqs rating notes; do
     case "$id" in ''|\#*) continue ;; esac
-    local st mark tag=""
+    local st mark tag="" flag=""
     st=$(model_status "$repo")
     case "$st" in ok) mark="ok" ;; partial) mark="PART" ;; *) mark="-" ;; esac
+    # FLAG: BROKEN (notes say so -> not selectable) wins; else REC for rating>=5.
+    case "$notes" in *BROKEN*|*broken*) flag="BROKEN" ;; esac
+    if [ -z "$flag" ]; then case "${rating:-}" in 5) flag="REC" ;; esac; fi
     [ "$id" = "${ALIAS_MAIN:-}" ] && tag="${tag}main "
     [ "$id" = "${ALIAS_OCR:-}" ]  && tag="${tag}ocr "
     printf "$fmt" \
-      "$id" "${role:-text}" "$mark" "$engine" "$gb" "$gated" "$rating" "${tag:-}" "$repo"
+      "$id" "${role:-text}" "$mark" "$flag" "$engine" "$gb" "$gated" "$rating" "${tag:-}" "$repo"
   done <"$CATALOG_FILE"
+}
+
+# Full detail for one model — the place to read WHY a model is BROKEN, its
+# native context ceiling, parsers, footprint. 'i <id>' in the models menu.
+print_model_detail() {
+  local id=$1 repo role engine quant gb gated rp tp kv seqs rating notes st
+  [ -z "${id:-}" ] && { err "usage: i <id>"; return 1; }
+  repo=$(catalog_repo "$id"); [ -z "$repo" ] && { err "unknown id: $id"; return 1; }
+  role=$(catalog_field "$id" 3); engine=$(catalog_field "$id" 4)
+  quant=$(catalog_field "$id" 5); gb=$(catalog_field "$id" 6)
+  gated=$(catalog_field "$id" 7); rp=$(catalog_field "$id" 8)
+  tp=$(catalog_field "$id" 9); kv=$(catalog_field "$id" 10)
+  seqs=$(catalog_field "$id" 11); rating=$(catalog_field "$id" 12)
+  notes=$(catalog_field "$id" 13)
+  st=$(model_status "$repo")
+  printf "\n${C_BOLD}── %s ──────────────────────────────${C_RST}\n" "$id"
+  printf "  repo        %s\n" "$repo"
+  printf "  role/engine %s / %s%s\n" "${role:-text}" "${engine:-vllm}" \
+    "$( [ "$id" = "${ALIAS_MAIN:-}" ] && printf '   [active main]'; [ "$id" = "${ALIAS_OCR:-}" ] && printf '   [active ocr]' )"
+  printf "  quant/gb    %s / %s GB\n" "${quant:--}" "${gb:-?}"
+  printf "  status      %s   gated=%s   rating=%s/5\n" "$st" "${gated:-no}" "${rating:-?}"
+  printf "  parsers     reasoning=%s  tool=%s\n" "${rp:-none}" "${tp:-none}"
+  printf "  max_kv/seqs %s / %s\n" "${kv:-<global>}" "${seqs:-<global>}"
+  case "$notes" in *BROKEN*|*broken*) printf "  ${C_RED}FLAG        BROKEN — not selectable as main (would break the server)${C_RST}\n" ;;
+    *) case "${rating:-}" in 5) printf "  ${C_GRN}FLAG        REC — recommended for this box${C_RST}\n" ;; esac ;;
+  esac
+  printf "  notes       %s\n\n" "${notes:--}"
 }
 
 menu_models() {
@@ -1463,18 +1508,20 @@ menu_models() {
   while true; do
     clear 2>/dev/null || true
     printf "${C_BOLD}── Models & aliases ───────────────────────────${C_RST}\n"
-    printf "Active:  main=%s  ocr=%s   (ONE text model loads; switch = explicit restart, no hot-swap)\n\n" \
-      "${ALIAS_MAIN:-none}" "${ALIAS_OCR:-none}"
+    printf "Active:  main=%s  ocr=%s  embed=%s\n" \
+      "${ALIAS_MAIN:-none}" "${ALIAS_OCR:-none}" "${VLLM_EMBEDDING_MODEL:-off}"
+    printf "${C_DIM}(ONE text model loads; switch = explicit restart, no hot-swap. embed set in menu 4: VLLM_EMBEDDING_MODEL)${C_RST}\n\n"
     print_catalog_table
-    printf "\nSource: HuggingFace (repo-ids, not URLs). STATUS ok = downloaded+verified, only ok is selectable.\n"
-    printf "Roles: text -> 's' (alias main, vllm)   ocr -> 'o' (alias ocr, on-demand mlx-vlm)\n"
-    printf "Actions:  d <id> download   s <id> set TEXT/main   o <id> set OCR\n"
+    printf "\nSTATUS ok = downloaded+verified (only ok is selectable).  FLAG: ${C_RED}BROKEN${C_RST}=not selectable  ${C_GRN}REC${C_RST}=recommended (rating 5).\n"
+    printf "Roles: text -> 's' (alias main, vllm)   ocr -> 'o' (alias ocr, on-demand mlx-vlm). Source: HuggingFace repo-ids.\n"
+    printf "Actions:  i <id> info   d <id> download   s <id> set TEXT/main   o <id> set OCR\n"
     printf "          a add   e <id> edit   x <id> remove   r <id> delete-local   t HF token   q back\n"
     read -r -p "models> " line || return 0
     local cmd arg
     cmd=$(printf '%s' "$line" | /usr/bin/awk '{print $1}')
     arg=$(printf '%s' "$line" | /usr/bin/awk '{print $2}')
     case "$cmd" in
+      i) print_model_detail "$arg";    pause_enter ;;
       d) download_model "$arg";        pause_enter ;;
       s) set_model_alias main "$arg";  pause_enter ;;
       o) set_model_alias ocr "$arg";   pause_enter ;;
