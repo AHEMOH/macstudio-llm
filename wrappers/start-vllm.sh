@@ -34,13 +34,19 @@ fi
 
 echo "[start-vllm] serving main='$MODEL_ID' repo='$REPO' on 127.0.0.1:${VLLM_BACKEND_PORT:-18000}"
 
-# vllm-mlx serves one model under the repo id as its served-model-name; LiteLLM
-# forwards to it (see render_litellm_config in setup.sh). Flag names follow the
-# vLLM convention; confirm on first run (see plan "offene Punkte").
+# Flags verified against `vllm-mlx serve --help` on macOS 26.5 (mlx build):
+#   --use-paged-cache    paged KV  -> no reload when a request asks for a
+#                        different context length (the core requirement)
+#   --enable-prefix-cache  big win for paperless (shared system prompts)
+#   --max-kv-size        caps KV/context tokens to keep us inside wired RAM
+#   --served-model-name  pin the name LiteLLM forwards (model: openai/<repo>)
 exec "$VENV_DIR/vllm/bin/vllm-mlx" serve "$REPO" \
   --host 127.0.0.1 \
   --port "${VLLM_BACKEND_PORT:-18000}" \
+  --served-model-name "$REPO" \
   --continuous-batching \
-  --max-model-len "${VLLM_MAX_MODEL_LEN:-32768}" \
+  --use-paged-cache \
+  --enable-prefix-cache \
   --max-num-seqs "${VLLM_MAX_NUM_SEQS:-4}" \
-  --metrics
+  --max-kv-size "${VLLM_MAX_MODEL_LEN:-32768}" \
+  --enable-metrics
