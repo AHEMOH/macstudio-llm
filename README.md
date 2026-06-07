@@ -1,91 +1,107 @@
 # Mac Studio Headless LLM Server
 
-Headless Apple Silicon Mac as a maximum-memory **Ollama** inference server, with
-on-demand companion services (image AI, document OCR/VLM) that sleep when idle
-and wake automatically on the first incoming request. Runs fully unattended —
-no GUI, no login, auto-restart on power loss, weekly self-update.
+Headless Apple Silicon Mac as a **vLLM-style MLX inference server**: one big
+text model permanently warm via **`vllm-mlx`** (continuous batching, paged KV
+cache, large context), a **LiteLLM gateway** that gives apps stable aliases, and
+an on-demand **GLM-OCR** vision model — plus optional companion services (image
+AI, document conversion) that sleep when idle and wake on first request. Runs
+fully unattended: no GUI, no login, auto-restart on power loss, weekly
+self-update.
 
-Designed for a 32 GB M1 Max but scales unchanged to M2/M3/M4 Max/Ultra with
-more RAM — just edit one config key.
+Designed for a 32 GB M1 Max but scales unchanged to bigger Apple Silicon — just
+raise a couple of config keys.
+
+> **Why not Ollama?** Ollama bakes context length into the model load (every
+> `num_ctx` change = a 30–60 s reload) and has weaker concurrency. `vllm-mlx`
+> allocates KV per request (no reload when a prompt is longer/shorter) and
+> batches parallel requests. Ollama is still shipped here as an **opt-in
+> fallback** (`INSTALL_OLLAMA=1`), off by default.
 
 ## What this gives you
 
-- **Ollama** always on :11434, one big model pinned in VRAM forever (no reload
-  latency), tuned env (`OLLAMA_KEEP_ALIVE=-1`, `OLLAMA_KV_CACHE_TYPE=q8_0`,
-  flash attention, `MAX_LOADED_MODELS=1`).
-- **30 GB GPU wired memory limit** (on a 32 GB box) + OS trim → nearly the
-  whole machine is available to the model.
-- **On-demand proxies** on :3003 (immich-ml) and :5001 (docling-serve). Public
-  ports are always listening; the real backend is only started when a request
-  arrives and is stopped after 15 min of idle, freeing RAM back to Ollama.
-- **Weekly auto-update** Saturday 06:00: brew upgrade, Python venv pip upgrade,
-  macOS minor/security updates (with auto-reboot if needed).
-- **Prometheus exporters** for your Proxmox Grafana stack: node_exporter
-  (:9100), Apple-Silicon metrics via `powermetrics` (:9101, GPU %, power,
-  thermal + memory pressure), Ollama state (:9102, loaded model, size,
-  running config), and on-demand stack state (:9103, immich/docling backend
-  + proxy + watchdog liveness).
-- **Memory-pressure watchdog** as a safety net — offloads optional services
-  if macOS reports RAM pressure while Ollama is active.
-- **Auto-restart on power loss**, sleep disabled, `caffeinate` daemon,
-  LaunchDaemon-based so no login required.
-- **MOTD banner** on every SSH login listing ports, commands, and logs.
-- **One script** (`setup.sh`) for install, update, settings, service control,
-  clean-up, uninstall. TUI by default, `--apply` for non-interactive runs.
-  Idempotent — re-run safely at any time.
+- **`vllm-mlx`** always on (internal :18000): **one** text model, continuous
+  batching, **paged KV cache** (no reload on context change), **prefix cache**
+  (big win for repeated system prompts, e.g. document pipelines), per-model
+  **reasoning/tool-call parsers**, and **8-bit KV quantization** so a 128K
+  context fits comfortably.
+- **LiteLLM gateway** on the public port (:11434): apps talk OpenAI `/v1` (and
+  Anthropic `/v1/messages`) to **stable aliases** — `main` (text) and `ocr`.
+  The underlying model is swappable without the app noticing.
+- **GLM-OCR** (0.9 B, ~2 GB) on-demand on :5002 via `mlx-vlm` — the only model
+  allowed to run alongside the big main model. #1 on OmniDocBench.
+- **Model catalog + `llm-models` TUI**: download pre-converted MLX models from
+  HuggingFace, pick which one is the active text/ocr model, manage your HF
+  token. Only fully-downloaded models become selectable.
+- **30 GB GPU wired memory limit** (on a 32 GB box) + OS trim → nearly the whole
+  machine is available to the model. KV math keeps it swap-free.
+- **On-demand companions** on :3003 (immich-ml) and :5001 (docling-serve),
+  optional — public ports always listen; the real backend wakes on request and
+  sleeps after 15 min, freeing RAM.
+- **Weekly auto-update** (Sat 06:00): brew, the three MLX venvs (`vllm-mlx`,
+  `litellm`, `mlx-vlm`), a refresh of the active models, and macOS
+  minor/security updates.
+- **Prometheus exporters** for Grafana: node_exporter (:9100), Apple-Silicon
+  metrics (:9101), on-demand stack state (:9103). vllm-mlx and LiteLLM expose
+  their own `/metrics`.
+- **Watchdogs**: a memory-pressure safety net (offloads optional services,
+  keeps the main model healthy) and an Ollama-only inference-stall killer
+  (idle unless `INSTALL_OLLAMA=1`).
+- **One script** (`setup.sh`): install, update, settings, **model manager**,
+  service control, clean-up, uninstall. TUI by default, `--apply` for
+  non-interactive runs. Idempotent — re-run safely any time.
 
 ## Architecture
 
 ```
-Always on  (LaunchDaemon, KeepAlive=true, RunAtLoad=true):
-  com.local.ollama.headless        :11434   Ollama LLM engine
-  com.local.immich.proxy           :3003    on-demand proxy, ~20 MB
-  com.local.docling.proxy          :5001    on-demand proxy, ~20 MB
+Public (apps point here):
+  com.local.litellm.proxy          :11434   LiteLLM gateway — aliases main / ocr
+                                             (OpenAI /v1 + Anthropic /v1/messages)
+Always on (internal / support):
+  com.local.vllm.mlx               :18000   vllm-mlx — the ONE text model
+  com.local.glmocr.proxy           :5002    on-demand proxy for GLM-OCR
+  com.local.immich.proxy           :3003    on-demand proxy (optional)
+  com.local.docling.proxy          :5001    on-demand proxy (optional)
   com.local.node.exporter          :9100    Prometheus system metrics
-  com.local.silicon.exporter       :9101    GPU / power / thermal metrics
-  com.local.ollama.exporter        :9102    Ollama /api/ps exporter
+  com.local.silicon.exporter       :9101    GPU / power / thermal / mem-pressure
   com.local.ondemand.exporter      :9103    on-demand backend + proxy liveness
   com.local.llm.watchdog                    memory-pressure safety net
+  com.local.inference.watchdog              Ollama stall killer (idle w/o Ollama)
   com.local.preventsleep                    caffeinate
+
+Registered but sleeping until requested:
+  com.local.glmocr.serve           :15002   GLM-OCR backend (mlx-vlm)
+  com.local.immich.ml              :13003   immich-ml backend (optional)
+  com.local.docling.serve          :15001   docling-serve backend (optional)
 
 One-shot at boot:
   com.local.iogpu.wiredlimit                sets iogpu.wired_limit_mb
-
 Scheduled (Sat 06:00 default):
-  com.local.weekly.autoupdate               brew + pip + softwareupdate
+  com.local.weekly.autoupdate               brew + venv pip + model refresh + softwareupdate
 
-Registered but sleeping until requested:
-  com.local.immich.ml              :13003   real immich-ml backend
-  com.local.docling.serve          :15001   real docling-serve backend
+Opt-in only (INSTALL_OLLAMA=1, off by default):
+  com.local.ollama.headless        :11434   Ollama (collides with LiteLLM — see note)
+  com.local.ollama.exporter        :9102     Ollama /api/ps exporter
 ```
 
-First request after idle pays a one-time ~3 s warm-up. Subsequent requests
-within the idle window are instant.
+The main model is kept warm; switching it is an **explicit** action (pick in
+`llm-models` → vllm-mlx restarts, ~30–60 s) — never a silent hot-swap.
 
 ## Quick start
 
 ### 1. On the Mac — enable remote access
 
-Before anything can reach the Mac from another machine, turn on these
-toggles on the Mac itself (one-time, GUI required — do it at the
-physical console or via screen-sharing):
-
 **System Settings → General → Sharing**
 
 | Toggle | Why | Required? |
 |---|---|---|
-| **Remote Login** | Enables the SSH daemon — without this, you can't `ssh` in or `git push`/`pull` remotely. | **Required** |
-| **Remote Management** | Lets you connect with Apple Remote Desktop / screen-sharing for GUI repair when headless. | Recommended |
-| **Remote Application Scripting** | Allows running AppleScript/`osascript` commands over SSH (handy for `defaults write`, workflow scripting). | Recommended |
+| **Remote Login** | SSH daemon — needed to `ssh` in and `git pull`. | **Required** |
+| **Remote Management** | Screen-sharing for GUI repair when headless. | Recommended |
+| **Remote Application Scripting** | Run AppleScript/`osascript` over SSH. | Recommended |
 
-Under **Remote Login**, tick **"Allow full disk access for remote users"**
-so scheduled tasks can read system directories without a user-at-console
-TCC prompt. Under **Remote Management**, click *Options…* and grant at
-least *Observe* and *Control* to your admin user.
+Under **Remote Login**, tick **"Allow full disk access for remote users"**.
+After this the Mac can go fully headless.
 
-After this the Mac can go fully headless — unplug display, keyboard, mouse.
-
-### 2. From your PC — copy SSH key once (PowerShell/macOS/Linux)
+### 2. From your PC — copy SSH key once
 
 **Windows PowerShell:**
 ```powershell
@@ -106,12 +122,10 @@ ssh mac@mac.home.arpa 'echo ok'
 
 ### 3. On the Mac — clone and install
 
-On a freshly-installed macOS, `/usr/bin/git` is a stub that triggers a GUI
-prompt. `setup.sh` will auto-install the **Xcode Command Line Tools**,
-**Homebrew**, **python@3.12** (for the docling venv), and **Ollama** for
-you — but it still needs a working `git` just to pull the repo. The
-one-liner below installs CLT headlessly first (no GUI prompt), then
-clones and runs the installer:
+On fresh macOS, `/usr/bin/git` is a stub that triggers a GUI prompt. The
+one-liner installs the Command Line Tools headlessly first, then clones and
+runs the installer. `setup.sh` then auto-installs Homebrew, **python@3.12**, and
+builds the three MLX venvs (`vllm-mlx`, `litellm`, `mlx-vlm`).
 
 ```bash
 # SSH into the Mac, then (one-time CLT bootstrap so `git clone` works):
@@ -123,179 +137,230 @@ cd ~
 git clone https://github.com/<you>/macstudio-llm.git
 cd macstudio-llm
 
-# Interactive TUI (recommended for the first run):
-sudo bash setup.sh
-
-# …or non-interactive one-shot (installs everything needed: CLT, Homebrew,
-# Ollama, node_exporter, python@3.12, docling-serve venv — ~3 GB, ~5 min):
+sudo bash setup.sh            # interactive TUI (recommended first run)
+# …or non-interactive (installs CLT, Homebrew, python@3.12, the 3 MLX venvs):
 sudo bash setup.sh --apply
 ```
 
-`setup.sh` is idempotent: re-running it after the first install is a
-~5-second no-op. See [Prerequisites installed automatically](#prerequisites-installed-automatically)
-for what it fetches.
+The first `--apply` builds the venvs (several minutes of pip wheels). It does
+**not** download any model — that's an explicit step next.
 
-### 4. Pull and run your model
-
-```bash
-ollama pull gemma4:31b-nvfp4          # or whatever fits your VRAM
-ollama run  gemma4:31b-nvfp4 "hello"  # stays loaded forever
-```
-
-### 5. Later — update everything
+### 4. Download a model and pick it
 
 ```bash
-cd ~/macstudio-llm
-git pull
-sudo bash setup.sh --apply
+llm-models                    # opens the model & alias manager
+#   t                         → paste your HuggingFace token (for gated repos + speed)
+#   d qwen36-35b-a3b          → download the default text model (~20 GB, live progress)
+#   s qwen36-35b-a3b          → set it as the active 'main' (text) model
+#   d glm-ocr                 → download GLM-OCR (~2 GB)
+#   o glm-ocr                 → set it as the active 'ocr' model
+#   q                         → back
 ```
 
-Or let it happen automatically every Saturday at 06:00 (and reboot if macOS
-updates require it).
+Only `STATUS=ok` (fully downloaded + verified) models are selectable. After
+`s`, vllm-mlx restarts and loads the model.
+
+### 5. Use it
+
+Apps point at the **LiteLLM gateway on :11434** and address the **alias**, never
+the real model id:
+
+```bash
+# OpenAI-style chat
+curl http://mac.home.arpa:11434/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"main","messages":[{"role":"user","content":"Hallo!"}]}'
+
+# OCR (wakes GLM-OCR on demand)
+curl http://mac.home.arpa:11434/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"ocr","messages":[{"role":"user","content":[
+        {"type":"text","text":"Extract the text"},
+        {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}]}]}'
+```
+
+Tool calling and (for tag-emitting models) reasoning separation are enabled per
+model via the catalog — see [Model catalog](#model-catalog--the-llm-models-tui).
+
+### 6. Update later
+
+```bash
+cd ~/macstudio-llm && git pull && sudo bash setup.sh --apply
+```
+
+Or let the weekly job do brew + venv + model + macOS updates automatically.
+
+## Model catalog & the `llm-models` TUI
+
+The catalog (`models/catalog.tsv`, seeded once to
+`/usr/local/etc/macstudio-models/catalog.tsv`) lists **pre-converted MLX models
+on HuggingFace** — there is **no local conversion**. Source is always
+HuggingFace; entries are repo-ids (`org/name`), not URLs.
+
+Two roles are selectable: **`text`** (served by vllm-mlx as alias `main`) and
+**`ocr`** (served by mlx-vlm as alias `ocr`, on-demand).
+
+`llm-models` actions:
+
+| Key | Action |
+|---|---|
+| `d <id>` | **Download** the repo from HuggingFace (live progress), then verify |
+| `s <id>` | Set as the active **text/main** model (role=text only) → vllm-mlx restarts |
+| `o <id>` | Set as the active **ocr** model (role=ocr only) |
+| `a` / `e <id>` / `x <id>` | Add / edit / remove a catalog entry |
+| `r <id>` | Delete the locally-downloaded files |
+| `t` | Store/clear your **HuggingFace token** (`hf auth login`) |
+| `q` | Back |
+
+Per-model columns the catalog carries: `role`, `engine`, `quant`, `gb`,
+`gated`, `reasoning_parser`, `tool_parser`, `max_kv_size`, `max_num_seqs`,
+`rating`, `notes`. Parsers/overrides apply only to text (vllm) models and are
+passed straight to `vllm-mlx serve`.
+
+**HuggingFace token:** set it via `llm-models` → `t`. It is stored in the user's
+HF cache (`$HF_CACHE_DIR/.../token`, mode 600) — **never** in `macstudio.conf`
+or git. Needed for gated repos (e.g. Gemma) and for higher download rate limits.
+
+Seeded models (all verified to exist as ready MLX builds):
+
+| id | role | ~GB | notes |
+|---|---|---|---|
+| `qwen36-35b-a3b` | text | 20 | **default main** — agentic, multilingual, MoE (fast), tiny KV |
+| `laguna-xs2` | text | 22 | agentic + long-horizon, 128K (mxfp4 — confirm FP4 support) |
+| `gemma4-31b` | text | 18 | best German + multimodal (**gated**) |
+| `granite41-30b` | text | 17 | enterprise/RAG (mxfp4) |
+| `glm47-flash` | text | 19 | strong coding |
+| `qwen36-27b` | text | 16 | dense alternative |
+| `gptoss-20b` | text | 13 | small → more headroom; emits parseable reasoning |
+| `lfm25-8b` | text | 5 | very fast — pre-classification / routing |
+| `qwen35-9b-vl` | ocr | 9 | vision-language alternative to GLM-OCR |
+| `glm-ocr` | ocr | 2 | **default ocr**, on-demand, #1 OmniDocBench |
 
 ## Prerequisites installed automatically
 
-`setup.sh --apply` will install these for you on first run, in this order.
-Each is hash/presence-checked — already installed? no-op.
+`setup.sh --apply` installs these on first run (hash/presence-checked, no-op if
+present):
 
 | Prerequisite | How | When |
 |---|---|---|
-| **Xcode Command Line Tools** | `softwareupdate -i` (headless, no GUI prompt) | Always, unless already installed |
-| **Homebrew** | Official installer, `NONINTERACTIVE=1`, run as `TARGET_USER` | If `/opt/homebrew/bin/brew` absent |
-| **ollama** (formula) | `brew install ollama` | Always |
-| **node_exporter** (formula) | `brew install node_exporter` | If `INSTALL_EXPORTERS=1` |
-| **mactop + macmon** | `brew install mactop macmon` (live Apple-Silicon TUIs) | If `INSTALL_TUI=1` |
-| **python@3.12** (formula) | `brew install python@3.12` | If `INSTALL_DOCLING=1` (docling-serve wheels require ≥3.10) |
-| **docling-serve venv** | `python3.12 -m venv` + `pip install 'docling[ocrmac,vlm,htmlrender,easyocr]' 'docling-serve[ui]'` | If `INSTALL_DOCLING=1` and venv absent. ~2 GB of wheels + ~1 GB of models fetched at first backend boot. |
+| **Xcode Command Line Tools** | `softwareupdate -i` (headless) | unless present |
+| **Homebrew** | official installer, `NONINTERACTIVE=1`, as `TARGET_USER` | if absent |
+| **python@3.12** | `brew install python@3.12` (MLX/docling wheels need ≥3.10) | if `INSTALL_MLX=1` or `INSTALL_DOCLING=1` |
+| **vllm venv** | `pip install vllm-mlx huggingface_hub[cli]` in `$VENV_DIR/vllm` | if `INSTALL_MLX=1` |
+| **litellm venv** | `pip install 'litellm[proxy]'` in `$VENV_DIR/litellm` | if `INSTALL_MLX=1` |
+| **mlxvlm venv** | `pip install mlx-vlm huggingface_hub[cli]` in `$VENV_DIR/mlxvlm` | if `INSTALL_MLX=1` |
+| **node_exporter** | `brew install node_exporter` | if `INSTALL_EXPORTERS=1` |
+| **mactop + macmon** | `brew install mactop macmon` | if `INSTALL_TUI=1` |
+| **docling-serve venv** | `pip install 'docling[…]' 'docling-serve[ui]'` | if `INSTALL_DOCLING=1` |
+| **ollama** | `brew install ollama` | only if `INSTALL_OLLAMA=1` |
 
-The only thing `setup.sh` **does not** auto-build is the **immich-ml venv**
-— it needs a fork you've already cloned into `IMMICH_PROJECT_DIR` (varies
-by which immich-ml-metal branch you use). The script prints the exact
-command to finish it.
-
-Homebrew's installer refuses to run as root and requires passwordless
-sudo for the target user during install. `setup.sh` handles this by
-writing `/etc/sudoers.d/99-macstudio-bootstrap` for the duration of the
-Homebrew install and removing it immediately after — you never see a
-password prompt, and no persistent change to sudoers is made.
+The **immich-ml venv** is the only thing not auto-built (needs your fork in
+`IMMICH_PROJECT_DIR`); the script prints the command to finish it.
 
 ## Hardware assumptions
 
-- **Apple Silicon** (M1 / M2 / M3 / M4, any variant). Powermetrics-based
-  exporter is Apple-Silicon-specific.
-- **16 – 192 GB unified RAM**. The default `IOGPU_WIRED_LIMIT_MB=30720`
-  (30 GB) assumes 32 GB; adjust per `docs` table below.
-- **macOS 14+** tested on macOS 26.3.1. The `iogpu.wired_limit_mb` sysctl
-  exists on 13.4+.
-- A dedicated user account (default `mac`) — this user runs Ollama and the
-  Python venvs; the other LaunchDaemons that need root run as root.
+- **Apple Silicon** (M1–M5, any variant).
+- **32 GB+ unified RAM** for the default 20 GB main model. Default
+  `IOGPU_WIRED_LIMIT_MB=30720` (30 GB) assumes 32 GB.
+- **macOS 13.4+** (for `iogpu.wired_limit_mb`); tested on macOS 26.
 
-| Total RAM | Recommended `IOGPU_WIRED_LIMIT_MB` | OS headroom |
-|-----------|------------------------------------|-------------|
-| 16 GB     | 14336                              | 2 GB        |
-| 32 GB     | **30720** (default)                | 2 GB        |
-| 64 GB     | 61440                              | 4 GB        |
-| 96 GB     | 92160                              | 6 GB        |
-| 192 GB    | 184320                             | 12 GB       |
+| Total RAM | `IOGPU_WIRED_LIMIT_MB` | OS headroom |
+|-----------|------------------------|-------------|
+| 32 GB     | **30720** (default)    | 2 GB        |
+| 64 GB     | 61440                  | 4 GB        |
+| 96 GB     | 92160                  | 6 GB        |
+| 192 GB    | 184320                 | 12 GB       |
 
-If `memory_pressure` ever reports `Warn` while a model is loaded, drop
-`IOGPU_WIRED_LIMIT_MB` by 1024 (e.g., 30720 → 29696) via `setup.sh` menu 2.
+**KV-cache math (why 128K fits on 32 GB):** the default model has tiny KV (2 KV
+heads, 40 layers) → ~40 KiB/token at 8-bit. 128K context ≈ 5 GB KV + ~19 GB
+weights = ~24 GB, well under the 30 GB wired limit with room for on-demand OCR.
+256K would need 4-bit KV to stay swap-free — both are one config change
+(`VLLM_MAX_MODEL_LEN`, `VLLM_KV_BITS`).
 
 ## `setup.sh` — one file, whole lifecycle
 
 ```
-sudo bash setup.sh            # interactive TUI (main menu)
-sudo bash setup.sh --apply    # non-interactive: install or update, no prompts
-sudo bash setup.sh --status   # print live status table and exit
-sudo bash setup.sh --help     # show flags
+sudo bash setup.sh            # interactive TUI
+sudo bash setup.sh --apply    # non-interactive install/update
+sudo bash setup.sh --status   # live status table
+sudo bash setup.sh --models   # jump straight to the model manager
+sudo bash setup.sh --help
 ```
 
 TUI main menu:
 
 ```
-1) Install / update everything   (recommended — applies current config)
-2) Select services to install…   (toggle immich / docling / exporters / watchdog)
-3) Change settings…              (GPU memory, keep-alive, idle timeouts, …)
-4) Service control…              (start / stop / restart each daemon)
-5) Run weekly autoupdate now
-6) Scan for leftovers from previous installs
-7) Clean-up tasks…               (old logs, uninstall node_exporter)
+1) Install / update everything
+2) Select services to install…   (MLX / Ollama / immich / docling / exporters / watchdog)
+3) Models & aliases…             (download MLX models, pick main / ocr)
+4) Change settings…
+5) Service control…
+6) Run weekly autoupdate now
+7) Clean-up tasks…
 8) View logs…
 9) Uninstall everything this tool installed
 q) Quit
 ```
 
-**On first run** (no config file yet) the TUI jumps straight to menu 2 so
-you can pick which optional services to install before anything is touched.
-Everything is on by default. Re-run later and toggle more on — the script
-never overwrites a healthy service (brew formulas, venvs, and rendered
-files are all hash-checked before touching). Toggling a service **off**
-removes its launchd plist; toggling **on** re-renders and bootstraps it.
-
-Every action is **idempotent**. Re-running on a healthy system is a
-~5-second no-op. There are no `.state/` checkpoint files — the script
-inspects `/Library/LaunchDaemons/`, `sysctl`, `launchctl print`, file hashes,
-and `brew list` to decide what needs touching.
+Idempotent: re-running on a healthy system is a ~5 s no-op. Toggling a service
+**off** removes its plist; **on** re-renders and bootstraps it.
 
 ## Configuration reference
 
-All tunables live in **`/usr/local/etc/macstudio.conf`** (key=value, shell-
-sourceable). Managed via `setup.sh` menu 2, or edit the file directly and
-run `sudo bash setup.sh --apply`.
+All tunables live in **`/usr/local/etc/macstudio.conf`** (key=value). Managed
+via `setup.sh` menu 4, or edit + `--apply`. Existing values are respected —
+changing a default in the repo only affects fresh installs; edit the conf (or
+use the menu) to change a live box.
 
-| Key                          | Default      | Meaning |
-|------------------------------|--------------|---------|
-| `TARGET_USER`                | `mac`        | Unix user that owns Ollama and venvs |
-| `IOGPU_WIRED_LIMIT_MB`       | `30720`      | GPU wired memory ceiling |
-| `OLLAMA_PORT`                | `11434`      | Ollama API port |
-| `OLLAMA_KEEP_ALIVE`          | `-1`         | `-1` = pin forever; `24h`, `1h`, `5m` also valid |
-| `OLLAMA_KV_CACHE_TYPE`       | `q8_0`       | `q8_0` (safe ~2× saving), `q4_0` (aggressive), `fp16` |
-| `OLLAMA_FLASH_ATTENTION`     | `1`          | Required for q8_0/q4_0 KV cache |
-| `OLLAMA_MAX_LOADED_MODELS`   | `1`          | Single-model server; raise only if you have RAM to spare |
-| `OLLAMA_NUM_PARALLEL`        | `1`          | Parallel requests per model |
-| `OLLAMA_LOAD_TIMEOUT`        | `15m`        | Gives huge models time to page in |
-| `ML_PUBLIC_PORT`             | `3003`       | Public immich-ml port (proxy listens here) |
-| `ML_BACKEND_PORT`            | `13003`      | Internal immich-ml backend port |
-| `DOCLING_PUBLIC_PORT`        | `5001`       | Public docling-serve port |
-| `DOCLING_BACKEND_PORT`       | `15001`      | Internal docling-serve backend port |
-| `IDLE_TIMEOUT_IMMICH`        | `900` (15 m) | Seconds before backend sleeps |
-| `IDLE_TIMEOUT_DOCLING`       | `900` (15 m) | Seconds before backend sleeps |
-| `STARTUP_TIMEOUT_IMMICH`     | `60`         | Wake-up deadline for immich backend |
-| `STARTUP_TIMEOUT_DOCLING`    | `120`        | Wake-up deadline for docling backend |
-| `AUTOUPDATE_WEEKDAY`         | `6`          | launchd weekday: 0=Sun 1=Mon … 6=Sat |
-| `AUTOUPDATE_HOUR`            | `6`          | Hour (0–23) |
-| `AUTOUPDATE_MINUTE`          | `0`          | Minute (0–59) |
-| `NODE_EXPORTER_PORT`         | `9100`       | Prometheus node_exporter |
-| `SILICON_EXPORTER_PORT`      | `9101`       | GPU/power/thermal exporter |
-| `OLLAMA_EXPORTER_PORT`       | `9102`       | Ollama state exporter |
-| `ONDEMAND_EXPORTER_PORT`     | `9103`       | On-demand backend/proxy/watchdog exporter |
-| `SILICON_SAMPLE_INTERVAL_MS` | `1000`       | Background powermetrics cadence (ms); lower = fresher but more CPU |
-| `INSTALL_IMMICH`             | `1`          | 0 to skip installing the immich-ml on-demand service |
-| `INSTALL_DOCLING`            | `1`          | 0 to skip installing the docling-serve on-demand service |
-| `INSTALL_EXPORTERS`          | `1`          | 0 to skip Prometheus exporters |
-| `INSTALL_WATCHDOG`           | `1`          | 0 to skip the memory-pressure watchdog |
-| `WATCHDOG_PRESSURE_THRESHOLD`| `warn`       | `warn` or `critical` |
-| `WATCHDOG_AUTO_RESTORE`      | `0`          | `1` = re-wake immich+docling after pressure clears |
-| `AUTO_ACCEPT`                | `0`          | `1` = skip all "press Enter" prompts in the TUI |
+| Key | Default | Meaning |
+|---|---|---|
+| `TARGET_USER` | `mac` | Unix user that owns the venvs + daemons |
+| `IOGPU_WIRED_LIMIT_MB` | `30720` | GPU wired memory ceiling |
+| `INSTALL_MLX` | `1` | The MLX stack (vllm-mlx + LiteLLM + GLM-OCR) — primary backend |
+| `INSTALL_OLLAMA` | `0` | Opt-in Ollama fallback (kept in repo, off by default) |
+| `VENV_DIR` | `/Users/mac/.macstudio-venvs` | Where the vllm/litellm/mlxvlm venvs live |
+| `HF_CACHE_DIR` | `/Users/mac/.cache/huggingface` | HF model cache (`HF_HOME`) + token store |
+| `ALIAS_MAIN` | `qwen36-35b-a3b` | Catalog id of the active text model |
+| `ALIAS_OCR` | `glm-ocr` | Catalog id of the on-demand OCR model |
+| `MODEL_PIN_MAIN` | `1` | Keep the main model permanently warm |
+| `LITELLM_PORT` | `11434` | Public gateway port (apps use this) |
+| `VLLM_BACKEND_PORT` | `18000` | Internal vllm-mlx port |
+| `VLLM_MAX_MODEL_LEN` | `131072` | `--max-kv-size`: max context tokens (128K) |
+| `VLLM_MAX_NUM_SEQS` | `4` | Max concurrent sequences (excess requests queue) |
+| `VLLM_KV_BITS` | `8` | KV-cache quantization bits (8/4; `0`/empty = off) |
+| `GLMOCR_PUBLIC_PORT` | `5002` | Public GLM-OCR port (proxy) |
+| `GLMOCR_BACKEND_PORT` | `15002` | Internal GLM-OCR backend port |
+| `IDLE_TIMEOUT_GLMOCR` | `900` | Seconds before GLM-OCR sleeps; **`-1` = never sleep** |
+| `STARTUP_TIMEOUT_GLMOCR` | `120` | GLM-OCR wake-up deadline |
+| `ML_PUBLIC_PORT` / `ML_BACKEND_PORT` | `3003` / `13003` | immich-ml (optional) |
+| `DOCLING_PUBLIC_PORT` / `DOCLING_BACKEND_PORT` | `5001` / `15001` | docling-serve (optional) |
+| `IDLE_TIMEOUT_IMMICH` / `IDLE_TIMEOUT_DOCLING` | `900` | Idle-to-sleep seconds (`-1` = never) |
+| `AUTOUPDATE_WEEKDAY` / `_HOUR` / `_MINUTE` | `6` / `6` / `0` | Weekly schedule (Sat 06:00) |
+| `NODE_EXPORTER_PORT` | `9100` | Prometheus node_exporter |
+| `SILICON_EXPORTER_PORT` | `9101` | GPU/power/thermal exporter |
+| `ONDEMAND_EXPORTER_PORT` | `9103` | On-demand backend/proxy/watchdog exporter |
+| `OLLAMA_*` | — | Only used when `INSTALL_OLLAMA=1` |
+| `INSTALL_IMMICH` / `INSTALL_DOCLING` / `INSTALL_EXPORTERS` / `INSTALL_TUI` / `INSTALL_WATCHDOG` | `1` | Toggle optional pieces |
+| `WATCHDOG_PRESSURE_THRESHOLD` | `warn` | `warn` or `critical` |
+| `AUTO_ACCEPT` | `0` | `1` = skip "press Enter" prompts in the TUI |
+
+> **Port note:** LiteLLM and Ollama both default to :11434. They only collide if
+> you run **both** (`INSTALL_MLX=1` *and* `INSTALL_OLLAMA=1`) — then change
+> `OLLAMA_PORT`. With the default (Ollama off) there's no conflict.
 
 ## Commands (installed to `/usr/local/bin`)
 
 | Command | Purpose |
-|---------|---------|
+|---|---|
 | `llm-status` | Live overview: memory, daemons, scheduled jobs |
-| `llm-restart [name\|all]` | Restart one or all services. `llm-restart list` for names |
-| `llm-update` | Run the weekly autoupdate job right now |
-| `llm-service-ctl wake\|sleep\|status immich\|docling\|all` | Manual on-demand override |
-| `llm-logs [name]` | `tail -F` a service's log file |
-| `sudo mactop` | Live Apple-Silicon TUI: GPU, ANE, CPU, RAM, power |
-| `sudo macmon` | Alternative Apple-Silicon TUI |
+| `llm-models` | Model & alias manager (download, pick main/ocr, HF token) |
+| `llm-restart [name\|all]` | Restart one or all services |
+| `llm-update` | Run the weekly autoupdate job now |
+| `llm-service-ctl wake\|sleep\|status glmocr\|immich\|docling\|all` | Manual on-demand override |
+| `llm-logs [name]` | `tail -F` a service log (`vllm`, `litellm`, `glmocr-serve`, …) |
+| `sudo mactop` / `sudo macmon` | Live Apple-Silicon TUIs |
 
-Plus the vanilla Ollama CLI: `ollama list`, `ollama ps`, `ollama pull <m>`,
-`ollama run <m>`.
-
-## Monitoring setup (Proxmox → Grafana)
-
-Add these to your Proxmox `prometheus.yml`:
+## Monitoring (Prometheus → Grafana)
 
 ```yaml
 scrape_configs:
@@ -303,88 +368,82 @@ scrape_configs:
     static_configs: [{ targets: ['mac.home.arpa:9100'] }]
   - job_name: mac-silicon
     static_configs: [{ targets: ['mac.home.arpa:9101'] }]
-  - job_name: mac-ollama
-    static_configs: [{ targets: ['mac.home.arpa:9102'] }]
   - job_name: mac-ondemand
     static_configs: [{ targets: ['mac.home.arpa:9103'] }]
+  # vllm-mlx and LiteLLM also expose /metrics on :18000 and :11434
 ```
 
-Then import in Grafana:
-- Dashboard **1860** (node_exporter full) for system metrics.
-- `grafana/mac-llm-dashboard.json` for the Ollama, Apple Silicon, and
-  on-demand panels. Grafana's import wizard prompts for the Prometheus
-  data source on first load; no hardcoded UID.
+Import dashboard **1860** (node_exporter) and `grafana/mac-llm-dashboard.json`
+for the Apple-Silicon + on-demand panels.
 
 ## How on-demand works
 
-The proxy plist (`com.local.immich.proxy` / `com.local.docling.proxy`) always
-owns the public port (e.g. :3003). The real backend plist (`com.local.immich.ml`)
-is registered but with `KeepAlive=false, RunAtLoad=false` — it stays stopped.
+The proxy plist always owns the public port (e.g. GLM-OCR :5002); the real
+backend plist (`com.local.glmocr.serve`) is registered with
+`KeepAlive=false, RunAtLoad=false` and stays stopped. On the first TCP
+connection the proxy kickstarts the backend, polls its health endpoint, then
+streams traffic. A 30 s loop stops the backend after `IDLE_TIMEOUT_* `seconds of
+idle (set `-1` to keep it warm forever). Transparent to clients apart from a
+short cold-start latency.
 
-When a TCP connection arrives:
+## Ollama as an opt-in fallback
 
-1. Proxy updates `last_request_ts = now`.
-2. If the backend's `launchctl print` shows `pid = 0`, the proxy runs
-   `launchctl kickstart -k system/com.local.immich.ml` and polls the backend's
-   health endpoint (`/ping` or `/version`) until it returns 200.
-3. Proxy opens a TCP socket to the backend on the internal port (e.g. :13003)
-   and runs a bidirectional async stream copy.
-
-A background task in the proxy runs every 30 s: if `now - last_request_ts
-> IDLE_TIMEOUT_SEC` **and** the backend has a live pid, it runs
-`launchctl stop com.local.immich.ml`, which sends SIGTERM and frees the RAM
-back to the system (and hence to Ollama).
-
-This is transparent to clients: they hit :3003 as before; the only visible
-change is a ~3 s first-request latency after cold start.
+Ollama is **off by default** (`INSTALL_OLLAMA=0`): its plist, wrapper,
+`modelfiles/`, exporter and config keys stay in the repo but nothing is
+installed or started. Turn it on in `setup.sh` menu 2 (or set
+`INSTALL_OLLAMA=1`) and `--apply`. If you also keep the MLX stack on, change
+`OLLAMA_PORT` to avoid the :11434 clash with LiteLLM.
 
 ## File layout
 
 ```
 <repo root>/
-├── setup.sh                    single TUI / --apply entry point
-├── motd.txt                    SSH-login banner template
-├── wrappers/                   scripts that plists execute
-├── bin/                        user commands (llm-*)
-├── daemons/                    plist templates (@VAR@ substitution)
-├── services/                   long-running helpers (proxy, exporters, watchdog, autoupdate)
-├── grafana/                    Grafana dashboard JSON
-└── README.md                   this file
+├── setup.sh            single TUI / --apply entry point
+├── motd.txt            SSH-login banner template
+├── models/catalog.tsv  model catalog seed (schema v2)
+├── wrappers/           scripts plists execute (start-vllm, start-litellm, start-glmocr, …)
+├── bin/                user commands (llm-*)
+├── daemons/            plist templates (@VAR@ substitution)
+├── services/           proxy, exporters, watchdogs, autoupdate
+├── modelfiles/         Ollama Modelfiles (only used if INSTALL_OLLAMA=1)
+├── grafana/            dashboard JSON
+└── README.md
 ```
 
-On the Mac after `setup.sh --apply`:
+On the Mac after `--apply`:
 ```
-/usr/local/bin/          llm-status, llm-restart, llm-update, llm-service-ctl, llm-logs
-/usr/local/sbin/         set-iogpu-wired-limit.sh, weekly-autoupdate.sh
-/usr/local/libexec/      wrappers + Python services
-/usr/local/etc/macstudio.conf     source of truth for config
-/Library/LaunchDaemons/  12 com.local.*.plist files
-/var/log/macstudio/      per-service logs
-/etc/motd                banner
+/usr/local/bin/                 llm-status, llm-models, llm-restart, llm-update, llm-service-ctl, llm-logs
+/usr/local/sbin/                set-iogpu-wired-limit.sh, weekly-autoupdate.sh
+/usr/local/libexec/             wrappers + Python services
+/usr/local/etc/macstudio.conf   config (source of truth)
+/usr/local/etc/macstudio-models/catalog.tsv   live model catalog (TUI-managed)
+/usr/local/etc/litellm.config.yaml            generated alias routing
+/Users/mac/.macstudio-venvs/    vllm / litellm / mlxvlm venvs
+/Users/mac/.cache/huggingface/  downloaded models + HF token
+/Library/LaunchDaemons/         com.local.*.plist
+/var/log/macstudio/             per-service logs
 ```
 
 ## Troubleshooting
 
 | Symptom | Likely cause / fix |
 |---|---|
-| `memory_pressure` reports `Warn` with a model loaded | `IOGPU_WIRED_LIMIT_MB` too high. Lower by 1024 via `setup.sh` menu 2. |
-| Proxy returns 503 for first request | Backend venv missing or crashed. Check `/var/log/macstudio/immich-ml.log` (or `docling-serve.log`). |
-| `ollama ps` unexpectedly empty | `OLLAMA_KEEP_ALIVE=-1` should prevent unload, but `ollama stop` or model switch clears it. Re-run `ollama run <m>`. |
-| Autoupdate didn't run on Saturday | `launchctl print system/com.local.weekly.autoupdate` — check `state` and next-run timestamp. Logs in `/var/log/macstudio/autoupdate.log`. |
-| MOTD banner doesn't show on SSH | `grep -i printmotd /etc/ssh/sshd_config` — must be `yes` (default). macOS SSH may also show only on interactive sessions. |
-| `sysctl iogpu.wired_limit_mb` returns 0 | You're on an older macOS. 13.4+ required. |
-| Exporter :9101 returns only `apple_silicon_up 0` | `powermetrics` needs root. The daemon runs without `UserName` so should have root — check `/var/log/macstudio/silicon-exporter.log`. |
-| Mac doesn't come back on its own after reboot / power loss | **FileVault is ON** and there's no console operator to type the password. Either disable FileVault, or for *planned* reboots use `sudo fdesetup authrestart` (survives a single reboot without prompting). **Never** use plain `sudo reboot` / `shutdown -r` on a FileVault-protected headless Mac. |
-| `/var/macstudio/reboot-pending` file exists | Weekly autoupdate installed an update that needs a restart but refused to reboot itself (FileVault would block). Clear it with: `sudo fdesetup authrestart`. |
+| `llm-models` / `llm-status` say "setup.sh not found" | Old build — `git pull && sudo bash setup.sh --apply` (fixed: the wrapper now checks readable, not executable). |
+| `hf auth login` / `hf download` fail with help text | huggingface_hub ≥ 1.0 renamed the CLI to `hf`. Fixed in current build — `git pull && --apply`. |
+| `vllm-mlx: unrecognized arguments` in `vllm.log` | A `vllm-mlx serve` flag changed. Check `vllm-mlx serve --help` in the venv and adjust `wrappers/start-vllm.sh`. |
+| vllm-mlx flapping in `vllm.log` | No model downloaded yet, or `ALIAS_MAIN` points at a model that isn't `ok`. Run `llm-models` → `d` then `s`. |
+| Reasoning text leaks into the answer | The model doesn't emit `<think>` tags, so the parser can't split it. Use a model that does (e.g. `gptoss-20b`) or a "answer concisely" system prompt. |
+| Download is slow / rate-limited | Set your HF token: `llm-models` → `t`. |
+| `memory_pressure` reports `Warn` with a model loaded | Lower `VLLM_MAX_MODEL_LEN`/`VLLM_MAX_NUM_SEQS`, or `IOGPU_WIRED_LIMIT_MB` by 1024, via `setup.sh` menu 4. |
+| Mac doesn't come back after reboot / power loss | **FileVault is ON** and no console operator. Use `sudo fdesetup authrestart` for planned reboots; never plain `sudo reboot` on a headless FileVault Mac. |
+| `/var/macstudio/reboot-pending` exists | Weekly autoupdate needs a restart it refused to do (FileVault). Clear with `sudo fdesetup authrestart`. |
 
 ## Uninstalling
 
-`sudo bash setup.sh` → menu 7. Removes every plist, wrapper, script,
-config, and log this tool installed. Leaves Homebrew, Ollama itself, and
-your `~/.ollama/models/` untouched. To also remove Ollama:
-`brew uninstall ollama && rm -rf ~/.ollama`.
+`sudo bash setup.sh` → menu 9. Removes every plist, wrapper, script, config and
+log this tool installed. **Keeps** the Python venvs (`$VENV_DIR`) and the
+HuggingFace model cache — delete those by hand to reclaim disk.
 
 ## Credits / license
 
-MIT. The memory-pressure watchdog and service-control tooling were
-refined over several iterations before arriving at this layout.
+MIT.
