@@ -350,6 +350,7 @@ use the menu) to change a live box.
 | `VLLM_KV_BITS` | `8` | KV-cache quantization bits (8/4; `0`/empty = off) |
 | `VLLM_CACHE_MEMORY_MB` | _(empty)_ | KV cache pool size; empty = auto (wired − model_gb − reserve) |
 | `VLLM_CACHE_RESERVE_MB` | `4096` | RAM the auto pool leaves free for OS + on-demand GLM-OCR |
+| `LLM_REQUEST_TIMEOUT` | `1200` | Per-request timeout (s) for vllm-mlx **and** LiteLLM; 20 min for long docs/OCR |
 | `GLMOCR_PUBLIC_PORT` | `5002` | Public GLM-OCR port (proxy) |
 | `GLMOCR_BACKEND_PORT` | `15002` | Internal GLM-OCR backend port |
 | `IDLE_TIMEOUT_GLMOCR` | `900` | Seconds before GLM-OCR sleeps; **`-1` = never sleep** |
@@ -399,6 +400,11 @@ purpose.
 | `llm-update` | Run the weekly autoupdate job now |
 | `llm-service-ctl wake\|sleep\|status glmocr\|immich\|docling\|all` | Manual on-demand override |
 | `llm-logs [name]` | `tail -F` a service log (`vllm`, `litellm`, `glmocr-serve`, …) |
+
+To watch **what the model is doing right now** from the TUI: `sudo bash setup.sh`
+→ *View logs* → type `f <n>` to **follow live** (Ctrl-C returns to the menu);
+the `vllm.log` follow is filtered to request/completion/`running=N` lines. Or on
+the CLI: `llm-logs vllm | grep -E "REQUEST|running=|Chat completion"`.
 | `sudo mactop` / `sudo macmon` | Live Apple-Silicon TUIs |
 
 ## Monitoring (Prometheus → Grafana)
