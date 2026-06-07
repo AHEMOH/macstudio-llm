@@ -1,31 +1,34 @@
 ══════════════════════════════════════════════════════════════════════
   Mac Studio Headless LLM Server          (Apple Silicon, @TOTAL_RAM_GB@ GB)
 ══════════════════════════════════════════════════════════════════════
-  Primary:    ollama        :@OLLAMA_PORT@   (always on, KEEP_ALIVE=@OLLAMA_KEEP_ALIVE@)
-  On-demand:  immich-ml     :@ML_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_IMMICH@m)
+  Primary:    LiteLLM       :@LITELLM_PORT@   (public gateway; alias 'main' → one MLX model)
+              vllm-mlx      :@VLLM_BACKEND_PORT@   (internal; continuous batching, paged KV)
+  On-demand:  GLM-OCR       :@GLMOCR_PUBLIC_PORT@    (auto-wakes for OCR, only model run in parallel)
+              immich-ml     :@ML_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_IMMICH@m)
               docling-serve :@DOCLING_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_DOCLING@m)
   Monitoring: node_exporter :@NODE_EXPORTER_PORT@
               silicon       :@SILICON_EXPORTER_PORT@   (GPU, power, thermal, mem-pressure)
-              ollama        :@OLLAMA_EXPORTER_PORT@   (loaded model, sizes, config)
-              ondemand      :@ONDEMAND_EXPORTER_PORT@   (immich/docling proxy + backend state)
+              ondemand      :@ONDEMAND_EXPORTER_PORT@   (proxy + backend state)
 ══════════════════════════════════════════════════════════════════════
   Commands (type them directly — already on PATH):
     llm-status                      full service + memory overview
+    llm-models                      download MLX models, pick the active main/ocr
     llm-restart [service|all]       restart services
     llm-update                      run brew+pip+softwareupdate now
-    llm-service-ctl wake  immich    force-wake on-demand service
+    llm-service-ctl wake  glmocr    force-wake on-demand service
     llm-service-ctl sleep docling   force-sleep on-demand service
     llm-logs [service]              tail /var/log/macstudio/<svc>.log
     sudo mactop                     live GPU/ANE/CPU/RAM/power TUI
     sudo macmon                     alternative Apple-Silicon TUI
 
-  Ollama basics:
-    ollama list                     installed models
-    ollama ps                       currently loaded
-    ollama run <model>              chat (stays loaded forever)
+  Using the model (apps point at the LiteLLM gateway, OpenAI/Anthropic API):
+    curl http://localhost:@LITELLM_PORT@/v1/chat/completions \
+      -d '{"model":"main","messages":[{"role":"user","content":"hi"}]}'
+    Aliases stay stable ('main', 'ocr') — switching the underlying model is an
+    explicit step via 'llm-models' and never happens on the fly.
 
   Settings:     sudo bash /opt/macstudio/setup.sh
-  Logs:         tail -F /var/log/macstudio/ollama.log
+  Logs:         tail -F /var/log/macstudio/vllm.log    (or litellm.log / glmocr-serve.log)
   Weekly auto:  @AUTOUPDATE_HUMAN@ → /var/log/macstudio/autoupdate.log
 
   Maintenance (FileVault is ON — reboot needs a key):

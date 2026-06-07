@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Memory-pressure watchdog — belt-and-suspenders safety net that stops
 # optional services when macOS reports memory pressure. Even with
-# on-demand proxies, a rare combined spike (big model load + both
-# services in use) can trigger Warn. This keeps Ollama healthy.
+# on-demand proxies, a rare combined spike (big model load + several
+# services in use) can trigger Warn. This keeps the primary LLM engine
+# (vllm-mlx, or Ollama if that's what's installed) healthy by offloading
+# the optional on-demand backends — including GLM-OCR.
 #
 # Launched by com.local.llm.watchdog (KeepAlive=true).
 set -u
@@ -20,6 +22,7 @@ mkdir -p "$(dirname "$LOG")"
 
 IMMICH_LABEL=com.local.immich.ml
 DOCLING_LABEL=com.local.docling.serve
+GLMOCR_LABEL=com.local.glmocr.serve
 
 ts()   { date '+%F %T'; }
 log()  { printf "[%s][watchdog] %s\n" "$(ts)" "$*" >>"$LOG"; }
@@ -88,6 +91,7 @@ while true; do
       warn "memory pressure ${level} — offloading optional services"
       svc_stop "$IMMICH_LABEL" immich-ml
       svc_stop "$DOCLING_LABEL" docling-serve
+      svc_stop "$GLMOCR_LABEL" glm-ocr
       offloaded=1
       normal_since=0
     fi

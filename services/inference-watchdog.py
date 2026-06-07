@@ -13,6 +13,10 @@ subprocess (NOT `ollama serve` — the parent stays alive and reloads the
 model on the next request) only when ALL three signals agree for the
 full STALL_TIMEOUT_MIN window.
 
+NOTE: this is an OLLAMA-specific safety net. The primary backend is now
+vllm-mlx, which has server-side per-request timeouts and a different
+process/log model, so this watchdog stays idle unless INSTALL_OLLAMA=1.
+
 Detection signals (multi-signal AND, conservative):
   1. apple_silicon_gpu_active_ratio  >= GPU_THRESHOLD       (silicon-exporter)
   2. seconds since last [GIN] | 200 | line in ollama.log >= STALL_MIN*60
@@ -244,7 +248,13 @@ def kill_runner(pid: int) -> None:
 
 def main() -> int:
     cfg = load_conf()
-    enabled = cfg.get("INFERENCE_WATCHDOG_ENABLED", "1") == "1"
+    # Ollama-specific: only arm when Ollama is the installed engine. With the
+    # default vllm-mlx backend there is no `ollama runner` to kill and the
+    # server enforces its own timeouts, so stay idle.
+    enabled = (
+        cfg.get("INFERENCE_WATCHDOG_ENABLED", "1") == "1"
+        and cfg.get("INSTALL_OLLAMA", "0") == "1"
+    )
     stall_min = int(cfg.get("INFERENCE_STALL_TIMEOUT_MIN", "15"))
     poll_sec = int(cfg.get("INFERENCE_WATCHDOG_POLL_SEC", "30"))
     gpu_thresh = float(cfg.get("INFERENCE_WATCHDOG_GPU_THRESHOLD", "0.5"))

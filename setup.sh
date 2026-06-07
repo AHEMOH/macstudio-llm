@@ -29,6 +29,9 @@ MOTD_BACKUP=/etc/motd.macstudio.bak
 # --- Labels & their plist source filenames ---------------------------------
 # Always-on services
 ALWAYS_ON_LABELS=(
+  com.local.vllm.mlx
+  com.local.litellm.proxy
+  com.local.glmocr.proxy
   com.local.ollama.headless
   com.local.immich.proxy
   com.local.docling.proxy
@@ -44,6 +47,7 @@ ALWAYS_ON_LABELS=(
 )
 # On-demand backends (KeepAlive=false, RunAtLoad=false)
 ONDEMAND_LABELS=(
+  com.local.glmocr.serve
   com.local.immich.ml
   com.local.docling.serve
 )
@@ -57,6 +61,22 @@ CONFIG_KEYS=(
   IMMICH_PROJECT_DIR
   DOCLING_PROJECT_DIR
   IOGPU_WIRED_LIMIT_MB
+  INSTALL_MLX
+  INSTALL_OLLAMA
+  VENV_DIR
+  HF_CACHE_DIR
+  ALIAS_MAIN
+  ALIAS_CODING
+  ALIAS_OCR
+  MODEL_PIN_MAIN
+  VLLM_BACKEND_PORT
+  VLLM_MAX_MODEL_LEN
+  VLLM_MAX_NUM_SEQS
+  LITELLM_PORT
+  GLMOCR_PUBLIC_PORT
+  GLMOCR_BACKEND_PORT
+  IDLE_TIMEOUT_GLMOCR
+  STARTUP_TIMEOUT_GLMOCR
   OLLAMA_PORT
   OLLAMA_MODELS
   OLLAMA_MAX_LOADED_MODELS
@@ -103,6 +123,22 @@ config_default() {
     IMMICH_PROJECT_DIR)          echo /Users/mac/projects/immich-ml-metal ;;
     DOCLING_PROJECT_DIR)         echo /Users/mac/projects/docling-serve ;;
     IOGPU_WIRED_LIMIT_MB)        echo 30720 ;;
+    INSTALL_MLX)                 echo 1 ;;
+    INSTALL_OLLAMA)              echo 0 ;;
+    VENV_DIR)                    echo /Users/mac/.macstudio-venvs ;;
+    HF_CACHE_DIR)                echo /Users/mac/.cache/huggingface ;;
+    ALIAS_MAIN)                  echo qwen36-35b-a3b ;;
+    ALIAS_CODING)                echo "" ;;
+    ALIAS_OCR)                   echo glm-ocr ;;
+    MODEL_PIN_MAIN)              echo 1 ;;
+    VLLM_BACKEND_PORT)           echo 18000 ;;
+    VLLM_MAX_MODEL_LEN)          echo 32768 ;;
+    VLLM_MAX_NUM_SEQS)           echo 4 ;;
+    LITELLM_PORT)                echo 11434 ;;
+    GLMOCR_PUBLIC_PORT)          echo 5002 ;;
+    GLMOCR_BACKEND_PORT)         echo 15002 ;;
+    IDLE_TIMEOUT_GLMOCR)         echo 900 ;;
+    STARTUP_TIMEOUT_GLMOCR)      echo 120 ;;
     OLLAMA_PORT)                 echo 11434 ;;
     OLLAMA_MODELS)               echo /Users/mac/.ollama/models ;;
     OLLAMA_MAX_LOADED_MODELS)    echo 2 ;;
@@ -145,6 +181,18 @@ config_default() {
 config_hint() {
   case "$1" in
     IOGPU_WIRED_LIMIT_MB)        echo "GPU wired memory ceiling in MB (28672–30720 on 32 GB; 2048 headroom for OS)" ;;
+    INSTALL_MLX)                 echo "1 = install the MLX stack (vllm-mlx + LiteLLM + GLM-OCR) as the primary backend" ;;
+    INSTALL_OLLAMA)              echo "0 = Ollama kept as a code/install OPTION only (no daemon/dirs); 1 = run it too" ;;
+    VENV_DIR)                    echo "Where the vllm/litellm/mlxvlm Python venvs live (owned by TARGET_USER)" ;;
+    HF_CACHE_DIR)                echo "HuggingFace model cache (HF_HOME) — where downloaded MLX models land" ;;
+    ALIAS_MAIN)                  echo "Catalog id of the ONE active main model (manage via 'llm-models')" ;;
+    ALIAS_CODING)               echo "Catalog id for the 'coding' alias; empty = point coding at main (0 GB extra)" ;;
+    ALIAS_OCR)                   echo "Catalog id of the on-demand OCR model (engine mlxvlm)" ;;
+    MODEL_PIN_MAIN)              echo "1 = keep the main model permanently warm (agentic main load)" ;;
+    VLLM_MAX_MODEL_LEN)          echo "Max context vllm-mlx allocates (paged KV). Cap vs RAM; raise after measuring" ;;
+    VLLM_MAX_NUM_SEQS)           echo "Max concurrent sequences (continuous batching). Higher = more KV RAM" ;;
+    LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
+    IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend is put to sleep" ;;
     OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: 10m (default), 1h, 24h, -1=forever" ;;
     OLLAMA_MAX_LOADED_MODELS)    echo "Max models in VRAM at once: 2 (default; e.g. text + OCR), 1 = single-model mode" ;;
     OLLAMA_KV_CACHE_TYPE)        echo "KV cache precision: q8_0 (recommended), q4_0 (aggressive), fp16 (default)" ;;
@@ -304,9 +352,15 @@ load_config() {
   local _lbl
   for _lbl in "${ALL_LABELS[@]}"; do
     case "$_lbl" in
+      com.local.vllm.*|com.local.litellm.*|com.local.glmocr.*)
+        [ "${INSTALL_MLX:-1}" = 1 ] || continue ;;
+      com.local.ollama.headless)
+        [ "${INSTALL_OLLAMA:-0}" = 1 ] || continue ;;
+      com.local.ollama.exporter)
+        { [ "${INSTALL_OLLAMA:-0}" = 1 ] && [ "${INSTALL_EXPORTERS:-1}" = 1 ]; } || continue ;;
       com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || continue ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || continue ;;
-      com.local.node.exporter|com.local.silicon.exporter|com.local.ollama.exporter|com.local.ondemand.exporter)
+      com.local.node.exporter|com.local.silicon.exporter|com.local.ondemand.exporter)
         [ "${INSTALL_EXPORTERS:-1}" = 1 ] || continue ;;
       com.local.llm.watchdog|com.local.inference.watchdog)
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || continue ;;
@@ -333,6 +387,10 @@ save_config_key() {
 # --- label → log file mapping ---------------------------------------------
 label_log() {
   case "$1" in
+    com.local.vllm.mlx)          echo "$LOG_DIR/vllm.log" ;;
+    com.local.litellm.proxy)     echo "$LOG_DIR/litellm.log" ;;
+    com.local.glmocr.proxy)      echo "$LOG_DIR/glmocr-proxy.log" ;;
+    com.local.glmocr.serve)      echo "$LOG_DIR/glmocr-serve.log" ;;
     com.local.ollama.headless)   echo "$LOG_DIR/ollama.log" ;;
     com.local.immich.proxy)      echo "$LOG_DIR/immich-proxy.log" ;;
     com.local.immich.ml)         echo "$LOG_DIR/immich-ml.log" ;;
@@ -486,7 +544,9 @@ ensure_formula() {
 }
 
 ensure_formulas() {
-  ensure_formula ollama
+  # Ollama is an OPTION now (INSTALL_OLLAMA=0 by default). The MLX stack is the
+  # primary backend and runs from Python venvs, not a brew formula.
+  [ "${INSTALL_OLLAMA:-0}" = 1 ] && ensure_formula ollama
   [ "${INSTALL_EXPORTERS:-1}" = 1 ] && ensure_formula node_exporter
   if [ "${INSTALL_TUI:-1}" = 1 ]; then
     ensure_formula mactop
@@ -495,13 +555,13 @@ ensure_formulas() {
 }
 
 ensure_modern_python() {
-  # docling-serve's wheels (torch, tokenizers, …) require Python ≥ 3.10;
-  # macOS ships /usr/bin/python3 at 3.9. Install python@3.12 via brew so
-  # the docling venv has a compatible interpreter. Safe to skip if docling
-  # is off.
-  [ "${INSTALL_DOCLING:-1}" = 1 ] || return 0
+  # The MLX stack (vllm-mlx, mlx-vlm, litellm) and docling-serve all need
+  # Python ≥ 3.10; macOS ships /usr/bin/python3 at 3.9. Install python@3.12
+  # via brew so those venvs have a compatible interpreter. Skip only if both
+  # the MLX stack and docling are off.
+  [ "${INSTALL_MLX:-1}" = 1 ] || [ "${INSTALL_DOCLING:-1}" = 1 ] || return 0
   if [ -x /opt/homebrew/bin/python3.12 ]; then
-    ok "python@3.12 present (needed by docling venv)"
+    ok "python@3.12 present (needed by MLX/docling venvs)"
     return 0
   fi
   ensure_formula python@3.12
@@ -547,6 +607,171 @@ ensure_docling_venv() {
   else
     warn "docling pip install succeeded but .venv/bin/docling-serve is missing"
     return 1
+  fi
+}
+
+# --- MLX stack: venvs, model catalog, LiteLLM routing ----------------------
+CATALOG_DIR=/usr/local/etc/macstudio-models
+CATALOG_FILE="$CATALOG_DIR/catalog.tsv"
+LITELLM_CONFIG_FILE=/usr/local/etc/litellm.config.yaml
+
+# catalog_field <id> <column-number> — print a single field from the live
+# catalog, skipping comment lines. Columns:
+#   1 id  2 hf_repo  3 engine  4 params  5 quant  6 gb  7 gated
+#   8 agentic  9 coding  10 de_docs  11 notes
+catalog_field() {
+  [ -f "$CATALOG_FILE" ] || return 0
+  /usr/bin/awk -F'|' -v id="$1" -v n="$2" '!/^#/ && $1==id {print $n; exit}' "$CATALOG_FILE"
+}
+catalog_repo()   { catalog_field "$1" 2; }
+catalog_engine() { catalog_field "$1" 3; }
+catalog_gb()     { catalog_field "$1" 6; }
+catalog_gated()  { catalog_field "$1" 7; }
+
+# model_local_dir <hf_repo> — the HF hub snapshot dir for a repo, or empty.
+model_local_dir() {
+  local repo=$1
+  local hub="${HF_CACHE_DIR:-/Users/mac/.cache/huggingface}/hub"
+  local safe="models--${repo//\//--}"
+  echo "$hub/$safe"
+}
+
+# model_status <hf_repo> — ok | partial | none  (derived, never stored).
+model_status() {
+  local repo=$1 d; d=$(model_local_dir "$repo")
+  if [ -d "$d/snapshots" ] && \
+     /usr/bin/find "$d/snapshots" -maxdepth 2 -name '*.safetensors' 2>/dev/null | /usr/bin/grep -q . ; then
+    # A completed download leaves no *.incomplete blobs behind.
+    if /usr/bin/find "$d/blobs" -name '*.incomplete' 2>/dev/null | /usr/bin/grep -q . ; then
+      echo partial
+    else
+      echo ok
+    fi
+  elif [ -d "$d" ]; then
+    echo partial
+  else
+    echo none
+  fi
+}
+
+ensure_python_venvs() {
+  [ "${INSTALL_MLX:-1}" = 1 ] || return 0
+  if [ ! -x /opt/homebrew/bin/python3.12 ]; then
+    warn "MLX stack needs python@3.12, which is not installed yet."
+    warn "Re-run 'sudo bash setup.sh --apply' after Homebrew is available."
+    return 1
+  fi
+  local vdir="${VENV_DIR:-/Users/mac/.macstudio-venvs}"
+  # HF cache + venv root owned by the user the daemons run as.
+  /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$vdir" "${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}"
+
+  # _venv_ok <name> <check-token> — token is "bin:<console-script>" (what the
+  # wrapper actually execs) or "mod:<python-module>" (for module-run servers).
+  _venv_ok() {
+    local v="$vdir/$1" tok=$2
+    case "$tok" in
+      bin:*) [ -x "$v/bin/${tok#bin:}" ] ;;
+      mod:*) [ -x "$v/bin/python" ] && \
+             /usr/bin/sudo -u "$TARGET_USER" -H "$v/bin/python" -c "import ${tok#mod:}" >/dev/null 2>&1 ;;
+      *)     return 1 ;;
+    esac
+  }
+
+  # _ensure_venv <name> <check-token> <pip-args…>
+  _ensure_venv() {
+    local name=$1 tok=$2; shift 2
+    local v="$vdir/$name"
+    if _venv_ok "$name" "$tok"; then
+      ok "venv '$name' present ($v)"
+      return 0
+    fi
+    log "building venv '$name' at $v (downloads wheels; several minutes)"
+    if [ ! -x "$v/bin/python" ]; then
+      /usr/bin/sudo -u "$TARGET_USER" -H /opt/homebrew/bin/python3.12 -m venv "$v"
+    fi
+    /usr/bin/sudo -u "$TARGET_USER" -H "$v/bin/pip" install --upgrade pip wheel >/dev/null 2>&1 \
+      || warn "pip upgrade in venv '$name' returned non-zero"
+    if ! /usr/bin/sudo -u "$TARGET_USER" -H "$v/bin/pip" install "$@" \
+          >"$LOG_DIR/${name}-venv-install.log" 2>&1; then
+      warn "pip install for venv '$name' failed; see $LOG_DIR/${name}-venv-install.log"
+      return 1
+    fi
+    if _venv_ok "$name" "$tok"; then
+      ok "venv '$name' built"
+    else
+      warn "venv '$name' pip succeeded but check '$tok' failed"
+      return 1
+    fi
+  }
+
+  _ensure_venv vllm    bin:vllm-mlx  vllm-mlx 'huggingface_hub[cli]'
+  _ensure_venv litellm bin:litellm   'litellm[proxy]'
+  _ensure_venv mlxvlm  mod:mlx_vlm   mlx-vlm 'huggingface_hub[cli]'
+}
+
+ensure_model_catalog() {
+  [ "${INSTALL_MLX:-1}" = 1 ] || return 0
+  /bin/mkdir -p "$CATALOG_DIR"
+  # SEED ONCE: the repo's models/catalog.tsv is only a starting point. After
+  # the live file exists, the TUI owns it — never clobber the user's edits or
+  # a later `git pull`'s changes onto it.
+  if [ ! -f "$CATALOG_FILE" ]; then
+    if [ -f "$REPO_DIR/models/catalog.tsv" ]; then
+      /usr/bin/install -m 644 "$REPO_DIR/models/catalog.tsv" "$CATALOG_FILE"
+      ok "seeded model catalog → $CATALOG_FILE"
+    else
+      warn "repo seed models/catalog.tsv missing"
+    fi
+  else
+    ok "model catalog present ($CATALOG_FILE) — left as-is (TUI-managed)"
+  fi
+}
+
+# Generate /usr/local/etc/litellm.config.yaml from the active alias
+# assignments. `main` and `coding` both route to the ONE loaded vllm-mlx
+# model (only one big model fits); `ocr` routes to the on-demand GLM-OCR
+# proxy. Only rewrites + reloads LiteLLM on a real change.
+render_litellm_config() {
+  [ "${INSTALL_MLX:-1}" = 1 ] || return 0
+  local main_repo coding_repo ocr_repo tmp
+  main_repo=$(catalog_repo "${ALIAS_MAIN:-}")
+  if [ -z "$main_repo" ]; then
+    warn "ALIAS_MAIN='${ALIAS_MAIN:-}' has no catalog repo — LiteLLM config not (re)written"
+    warn "(download a model and set it as main via 'llm-models')"
+    return 0
+  fi
+  # With a single loaded model, the coding alias is just a second name for it.
+  coding_repo="$main_repo"
+  ocr_repo=$(catalog_repo "${ALIAS_OCR:-}")
+
+  tmp=$(/usr/bin/mktemp -t macstudio-litellm)
+  {
+    echo "# Managed by setup.sh -> render_litellm_config(). Do not edit by hand;"
+    echo "# change aliases via 'llm-models'. Apps see only model_name aliases."
+    echo "model_list:"
+    printf '  - model_name: main\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
+      "$main_repo" "${VLLM_BACKEND_PORT:-18000}"
+    printf '  - model_name: coding\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
+      "$coding_repo" "${VLLM_BACKEND_PORT:-18000}"
+    if [ -n "$ocr_repo" ]; then
+      printf '  - model_name: ocr\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
+        "$ocr_repo" "${GLMOCR_PUBLIC_PORT:-5002}"
+    fi
+    echo "litellm_settings:"
+    echo "  drop_params: true"
+  } >"$tmp"
+
+  if [ "$(hash_file "$tmp")" = "$(hash_file "$LITELLM_CONFIG_FILE")" ]; then
+    /bin/rm -f "$tmp"
+    ok "litellm config up to date"
+    return 0
+  fi
+  /usr/bin/install -m 644 "$tmp" "$LITELLM_CONFIG_FILE"
+  /bin/rm -f "$tmp"
+  ok "litellm config written → $LITELLM_CONFIG_FILE (main=${ALIAS_MAIN}, ocr=${ALIAS_OCR:-none})"
+  if daemon_loaded com.local.litellm.proxy; then
+    /bin/launchctl kickstart -k system/com.local.litellm.proxy >/dev/null 2>&1 \
+      && ok "restarted litellm to pick up new routing"
   fi
 }
 
@@ -602,9 +827,15 @@ render_all_plists() {
     fi
     # Skip optional services per config
     case "$label" in
+      com.local.vllm.*|com.local.litellm.*|com.local.glmocr.*)
+        [ "${INSTALL_MLX:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
+      com.local.ollama.headless)
+        [ "${INSTALL_OLLAMA:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
+      com.local.ollama.exporter)
+        { [ "${INSTALL_OLLAMA:-0}" = 1 ] && [ "${INSTALL_EXPORTERS:-1}" = 1 ]; } || { remove_plist "$label"; continue; } ;;
       com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
-      com.local.node.exporter|com.local.silicon.exporter|com.local.ollama.exporter|com.local.ondemand.exporter)
+      com.local.node.exporter|com.local.silicon.exporter|com.local.ondemand.exporter)
         [ "${INSTALL_EXPORTERS:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.llm.watchdog|com.local.inference.watchdog)
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
@@ -655,6 +886,7 @@ ensure_ollama_models() {
   # via install_if_different, and only calls `ollama create` when the source
   # actually changed. This avoids spamming `ollama create` on every --apply
   # while still picking up any edit you push via git pull.
+  [ "${INSTALL_OLLAMA:-0}" = 1 ] || return 0
   [ -d "$REPO_DIR/modelfiles" ] || return 0
   local target_dir=/usr/local/etc/macstudio-models
   /bin/mkdir -p "$target_dir"
@@ -707,7 +939,8 @@ apply_pmset() {
 }
 
 apply_os_trim() {
-  /usr/bin/mdutil -i off "$OLLAMA_MODELS" >/dev/null 2>&1 || true
+  [ "${INSTALL_OLLAMA:-0}" = 1 ] && /usr/bin/mdutil -i off "$OLLAMA_MODELS" >/dev/null 2>&1 || true
+  [ "${INSTALL_MLX:-1}" = 1 ] && /usr/bin/mdutil -i off "${HF_CACHE_DIR:-/Users/mac/.cache/huggingface}" >/dev/null 2>&1 || true
   /usr/bin/mdutil -i off "$LOG_DIR"       >/dev/null 2>&1 || true
   sudo -u "$TARGET_USER" defaults write com.apple.SubmitDiagInfo AutoSubmit -bool false 2>/dev/null || true
   sudo -u "$TARGET_USER" defaults write com.apple.CrashReporter DialogType none 2>/dev/null || true
@@ -767,9 +1000,12 @@ apply_everything() {
   dbg "step: ensure_modern_python";    ensure_modern_python || true
   dbg "step: ensure_immich_venv";      ensure_immich_venv
   dbg "step: ensure_docling_venv";     ensure_docling_venv
+  dbg "step: ensure_python_venvs";     ensure_python_venvs || true
+  dbg "step: ensure_model_catalog";    ensure_model_catalog
   dbg "step: render_wrappers";        render_wrappers
   dbg "step: render_services";        render_services
   dbg "step: render_bin";             render_bin
+  dbg "step: render_litellm_config";   render_litellm_config
   dbg "step: render_all_plists";      render_all_plists
   dbg "step: render_motd";            render_motd
   dbg "step: apply_iogpu_wired_limit"; apply_iogpu_wired_limit
@@ -820,7 +1056,7 @@ verify_and_summary() {
           state="absent"; pid=""
         fi
         case "$label" in
-          com.local.immich.ml|com.local.docling.serve)
+          com.local.immich.ml|com.local.docling.serve|com.local.glmocr.serve)
             [ -z "$pid" ] || [ "$pid" = 0 ] && notes="on-demand (sleeping)"
             [ -n "$pid" ] && [ "$pid" != 0 ] && notes="on-demand (awake)"
             ;;
@@ -870,29 +1106,40 @@ menu_select_services() {
   load_config
   while true; do
     printf "\n${C_BOLD}── Select services to install ─────────────────${C_RST}\n"
-    printf "%s\n" "Ollama, the GPU-wired-limit helper, caffeinate, and the weekly"
-    printf "%s\n" "autoupdate are always installed. The optional services below"
-    printf "%s\n" "can be skipped now and added later — re-running setup.sh never"
-    printf "%s\n" "overwrites a healthy installed service."
+    printf "%s\n" "The MLX stack (vllm-mlx + LiteLLM + on-demand GLM-OCR) is the primary"
+    printf "%s\n" "backend. Ollama is kept in the repo as an OPTION only — turn it on if"
+    printf "%s\n" "you want it back. The GPU-wired-limit helper, caffeinate and the weekly"
+    printf "%s\n" "autoupdate are always installed. Re-running setup.sh never overwrites a"
+    printf "%s\n" "healthy installed service."
     echo
-    printf "  1) %-18s [%s]   immich-ml on-demand photo AI (:%s)\n" \
+    printf "  1) %-18s [%s]   MLX stack: vllm-mlx :%s internal, LiteLLM :%s public, GLM-OCR :%s\n" \
+      INSTALL_MLX       "$(onoff_label "${INSTALL_MLX:-1}")" \
+      "${VLLM_BACKEND_PORT:-18000}" "${LITELLM_PORT:-11434}" "${GLMOCR_PUBLIC_PORT:-5002}"
+    printf "  2) %-18s [%s]   Ollama fallback engine (:%s) — off by default\n" \
+      INSTALL_OLLAMA    "$(onoff_label "${INSTALL_OLLAMA:-0}")" "${OLLAMA_PORT:-11434}"
+    printf "  3) %-18s [%s]   immich-ml on-demand photo AI (:%s)\n" \
       INSTALL_IMMICH    "$(onoff_label "${INSTALL_IMMICH:-1}")"    "${ML_PUBLIC_PORT:-3003}"
-    printf "  2) %-18s [%s]   docling-serve on-demand OCR/VLM (:%s)\n" \
+    printf "  4) %-18s [%s]   docling-serve on-demand OCR/VLM (:%s)\n" \
       INSTALL_DOCLING   "$(onoff_label "${INSTALL_DOCLING:-1}")"   "${DOCLING_PUBLIC_PORT:-5001}"
-    printf "  3) %-18s [%s]   Prometheus exporters (:%s :%s :%s :%s)\n" \
+    printf "  5) %-18s [%s]   Prometheus exporters (:%s :%s :%s)\n" \
       INSTALL_EXPORTERS "$(onoff_label "${INSTALL_EXPORTERS:-1}")" \
-      "${NODE_EXPORTER_PORT:-9100}" "${SILICON_EXPORTER_PORT:-9101}" \
-      "${OLLAMA_EXPORTER_PORT:-9102}" "${ONDEMAND_EXPORTER_PORT:-9103}"
-    printf "  4) %-18s [%s]   Memory-pressure safety watchdog\n" \
+      "${NODE_EXPORTER_PORT:-9100}" "${SILICON_EXPORTER_PORT:-9101}" "${ONDEMAND_EXPORTER_PORT:-9103}"
+    printf "  6) %-18s [%s]   Memory-pressure safety watchdog\n" \
       INSTALL_WATCHDOG  "$(onoff_label "${INSTALL_WATCHDOG:-1}")"
     echo
+    if [ "${INSTALL_MLX:-1}" = 1 ] && [ "${INSTALL_OLLAMA:-0}" = 1 ] \
+       && [ "${LITELLM_PORT:-11434}" = "${OLLAMA_PORT:-11434}" ]; then
+      warn "MLX and Ollama are both on but share port ${LITELLM_PORT:-11434} — change OLLAMA_PORT in settings."
+    fi
     echo "   a) Apply these choices now     q) Back (don't apply)"
-    read -r -p "Toggle which? [1-4 / a / q]: " c
+    read -r -p "Toggle which? [1-6 / a / q]: " c
     case "$c" in
-      1) toggle_install_flag INSTALL_IMMICH    ;;
-      2) toggle_install_flag INSTALL_DOCLING   ;;
-      3) toggle_install_flag INSTALL_EXPORTERS ;;
-      4) toggle_install_flag INSTALL_WATCHDOG  ;;
+      1) toggle_install_flag INSTALL_MLX       ;;
+      2) toggle_install_flag INSTALL_OLLAMA    ;;
+      3) toggle_install_flag INSTALL_IMMICH    ;;
+      4) toggle_install_flag INSTALL_DOCLING   ;;
+      5) toggle_install_flag INSTALL_EXPORTERS ;;
+      6) toggle_install_flag INSTALL_WATCHDOG  ;;
       a|A) apply_everything; pause_enter; return 0 ;;
       q|Q|"") return 0 ;;
       *) warn "unknown: $c"; sleep 1 ;;
@@ -947,6 +1194,211 @@ menu_settings() {
           fi
         fi
         ;;
+    esac
+  done
+}
+
+# ===========================================================================
+# Model & alias manager (TUI)  — `llm-models` / setup.sh --models
+# ===========================================================================
+
+# Path to the huggingface-cli installed inside one of the MLX venvs.
+hf_cli() {
+  local base="${VENV_DIR:-/Users/mac/.macstudio-venvs}"
+  if [ -x "$base/vllm/bin/huggingface-cli" ]; then echo "$base/vllm/bin/huggingface-cli"
+  else echo "$base/mlxvlm/bin/huggingface-cli"; fi
+}
+
+ram_guard_warn() {
+  local mg; mg=$(catalog_gb "${ALIAS_MAIN:-}"); mg=${mg:-0}
+  case "$mg" in *[!0-9]*) mg=0 ;; esac
+  local total=$(( mg + 2 ))   # + ~2 GB for on-demand GLM-OCR when awake
+  if [ "$total" -gt 26 ]; then
+    warn "RAM budget: main ${mg} GB + OCR ~2 GB ≈ ${total} GB on a 32 GB box."
+    warn "docling/immich may get paused by the watchdog when they wake. A smaller main"
+    warn "model (e.g. gptoss-20b ~13 GB) leaves more headroom for parallel services."
+  fi
+}
+
+download_model() {
+  local id=$1 repo cli out rc
+  [ -z "${id:-}" ] && { err "usage: d <id>"; return 1; }
+  repo=$(catalog_repo "$id"); [ -z "$repo" ] && { err "unknown id: $id"; return 1; }
+  cli=$(hf_cli)
+  [ -x "$cli" ] || { err "huggingface-cli missing — run 'sudo bash setup.sh --apply' first"; return 1; }
+  log "downloading '$id' ($repo) into ${HF_CACHE_DIR:-~/.cache/huggingface} — can be many GB…"
+  out=$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
+        "$cli" download "$repo" 2>&1); rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(model_status "$repo")" = ok ]; then
+    ok "downloaded + verified '$id' — selectable now ('s $id' for main, 'o $id' for ocr)"
+    return 0
+  fi
+  # Classify the failure so a dead list-item explains itself.
+  if printf '%s' "$out" | /usr/bin/grep -qiE '401|403|gated|gating|awaiting|access to|authenticated|restricted'; then
+    err "GATED: $repo needs a token + licence acceptance."
+    warn "  1) press 't' to store your HF token"
+    warn "  2) accept the licence at https://huggingface.co/$repo"
+    warn "  3) retry 'd $id'"
+  elif printf '%s' "$out" | /usr/bin/grep -qiE '404|repository not found|not found|does not exist'; then
+    err "NOT FOUND: '$repo' — fix the repo id with 'e $id' (must be a ready MLX build)"
+  elif printf '%s' "$out" | /usr/bin/grep -qiE 'could not resolve|connection|timed out|timeout|network|temporary failure|getaddrinfo'; then
+    err "NETWORK: cannot reach HuggingFace — check connectivity, then retry 'd $id'"
+  else
+    err "download failed (rc=$rc). Last lines:"
+    printf '%s\n' "$out" | /usr/bin/tail -6
+  fi
+  return 1
+}
+
+set_model_alias() {
+  local slot=$1 id=$2 key repo st
+  [ -z "${id:-}" ] && { err "usage: ${slot:0:1} <id>"; return 1; }
+  repo=$(catalog_repo "$id"); [ -z "$repo" ] && { err "unknown id: $id"; return 1; }
+  st=$(model_status "$repo")
+  [ "$st" = ok ] || { err "'$id' is not fully downloaded (status=$st) — run 'd $id' first"; return 1; }
+  case "$slot" in
+    main)   key=ALIAS_MAIN ;;
+    coding) key=ALIAS_CODING ;;
+    ocr)    key=ALIAS_OCR ;;
+    *) err "bad slot: $slot"; return 1 ;;
+  esac
+  save_config_key "$key" "$id"
+  eval "$key=\$id"
+  ok "$key = $id"
+  render_litellm_config
+  if [ "$slot" = main ]; then
+    ram_guard_warn
+    if daemon_loaded com.local.vllm.mlx; then
+      /bin/launchctl kickstart -k system/com.local.vllm.mlx >/dev/null 2>&1 \
+        && ok "restarting vllm-mlx with new main model (load ~30–60 s, no hot-swap)"
+    fi
+  elif [ "$slot" = ocr ]; then
+    if daemon_running com.local.glmocr.serve; then
+      /bin/launchctl stop com.local.glmocr.serve >/dev/null 2>&1 || true
+      ok "stopped GLM-OCR backend; next OCR request wakes it with the new model"
+    fi
+  fi
+}
+
+set_hf_token() {
+  local t cli
+  cli=$(hf_cli)
+  [ -x "$cli" ] || { err "huggingface-cli missing — run 'sudo bash setup.sh --apply' first"; return 1; }
+  read -r -p "Paste HF token (input visible; blank = logout): " t
+  if [ -z "$t" ]; then
+    /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
+      "$cli" logout >/dev/null 2>&1 || true
+    ok "HF token cleared (logged out)"
+  elif /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
+      "$cli" login --token "$t" >/dev/null 2>&1; then
+    ok "HF token stored in the user's HF cache (mode 600, not in macstudio.conf)"
+  else
+    err "huggingface-cli login failed"
+  fi
+}
+
+delete_local_model() {
+  local id=$1 repo d
+  [ -z "${id:-}" ] && { err "usage: r <id>"; return 1; }
+  repo=$(catalog_repo "$id"); [ -z "$repo" ] && { err "unknown id: $id"; return 1; }
+  d=$(model_local_dir "$repo")
+  [ -d "$d" ] || { warn "'$id' is not downloaded"; return 0; }
+  confirm "delete local files for '$id' ($repo)?" || return 0
+  /bin/rm -rf "$d" && ok "deleted $d"
+}
+
+catalog_add_entry() {
+  local id repo engine quant gb gated
+  read -r -p "new id (short slug): " id;       [ -z "$id" ] && return 0
+  if catalog_repo "$id" >/dev/null && [ -n "$(catalog_repo "$id")" ]; then
+    err "id '$id' already exists — use 'e $id' to edit"; return 0
+  fi
+  read -r -p "HF repo-id (org/name, MUST be a ready MLX build): " repo; [ -z "$repo" ] && return 0
+  read -r -p "engine [vllm/mlxvlm] (default vllm): " engine; engine=${engine:-vllm}
+  read -r -p "quant (e.g. 4bit): " quant;       quant=${quant:-?}
+  read -r -p "approx GB: " gb;                  gb=${gb:-?}
+  read -r -p "gated? [yes/no] (default no): " gated; gated=${gated:-no}
+  printf '%s|%s|%s|?|%s|%s|%s|0|0|0|added via TUI\n' \
+    "$id" "$repo" "$engine" "$quant" "$gb" "$gated" >> "$CATALOG_FILE"
+  ok "added '$id' → $repo  (download it with 'd $id')"
+}
+
+catalog_edit_entry() {
+  local id=$1 line
+  [ -z "${id:-}" ] && { err "usage: e <id>"; return 1; }
+  line=$(/usr/bin/grep -E "^${id}\|" "$CATALOG_FILE" | /usr/bin/head -1)
+  [ -z "$line" ] && { err "unknown id: $id"; return 0; }
+  local f_id f_repo f_engine f_params f_quant f_gb f_gated f_a f_c f_de f_notes
+  IFS='|' read -r f_id f_repo f_engine f_params f_quant f_gb f_gated f_a f_c f_de f_notes <<EOF
+$line
+EOF
+  local n_repo n_gb n_gated
+  read -r -p "HF repo [$f_repo]: " n_repo;     n_repo=${n_repo:-$f_repo}
+  read -r -p "approx GB [$f_gb]: " n_gb;        n_gb=${n_gb:-$f_gb}
+  read -r -p "gated [$f_gated]: " n_gated;      n_gated=${n_gated:-$f_gated}
+  local tmp; tmp=$(/usr/bin/mktemp)
+  /usr/bin/awk -F'|' -v OFS='|' -v id="$id" -v repo="$n_repo" -v gb="$n_gb" -v gated="$n_gated" \
+    '!/^#/ && $1==id { $2=repo; $6=gb; $7=gated } { print }' "$CATALOG_FILE" >"$tmp" \
+    && /bin/mv -f "$tmp" "$CATALOG_FILE"
+  ok "updated '$id'"
+}
+
+catalog_remove_entry() {
+  local id=$1
+  [ -z "${id:-}" ] && { err "usage: x <id>"; return 1; }
+  /usr/bin/grep -qE "^${id}\|" "$CATALOG_FILE" || { err "unknown id: $id"; return 0; }
+  confirm "remove catalog entry '$id' (downloaded files are kept)?" || return 0
+  local tmp; tmp=$(/usr/bin/mktemp)
+  /usr/bin/grep -vE "^${id}\|" "$CATALOG_FILE" >"$tmp" && /bin/mv -f "$tmp" "$CATALOG_FILE"
+  ok "removed catalog entry '$id'"
+}
+
+print_catalog_table() {
+  printf "  %-16s %-6s %-7s %-4s %-5s %-3s %-7s %s\n" ID STATUS ENGINE GB GATED AGT ALIAS REPO
+  printf "  %-16s %-6s %-7s %-4s %-5s %-3s %-7s %s\n" ---------------- ------ ------- ---- ----- --- ------- ----
+  local id repo engine params quant gb gated agentic coding de notes
+  while IFS='|' read -r id repo engine params quant gb gated agentic coding de notes; do
+    case "$id" in ''|\#*) continue ;; esac
+    local st mark tag=""
+    st=$(model_status "$repo")
+    case "$st" in ok) mark="ok" ;; partial) mark="PART" ;; *) mark="-" ;; esac
+    [ "$id" = "${ALIAS_MAIN:-}" ]   && tag="${tag}main "
+    [ "$id" = "${ALIAS_CODING:-}" ] && tag="${tag}cod "
+    [ "$id" = "${ALIAS_OCR:-}" ]    && tag="${tag}ocr "
+    printf "  %-16s %-6s %-7s %-4s %-5s %-3s %-7s %s\n" \
+      "$id" "$mark" "$engine" "$gb" "$gated" "$agentic" "${tag:-}" "$repo"
+  done <"$CATALOG_FILE"
+}
+
+menu_models() {
+  load_config
+  ensure_model_catalog
+  if [ ! -f "$CATALOG_FILE" ]; then err "no catalog at $CATALOG_FILE"; pause_enter; return 1; fi
+  while true; do
+    clear 2>/dev/null || true
+    printf "${C_BOLD}── Models & aliases ───────────────────────────${C_RST}\n"
+    printf "Active:  main=%s  coding=%s  ocr=%s   (only ONE big model loads; switch = restart)\n\n" \
+      "${ALIAS_MAIN:-none}" "${ALIAS_CODING:-=main}" "${ALIAS_OCR:-none}"
+    print_catalog_table
+    printf "\nSource: HuggingFace (repo-ids, not URLs). STATUS ok = downloaded+verified, only ok is selectable.\n"
+    printf "Actions:  d <id> download   s <id> set main   o <id> set ocr   c <id> set coding\n"
+    printf "          a add   e <id> edit   x <id> remove   r <id> delete-local   t HF token   q back\n"
+    read -r -p "models> " line || return 0
+    local cmd arg
+    cmd=$(printf '%s' "$line" | /usr/bin/awk '{print $1}')
+    arg=$(printf '%s' "$line" | /usr/bin/awk '{print $2}')
+    case "$cmd" in
+      d) download_model "$arg";        pause_enter ;;
+      s) set_model_alias main "$arg";  pause_enter ;;
+      o) set_model_alias ocr "$arg";   pause_enter ;;
+      c) set_model_alias coding "$arg";pause_enter ;;
+      a) catalog_add_entry;            pause_enter ;;
+      e) catalog_edit_entry "$arg";    pause_enter ;;
+      x) catalog_remove_entry "$arg";  pause_enter ;;
+      r) delete_local_model "$arg";    pause_enter ;;
+      t) set_hf_token;                 pause_enter ;;
+      q|Q|"") return 0 ;;
+      *) warn "unknown: $cmd"; sleep 1 ;;
     esac
   done
 }
@@ -1046,10 +1498,13 @@ menu_uninstall() {
               "$LIBEXEC_DIR"/ondemand-exporter.py "$LIBEXEC_DIR"/llm-watchdog.sh \
               "$LIBEXEC_DIR"/inference-watchdog.py
   /bin/rm -rf /usr/local/etc/macstudio-models
+  /bin/rm -f /usr/local/etc/litellm.config.yaml
   /bin/rm -f "$SBIN_DIR/set-iogpu-wired-limit.sh" "$SBIN_DIR/weekly-autoupdate.sh"
-  for b in llm-status llm-restart llm-update llm-service-ctl llm-logs; do
+  for b in llm-status llm-restart llm-update llm-service-ctl llm-logs llm-models; do
     /bin/rm -f "$BIN_DIR/$b"
   done
+  warn "Kept: Python venvs ($VENV_DIR) and the HuggingFace model cache"
+  warn "      (${HF_CACHE_DIR:-~/.cache/huggingface}). Delete those by hand to reclaim disk."
   if [ -f "$MOTD_BACKUP" ]; then /bin/cp -f "$MOTD_BACKUP" "$MOTD_FILE"; fi
   /bin/rm -f "$CONF_FILE" "$REPO_POINTER_FILE"
   /bin/rm -rf "$LOG_DIR"
@@ -1085,24 +1540,26 @@ main_menu() {
     verify_and_summary
     echo "Main menu:"
     echo "  1) Install / update everything   (recommended — applies current config)"
-    echo "  2) Select services to install…   (toggle immich / docling / exporters / watchdog)"
-    echo "  3) Change settings…"
-    echo "  4) Service control…"
-    echo "  5) Run weekly autoupdate now"
-    echo "  6) Clean-up tasks…"
-    echo "  7) View logs…"
-    echo "  8) Uninstall everything this tool installed"
+    echo "  2) Select services to install…   (toggle MLX / Ollama / immich / docling / …)"
+    echo "  3) Models & aliases…             (download MLX models, pick main / ocr)"
+    echo "  4) Change settings…"
+    echo "  5) Service control…"
+    echo "  6) Run weekly autoupdate now"
+    echo "  7) Clean-up tasks…"
+    echo "  8) View logs…"
+    echo "  9) Uninstall everything this tool installed"
     echo "  q) Quit"
     read -r -p "Choice: " choice
     case "$choice" in
       1) apply_everything; pause_enter ;;
       2) menu_select_services ;;
-      3) menu_settings ;;
-      4) menu_service_ctl ;;
-      5) log "running weekly-autoupdate.sh NOW"; /bin/bash "$SBIN_DIR/weekly-autoupdate.sh" || true; pause_enter ;;
-      6) menu_cleanup ;;
-      7) menu_logs ;;
-      8) menu_uninstall ;;
+      3) menu_models ;;
+      4) menu_settings ;;
+      5) menu_service_ctl ;;
+      6) log "running weekly-autoupdate.sh NOW"; /bin/bash "$SBIN_DIR/weekly-autoupdate.sh" || true; pause_enter ;;
+      7) menu_cleanup ;;
+      8) menu_logs ;;
+      9) menu_uninstall ;;
       q|Q|"") exit 0 ;;
       *) warn "unknown choice: $choice"; sleep 1 ;;
     esac
@@ -1189,6 +1646,7 @@ unset _orig_args
 case "${1:-}" in
   --apply)  APPLY_MODE=1; INTERACTIVE=0; shift; apply_everything "$@" ;;
   --status) INTERACTIVE=0; load_config; verify_and_summary ;;
+  --models) need_root "$@"; menu_models ;;
   --help|-h) show_help ;;
   "") main_menu "$@" ;;
   *) err "unknown flag: $1"; show_help; exit 2 ;;

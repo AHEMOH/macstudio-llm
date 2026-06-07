@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# llm-models — open the model & alias manager (download MLX models from
+# HuggingFace, pick the one active main model, set the ocr model, manage the
+# catalog). Thin wrapper around `setup.sh --models`.
+set -u
+
+POINTER=/usr/local/etc/macstudio.repo
+if [ -r "$POINTER" ]; then
+  # shellcheck disable=SC1090
+  . "$POINTER"
+fi
+SETUP="${SETUP_SH:-}"
+if [ ! -x "$SETUP" ]; then
+  echo "setup.sh not found (expected via $POINTER) — run the installer first" >&2
+  exit 1
+fi
+
+# The manager downloads into the target user's HF cache and (re)starts the
+# vllm-mlx daemon, so it needs root like the rest of setup.sh's actions.
+if [ "$(id -u)" -ne 0 ]; then
+  exec sudo /bin/bash "$SETUP" --models "$@"
+fi
+exec /bin/bash "$SETUP" --models "$@"

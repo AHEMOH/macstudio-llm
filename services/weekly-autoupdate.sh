@@ -3,9 +3,10 @@
 # /usr/local/etc/macstudio.conf (AUTOUPDATE_* keys). Default: Sat 06:00.
 #
 # Updates:
-#   1. Homebrew formulas (ollama + node_exporter + brew itself)
-#   2. Python venvs for immich-ml and docling-serve
-#   3. macOS minor / security updates (no auto-reboot — see below)
+#   1. Homebrew formulas (node_exporter, brew itself; ollama only if installed)
+#   2. MLX stack venvs (vllm-mlx / litellm / mlx-vlm) + refresh active models
+#   3. Python venvs for immich-ml and docling-serve
+#   4. macOS minor / security updates (no auto-reboot — see below)
 #
 # Reboots are FileVault-aware: we NEVER pass --restart to softwareupdate,
 # because a plain reboot hangs at the FileVault pre-boot prompt. If an
@@ -47,11 +48,33 @@ echo "log: $LOG_FILE"
 
 run_as_user() { sudo -u "$TARGET_USER" -H bash -lc "$*"; }
 
+VENV_DIR="${VENV_DIR:-$TARGET_HOME/.macstudio-venvs}"
+HF_CACHE_DIR="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}"
+CATALOG_FILE=/usr/local/etc/macstudio-models/catalog.tsv
+
 step "Homebrew update & upgrade"
 run_as_user '/opt/homebrew/bin/brew update' || true
-run_as_user '/opt/homebrew/bin/brew upgrade ollama' || true
+[ "${INSTALL_OLLAMA:-0}" = "1" ] && run_as_user '/opt/homebrew/bin/brew upgrade ollama' || true
 run_as_user '/opt/homebrew/bin/brew upgrade node_exporter' || true
 run_as_user '/opt/homebrew/bin/brew cleanup -s --prune=7' || true
+
+if [ "${INSTALL_MLX:-1}" = "1" ]; then
+  step "MLX stack venv upgrades (vllm-mlx / litellm / mlx-vlm)"
+  [ -x "$VENV_DIR/vllm/bin/pip" ]    && run_as_user "'$VENV_DIR/vllm/bin/pip' install --upgrade vllm-mlx 'huggingface_hub[cli]'" || true
+  [ -x "$VENV_DIR/litellm/bin/pip" ] && run_as_user "'$VENV_DIR/litellm/bin/pip' install --upgrade 'litellm[proxy]'" || true
+  [ -x "$VENV_DIR/mlxvlm/bin/pip" ]  && run_as_user "'$VENV_DIR/mlxvlm/bin/pip' install --upgrade mlx-vlm 'huggingface_hub[cli]'" || true
+
+  step "refresh active MLX models from HuggingFace"
+  hf="$VENV_DIR/vllm/bin/huggingface-cli"; [ -x "$hf" ] || hf="$VENV_DIR/mlxvlm/bin/huggingface-cli"
+  if [ -x "$hf" ] && [ -f "$CATALOG_FILE" ]; then
+    for id in "${ALIAS_MAIN:-}" "${ALIAS_OCR:-}"; do
+      [ -z "$id" ] && continue
+      repo=$(/usr/bin/awk -F'|' -v i="$id" '!/^#/ && $1==i{print $2; exit}' "$CATALOG_FILE")
+      [ -z "$repo" ] && continue
+      run_as_user "HF_HOME='$HF_CACHE_DIR' '$hf' download '$repo'" || true
+    done
+  fi
+fi
 
 if [ "${INSTALL_IMMICH:-1}" = "1" ] && [ -d "$IMMICH_PROJECT_DIR/.venv" ]; then
   step "immich-ml venv upgrade"
@@ -68,12 +91,17 @@ if [ "${INSTALL_DOCLING:-1}" = "1" ] && [ -d "$DOCLING_PROJECT_DIR/.venv" ]; the
 fi
 
 step "restart long-running services"
-/bin/launchctl kickstart -k system/com.local.ollama.headless || true
+if [ "${INSTALL_MLX:-1}" = "1" ]; then
+  /bin/launchctl kickstart -k system/com.local.vllm.mlx       2>/dev/null || true
+  /bin/launchctl kickstart -k system/com.local.litellm.proxy  2>/dev/null || true
+  /bin/launchctl kickstart -k system/com.local.glmocr.proxy   2>/dev/null || true
+fi
+[ "${INSTALL_OLLAMA:-0}" = "1" ] && /bin/launchctl kickstart -k system/com.local.ollama.headless 2>/dev/null || true
 /bin/launchctl kickstart -k system/com.local.immich.proxy   2>/dev/null || true
 /bin/launchctl kickstart -k system/com.local.docling.proxy  2>/dev/null || true
 /bin/launchctl kickstart -k system/com.local.node.exporter  2>/dev/null || true
 /bin/launchctl kickstart -k system/com.local.silicon.exporter 2>/dev/null || true
-/bin/launchctl kickstart -k system/com.local.ollama.exporter 2>/dev/null || true
+[ "${INSTALL_OLLAMA:-0}" = "1" ] && /bin/launchctl kickstart -k system/com.local.ollama.exporter 2>/dev/null || true
 
 step "macOS minor / security updates (no --restart; FileVault-aware)"
 su_out=$(/usr/bin/mktemp)
