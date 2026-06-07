@@ -77,6 +77,7 @@ CONFIG_KEYS=(
   VLLM_CACHE_RESERVE_MB
   LLM_REQUEST_TIMEOUT
   VLLM_EMBEDDING_MODEL
+  VLLM_STT_MODEL
   LITELLM_PORT
   GLMOCR_PUBLIC_PORT
   GLMOCR_BACKEND_PORT
@@ -144,6 +145,7 @@ config_default() {
     VLLM_CACHE_RESERVE_MB)       echo 4096 ;;
     LLM_REQUEST_TIMEOUT)         echo 1200 ;;
     VLLM_EMBEDDING_MODEL)        echo "" ;;
+    VLLM_STT_MODEL)              echo "" ;;
     LITELLM_PORT)                echo 11434 ;;
     GLMOCR_PUBLIC_PORT)          echo 5002 ;;
     GLMOCR_BACKEND_PORT)         echo 15002 ;;
@@ -206,6 +208,7 @@ config_hint() {
     VLLM_CACHE_RESERVE_MB)       echo "RAM (MB) the auto cache pool leaves free for OS + on-demand GLM-OCR (default 4096)" ;;
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for vllm-mlx + LiteLLM (default 1200 = 20 min; long docs/OCR)" ;;
     VLLM_EMBEDDING_MODEL)        echo "Optional HF embedding model served co-resident with main -> alias 'embed' (/v1/embeddings). empty=off. e.g. mlx-community/multilingual-e5-base-mlx" ;;
+    VLLM_STT_MODEL)              echo "Optional Whisper STT (speech->text) served by vllm-mlx -> alias 'stt' (/v1/audio/transcriptions). Multilingual, Metal. empty=off. e.g. whisper-large-v3 (for Home Assistant voice)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
     IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend sleeps; -1 = never sleep (stay warm)" ;;
     OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: 10m (default), 1h, 24h, -1=forever" ;;
@@ -785,6 +788,51 @@ ensure_model_catalog() {
   fi
 }
 
+# Pre-warm the Whisper STT model and FIX a vllm-mlx/mlx-audio quirk: the
+# mlx-community whisper repos ship only config.json + weights (no HF processor),
+# so mlx_audio's WhisperProcessor.from_pretrained() fails at transcribe time
+# ("Processor not found"). We download the small processor/tokenizer files from
+# the original openai/whisper-large-v3 repo into the MLX snapshot dir. Gated on
+# VLLM_STT_MODEL; idempotent (skips if the processor is already present).
+ensure_whisper_stt() {
+  [ "${INSTALL_MLX:-1}" = 1 ] || return 0
+  [ -n "${VLLM_STT_MODEL:-}" ] || return 0
+  local py="${VENV_DIR:-/Users/mac/.macstudio-venvs}/vllm/bin/python"
+  [ -x "$py" ] || { warn "vllm venv missing — STT processor fix skipped"; return 0; }
+  /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env \
+      HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
+      "$py" - "$VLLM_STT_MODEL" <<'PY'
+import sys, os, glob, shutil
+from huggingface_hub import snapshot_download
+ALIASES = {
+    "whisper-large-v3":       "mlx-community/whisper-large-v3-mlx",
+    "whisper-large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+    "whisper-medium":         "mlx-community/whisper-medium-mlx",
+    "whisper-small":          "mlx-community/whisper-small-mlx",
+}
+req = sys.argv[1]
+repo = ALIASES.get(req, req)
+if "whisper" not in repo.lower():
+    print("[stt] '%s' is not a whisper model — no processor fix needed." % req); sys.exit(0)
+print("[stt] ensuring %s (resolved from '%s')" % (repo, req))
+dst = snapshot_download(repo)                       # weights (pre-warm, no cold first call)
+if os.path.exists(os.path.join(dst, "preprocessor_config.json")):
+    print("[stt] processor already present — ok."); sys.exit(0)
+proc = snapshot_download("openai/whisper-large-v3", allow_patterns=[
+    "preprocessor_config.json","tokenizer.json","tokenizer_config.json","vocab.json",
+    "merges.txt","normalizer.json","special_tokens_map.json","added_tokens.json",
+    "generation_config.json"])
+n = 0
+for f in os.listdir(proc):
+    d = os.path.join(dst, f)
+    if not os.path.exists(d):
+        shutil.copy(os.path.realpath(os.path.join(proc, f)), d); n += 1
+print("[stt] injected %d processor file(s) into %s" % (n, dst))
+PY
+  if [ $? -eq 0 ]; then ok "Whisper STT '$VLLM_STT_MODEL' ready (alias 'stt', /v1/audio/transcriptions)"
+  else warn "Whisper STT setup had an issue (see output above) — STT may 500 until fixed"; fi
+}
+
 # Generate /usr/local/etc/litellm.config.yaml from the active alias
 # assignments. Two roles only: `main` (the ONE loaded vllm-mlx text model) and
 # `ocr` (the on-demand GLM-OCR proxy). Only rewrites + reloads on a real change.
@@ -813,6 +861,13 @@ render_litellm_config() {
     if [ -n "${VLLM_EMBEDDING_MODEL:-}" ]; then
       printf '  - model_name: embed\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
         "$VLLM_EMBEDDING_MODEL" "${VLLM_BACKEND_PORT:-18000}"
+    fi
+    # Whisper STT (speech->text) served by vllm-mlx (request-time loaded, Metal).
+    # alias 'stt' -> POST /v1/audio/transcriptions. mode tells LiteLLM to route
+    # multipart audio uploads. Multilingual (de/ru/…). Great for Home Assistant.
+    if [ -n "${VLLM_STT_MODEL:-}" ]; then
+      printf '  - model_name: stt\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: audio_transcription\n' \
+        "$VLLM_STT_MODEL" "${VLLM_BACKEND_PORT:-18000}"
     fi
     echo "litellm_settings:"
     echo "  drop_params: true"
@@ -1063,6 +1118,7 @@ apply_everything() {
   dbg "step: ensure_docling_venv";     ensure_docling_venv
   dbg "step: ensure_python_venvs";     ensure_python_venvs || true
   dbg "step: ensure_model_catalog";    ensure_model_catalog
+  dbg "step: ensure_whisper_stt";      ensure_whisper_stt || true
   dbg "step: render_wrappers";        render_wrappers
   dbg "step: render_services";        render_services
   dbg "step: render_bin";             render_bin
