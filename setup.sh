@@ -289,15 +289,29 @@ install_if_different() {
 render_template() {
   # render_template <src> <dst> <mode> [<owner>]
   # Substitutes @KEY@ from env. Writes to dst only if content changed.
+  #
+  # Uses bash parameter expansion, NOT one big `sed` program: macOS/BSD sed has
+  # a ~2 KB compiled-program limit and once enough @KEY@ rules accumulate it
+  # silently fails ("unterminated substitute pattern") and emits NOTHING — which
+  # would then overwrite every rendered plist with an empty file (= "daemons
+  # won't load"). Literal bash replace has no length limit and needs no
+  # delimiter/metachar escaping. A guard below also refuses to ever write an
+  # empty file over a non-empty template.
   local src=$1 dst=$2 mode=$3 owner=${4:-root:wheel}
-  local tmp; tmp=$(/usr/bin/mktemp -t macstudio-render)
-  local sedprog=""
+  local tmp content val k
+  tmp=$(/usr/bin/mktemp -t macstudio-render)
+  # $(...) strips trailing newlines; the printf-x trick preserves them.
+  content=$(/bin/cat "$src"; printf 'x'); content=${content%x}
   for k in "${CONFIG_KEYS[@]}" TOTAL_RAM_GB IDLE_MIN_IMMICH IDLE_MIN_DOCLING AUTOUPDATE_HUMAN; do
-    local v="${!k:-}"
-    v=$(printf '%s' "$v" | /usr/bin/sed -e 's/[\\&|]/\\&/g')
-    sedprog+="s|@${k}@|${v}|g;"
+    val=${!k:-}
+    content=${content//"@${k}@"/$val}
   done
-  /usr/bin/sed "$sedprog" "$src" >"$tmp"
+  printf '%s' "$content" >"$tmp"
+  if [ ! -s "$tmp" ] && [ -s "$src" ]; then
+    warn "render produced empty output for $dst — keeping existing file (not overwriting)"
+    /bin/rm -f "$tmp"
+    return 1
+  fi
   if [ "$(hash_file "$tmp")" = "$(hash_file "$dst")" ]; then
     dbg "template unchanged: $dst"
     rm -f "$tmp"
