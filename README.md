@@ -14,10 +14,14 @@ raise a couple of config keys.
 > **Two text engines, one switch.** `TEXT_ENGINE` picks which backend serves
 > `main`: **`vllm`** (default — continuous batching, 8-bit KV, 128K context) or
 > **`mlx-lm`** (Apple's reference `mlx_lm.server` — more stable, still does tool
-> calling + reasoning, but 16-bit KV only and no Prometheus metrics). Exactly one
-> text daemon runs at a time; flip `TEXT_ENGINE` and `sudo bash setup.sh --apply`
-> to switch or roll back. Use `mlx-lm` when you want maximum stability or to run a
-> model that vllm-mlx can't (e.g. gpt-oss / gemma-4).
+> calling + reasoning, but **text-only (no vision/images — they 404)**, 16-bit KV
+> only, and no Prometheus metrics). Exactly one text daemon runs at a time; flip
+> `TEXT_ENGINE` and `sudo bash setup.sh --apply` to switch or roll back. Use
+> `mlx-lm` for maximum stability or to run a model vllm-mlx can't (verified on the
+> box: gemma-4-26b/31b text+tools work; gpt-oss runs but emits raw harmony;
+> gemma-4-12b is `gemma4_unified` arch and is NOT supported by mlx-lm 0.31.3). For
+> reasoning models, set `MLXLM_CHAT_TEMPLATE_ARGS='{"enable_thinking":false}'` so
+> short answers aren't eaten by the thinking budget.
 
 > **Why not Ollama?** Ollama bakes context length into the model load (every
 > `num_ctx` change = a 30–60 s reload) and has weaker concurrency. `vllm-mlx`
