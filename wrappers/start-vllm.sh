@@ -24,9 +24,11 @@ export HF_HOME="${HF_CACHE_DIR:-$HOME/.cache/huggingface}"
 [ -n "${HF_TOKEN:-}" ] && export HF_TOKEN
 
 # Resolve the active main model (catalog id -> HF repo + per-model tuning).
-# Catalog columns (schema v2):
+# Catalog columns (schema v3):
 #   1 id 2 hf_repo 3 role 4 engine 5 quant 6 gb 7 gated
 #   8 reasoning_parser 9 tool_parser 10 max_kv_size 11 max_num_seqs 12 rating 13 notes
+#   14 temperature 15 top_p 16 frequency_penalty 17 presence_penalty
+#   (sampling cols 14-17 are consumed by LiteLLM, not vllm-mlx serve — see setup.sh)
 MODEL_ID="${ALIAS_MAIN:-qwen36-35b-a3b}"
 field() { /usr/bin/awk -F'|' -v id="$MODEL_ID" -v n="$1" '!/^#/ && $1==id {print $n; exit}' "$CATALOG" 2>/dev/null; }
 REPO=$(field 2)

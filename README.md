@@ -451,7 +451,7 @@ installed or started. Turn it on in `setup.sh` menu 2 (or set
 <repo root>/
 ├── setup.sh            single TUI / --apply entry point
 ├── motd.txt            SSH-login banner template
-├── models/catalog.tsv  model catalog seed (schema v2)
+├── models/catalog.tsv  model catalog seed (schema v3)
 ├── wrappers/           scripts plists execute (start-vllm, start-litellm, start-glmocr, …)
 ├── bin/                user commands (llm-*)
 ├── daemons/            plist templates (@VAR@ substitution)

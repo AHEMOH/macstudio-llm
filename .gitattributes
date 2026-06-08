@@ -8,3 +8,7 @@
 *.md text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+
+# Model catalog is awk-parsed on macOS — must stay LF (a stray CR would corrupt
+# the trailing field, e.g. presence_penalty, fed into LiteLLM)
+*.tsv text eol=lf
