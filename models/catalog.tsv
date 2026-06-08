@@ -25,6 +25,15 @@
 #   empty cell = omit the flag. Values come from `vllm-mlx serve` choices:
 #   reasoning {qwen3,deepseek_r1,gpt_oss,gemma4,glm4}
 #   tool      {qwen,qwen3_coder,hermes,gpt-oss,granite,gemma4,glm47,mistral,llama,...}
+#   NOTE: under TEXT_ENGINE=mlx-lm (Apple mlx_lm.server) these two columns are
+#   INFORMATIONAL ONLY — the server auto-infers the tool parser from the chat
+#   template and splits reasoning into its own field. (gpt-oss harmony tools are
+#   not yet auto-detected there, so gpt-oss = text/reasoning only on mlx-lm.)
+#
+# BROKEN flags are ENGINE-SCOPED: BROKEN[vllm] = fails on vllm-mlx (may run on
+#   mlx-lm — retest), BROKEN[mlx-lm] = fails on mlx_lm.server. A bare legacy
+#   BROKEN is treated as vllm-scoped. set_model_alias refuses a model only when
+#   it is flagged broken for the engine TEXT_ENGINE currently selects.
 # max_kv_size / max_num_seqs: empty = use the global VLLM_* default; set = per-model override.
 # max_kv_size is set to 131072 (128K) for all text models. "native max:" in notes = the
 # model's true ceiling — raise max_kv_size toward it (and check RAM) if you need more context.
@@ -38,17 +47,17 @@
 #
 # columns:
 # id|hf_repo|role|engine|quant|gb|gated|reasoning_parser|tool_parser|max_kv_size|max_num_seqs|rating|notes|temperature|top_p|frequency_penalty|presence_penalty
-qwen36-35b-a3b|mlx-community/Qwen3.6-35B-A3B-4bit-DWQ|text|vllm|4bit-DWQ|20|no|qwen3|hermes|131072|2|5|Default main. Tool use + multilingual, MoE = fast, tiny KV (2 kv-heads). reasoning_parser=qwen3 -> Open WebUI shows thinking as a collapsible block, then the answer. native max: 262144 (256K)|0.6|0.95|0.0|0.5
-laguna-xs2|OsaurusAI/Laguna-XS.2-mxfp4|text|vllm|mxfp4|22|no||hermes|131072|2|5|BROKEN on vllm-mlx 0.3.0 (mlx_lm: "Model type laguna not supported" - fails at load) - needs mlx_lm support. Agentic + long-horizon. native max: 131072 (128K)|0.6|0.95|0.3|0.3
-gemma4-31b|mlx-community/gemma-4-31B-it-OptiQ-4bit|text|vllm-mllm|4bit-OptiQ|18|yes|gemma4|gemma4|131072|2|4|BROKEN on vllm-mlx 0.3.0 + 0.4.0rc1 (shared_kv vs mlx-vlm 0.6.2) - needs upstream fix. German + multimodal; gated. native max: 262144 (256K)|0.7|0.95|0.3|0.3
-gemma4-26b|mlx-community/gemma-4-26b-a4b-it-4bit|text|vllm-mllm|4bit|16|yes|gemma4|gemma4|131072|3|4|BROKEN on vllm-mlx 0.3.0 + 0.4.0rc1 (shared_kv) - needs upstream fix. 26B-A4B MoE, multimodal; gated. native max: 262144 (256K)|0.7|0.95|0.3|0.3
-gemma4-12b|mlx-community/gemma-4-12B-it-4bit|text|vllm-mllm|4bit|8|yes|gemma4|gemma4|131072|6|4|BROKEN on vllm-mlx 0.3.0 + 0.4.0rc1 (shared_kv) - needs upstream fix. 12B multimodal, great German; gated. native max: 262144 (256K)|0.7|0.95|0.3|0.3
+qwen36-35b-a3b|mlx-community/Qwen3.6-35B-A3B-4bit-DWQ|text|vllm|4bit-DWQ|20|no|qwen3|hermes|131072|2|5|Default main. Tool use + multilingual, MoE = fast, tiny KV (2 kv-heads). reasoning_parser=qwen3 -> Open WebUI shows thinking as a collapsible block, then the answer. [mlx-lm 0.31.3 verified: tool_calls round-trip via qwen3_coder parser + reasoning separated] native max: 262144 (256K)|0.6|0.95|0.0|0.5
+laguna-xs2|OsaurusAI/Laguna-XS.2-mxfp4|text|vllm|mxfp4|22|no||hermes|131072|2|5|BROKEN[vllm] on vllm-mlx 0.3.0 (mlx_lm: "Model type laguna not supported" - fails at load) - needs mlx_lm support. Agentic + long-horizon. native max: 131072 (128K)|0.6|0.95|0.3|0.3
+gemma4-31b|mlx-community/gemma-4-31B-it-OptiQ-4bit|text|vllm-mllm|4bit-OptiQ|18|yes|gemma4|gemma4|131072|2|4|BROKEN[vllm] on vllm-mlx 0.3.0 + 0.4.0rc1 (shared_kv vs mlx-vlm 0.6.2) - needs upstream fix. German + multimodal; gated. native max: 262144 (256K)|0.7|0.95|0.3|0.3
+gemma4-26b|mlx-community/gemma-4-26b-a4b-it-4bit|text|vllm-mllm|4bit|16|yes|gemma4|gemma4|131072|3|4|BROKEN[vllm] on vllm-mlx 0.3.0 + 0.4.0rc1 (shared_kv) - needs upstream fix. [mlx-lm 0.31.3 verified OK: loads text-only + tool_calls via gemma4 parser + reasoning separated] 26B-A4B MoE, multimodal; gated. native max: 262144 (256K)|0.7|0.95|0.3|0.3
+gemma4-12b|mlx-community/gemma-4-12B-it-4bit|text|vllm-mllm|4bit|8|yes|gemma4|gemma4|131072|6|4|BROKEN[vllm] on vllm-mlx 0.3.0 + 0.4.0rc1 (shared_kv) - needs upstream fix. 12B multimodal, great German; gated. native max: 262144 (256K)|0.7|0.95|0.3|0.3
 granite41-30b|mlx-community/granite-4.1-30b-mxfp4|text|vllm|mxfp4|17|no||granite|131072|2|5|Enterprise/RAG; clean concise output (no reasoning leak), works streaming -> best paperless main. FP4 verified on vllm-mlx 0.3.0. native max: 131072 (128K prod; up to 512K extended)|0.3|0.9|0.3|0.2
 granite41-3b|mlx-community/granite-4.1-3b-mxfp4|text|vllm|mxfp4|2|no||granite|131072|8|3|Small fast Granite (1.8GB), same arch as 30b -> triage/routing or speculative-decoding draft for granite-30b. native max: 131072|0.3|0.9|0.3|0.2
 glm47-flash|mlx-community/GLM-4.7-Flash-4bit|text|vllm|4bit|19|no|glm4|glm47|131072|2|4|Strong coding. native max: 204800 (200K)|0.6|0.95|0.3|0.3
 qwen36-27b|mlx-community/Qwen3.6-27B-4bit|text|vllm|4bit|16|no|qwen3|hermes|131072|2|4|Dense alternative to 35B-A3B. reasoning_parser=qwen3 (thinking foldable in Open WebUI). native max: 262144 (256K)|0.6|0.95|0.0|0.5
-qwen35-27b-dist|mlx-community/Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-4bit|text|vllm|4bit|15|no|qwen3|hermes|131072|2|2|BROKEN on vllm-mlx 0.3.0: config declares VL architecture but vision_tower weights are missing -> MLLM auto-detection fails at startup. Qwen3.5-27B dense, Claude 4.6 Opus reasoning-distilled. native max: 131072 (128K)|0.6|0.95|0.0|0.5
-gptoss-20b|mlx-community/gpt-oss-20b-MXFP4-Q8|text|vllm|mxfp4-q8|12|no|gpt_oss|gpt-oss|131072|8|4|BROKEN on vllm-mlx 0.3.0 (sliding-window broadcast_shapes crash, 0 tokens on non-trivial prompts, stream+non-stream) - needs upstream fix. Clean output when it works. native max: 131072 (128K)|1.0|1.0|0.0|0.0
-lfm25-8b|LiquidAI/LFM2.5-8B-A1B-MLX-8bit|text|vllm|8bit|5|no|||131072|8|3|BROKEN on vllm-mlx 0.3.0 (loads, but batch-gen ValueError: not enough values to unpack - lfm2 arch; 0 tokens / mid-stream error). native max: 131072 (128K)|0.6|0.95|0.3|0.3
+qwen35-27b-dist|mlx-community/Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-4bit|text|vllm|4bit|15|no|qwen3|hermes|131072|2|2|BROKEN[vllm] on vllm-mlx 0.3.0: config declares VL architecture but vision_tower weights are missing -> MLLM auto-detection fails at startup. Qwen3.5-27B dense, Claude 4.6 Opus reasoning-distilled. native max: 131072 (128K)|0.6|0.95|0.0|0.5
+gptoss-20b|mlx-community/gpt-oss-20b-MXFP4-Q8|text|vllm|mxfp4-q8|12|no|gpt_oss|gpt-oss|131072|8|4|BROKEN[vllm] on vllm-mlx 0.3.0 (sliding-window broadcast_shapes crash, 0 tokens on non-trivial prompts, stream+non-stream) - needs upstream fix. [mlx-lm 0.31.3: generates (no 0-token crash) BUT raw harmony channel markup leaks into content - no harmony parser yet; text/reasoning unclean, no structured tool_calls. Use only with a harmony-aware client] native max: 131072 (128K)|1.0|1.0|0.0|0.0
+lfm25-8b|LiquidAI/LFM2.5-8B-A1B-MLX-8bit|text|vllm|8bit|5|no|||131072|8|3|BROKEN[vllm] on vllm-mlx 0.3.0 (loads, but batch-gen ValueError: not enough values to unpack - lfm2 arch; 0 tokens / mid-stream error). native max: 131072 (128K)|0.6|0.95|0.3|0.3
 qwen35-9b-vl|mlx-community/Qwen3.5-9B-MLX-8bit|ocr|mlxvlm|8bit|9|no|||||3|Vision-language alternative to GLM-OCR. native max: 262144 (256K; mlxvlm ignores max_kv_size)||||
 glm-ocr|mlx-community/GLM-OCR-4bit|ocr|mlxvlm|4bit|2|no|||||5|Default ocr, on-demand. #1 OmniDocBench. alt: mlx-community/GLM-OCR-bf16. page-level (mlxvlm ignores max_kv_size)||||

@@ -30,6 +30,7 @@ MOTD_BACKUP=/etc/motd.macstudio.bak
 # Always-on services
 ALWAYS_ON_LABELS=(
   com.local.vllm.mlx
+  com.local.mlxlm.serve
   com.local.litellm.proxy
   com.local.glmocr.proxy
   com.local.ollama.headless
@@ -76,6 +77,13 @@ CONFIG_KEYS=(
   VLLM_CACHE_MEMORY_MB
   VLLM_CACHE_RESERVE_MB
   LLM_REQUEST_TIMEOUT
+  TEXT_ENGINE
+  MLXLM_VERSION
+  MLXLM_PROMPT_CACHE_MB
+  MLXLM_DECODE_CONCURRENCY
+  MLXLM_PROMPT_CONCURRENCY
+  MLXLM_MAX_TOKENS
+  MLXLM_CHAT_TEMPLATE_ARGS
   PRESET_ALIASES
   PRESET_PRECISE_TEMP
   PRESET_PRECISE_TOPP
@@ -152,6 +160,13 @@ config_default() {
     VLLM_CACHE_MEMORY_MB)        echo "" ;;
     VLLM_CACHE_RESERVE_MB)       echo 4096 ;;
     LLM_REQUEST_TIMEOUT)         echo 3600 ;;
+    TEXT_ENGINE)                 echo vllm ;;
+    MLXLM_VERSION)               echo 0.31.3 ;;
+    MLXLM_PROMPT_CACHE_MB)       echo 8192 ;;
+    MLXLM_DECODE_CONCURRENCY)    echo "" ;;
+    MLXLM_PROMPT_CONCURRENCY)    echo 1 ;;
+    MLXLM_MAX_TOKENS)            echo "" ;;
+    MLXLM_CHAT_TEMPLATE_ARGS)    echo "" ;;
     PRESET_ALIASES)              echo 1 ;;
     PRESET_PRECISE_TEMP)         echo 0.2 ;;
     PRESET_PRECISE_TOPP)         echo 0.8 ;;
@@ -223,6 +238,13 @@ config_hint() {
     VLLM_CACHE_MEMORY_MB)        echo "KV cache pool size in MB; empty = auto (wired - model_gb - reserve). Override only to pin it" ;;
     VLLM_CACHE_RESERVE_MB)       echo "RAM (MB) the auto cache pool leaves free for OS + on-demand GLM-OCR (default 4096)" ;;
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for vllm-mlx + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
+    TEXT_ENGINE)                 echo "Backend that serves 'main': vllm (continuous batching, 8-bit KV, 128K) | mlx-lm (Apple mlx_lm.server, STABLE, tool calling + reasoning, 16-bit KV, no metrics). One runs at a time; flip + --apply to switch/rollback" ;;
+    MLXLM_VERSION)               echo "Pinned mlx-lm for the dedicated 'mlxlm' venv (independent of vllm-mlx). Bump deliberately + --apply" ;;
+    MLXLM_PROMPT_CACHE_MB)       echo "mlx-lm prompt-cache hard cap in MB (--prompt-cache-bytes). Bounds KV/prefix RAM (16-bit KV grows fast — no kv-quant); default 8192" ;;
+    MLXLM_DECODE_CONCURRENCY)    echo "mlx-lm concurrent decode streams (--decode-concurrency). empty = reuse VLLM_MAX_NUM_SEQS" ;;
+    MLXLM_PROMPT_CONCURRENCY)    echo "mlx-lm concurrent prompt prefills (--prompt-concurrency); default 1 on 32 GB (limits prefill RAM spikes)" ;;
+    MLXLM_MAX_TOKENS)            echo "mlx-lm default generation cap (--max-tokens). empty = model default" ;;
+    MLXLM_CHAT_TEMPLATE_ARGS)    echo "mlx-lm chat-template JSON (--chat-template-args), e.g. {\"enable_thinking\":false} to suppress reasoning output. empty = off" ;;
     PRESET_ALIASES)              echo "1 = also expose sampling-preset aliases (main-precise/-creative/-metadata) — same loaded model, different default sampling" ;;
     PRESET_PRECISE_TEMP)         echo "alias 'main-precise' temperature (factual, careful; default 0.2)" ;;
     PRESET_PRECISE_TOPP)         echo "alias 'main-precise' top_p (default 0.8)" ;;
@@ -408,7 +430,11 @@ load_config() {
   local _lbl
   for _lbl in "${ALL_LABELS[@]}"; do
     case "$_lbl" in
-      com.local.vllm.*|com.local.litellm.*|com.local.glmocr.*)
+      com.local.vllm.mlx)
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-vllm}" = vllm ]; }   || continue ;;
+      com.local.mlxlm.serve)
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-vllm}" = mlx-lm ]; } || continue ;;
+      com.local.litellm.*|com.local.glmocr.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || continue ;;
       com.local.ollama.headless)
         [ "${INSTALL_OLLAMA:-0}" = 1 ] || continue ;;
@@ -444,6 +470,7 @@ save_config_key() {
 label_log() {
   case "$1" in
     com.local.vllm.mlx)          echo "$LOG_DIR/vllm.log" ;;
+    com.local.mlxlm.serve)       echo "$LOG_DIR/mlxlm.log" ;;
     com.local.litellm.proxy)     echo "$LOG_DIR/litellm.log" ;;
     com.local.glmocr.proxy)      echo "$LOG_DIR/glmocr-proxy.log" ;;
     com.local.glmocr.serve)      echo "$LOG_DIR/glmocr-serve.log" ;;
@@ -772,6 +799,16 @@ ensure_python_venvs() {
   _ensure_venv litellm bin:litellm   'litellm[proxy]'
   _ensure_venv mlxvlm  mod:mlx_vlm   mlx-vlm 'huggingface_hub[cli]'
 
+  # mlx-lm (Apple's reference engine) gets its OWN pinned venv, built only when
+  # TEXT_ENGINE=mlx-lm so vllm-only installs stay lean. Dedicated (not the vllm
+  # venv, where mlx-lm rides as a transitive dep) so the stable fallback is
+  # decoupled from vllm-mlx version bumps.
+  if [ "${TEXT_ENGINE:-vllm}" = "mlx-lm" ]; then
+    local mlxlm_spec="mlx-lm"
+    [ -n "${MLXLM_VERSION:-}" ] && mlxlm_spec="mlx-lm==${MLXLM_VERSION}"
+    _ensure_venv mlxlm bin:mlx_lm.server "$mlxlm_spec" 'huggingface_hub[cli]'
+  fi
+
   # Version-sync: if the pin changed since the venv was built, switch to it and
   # restart vllm so the new version is actually live. This is how the user
   # upgrades/downgrades — set VLLM_MLX_VERSION + `--apply`.
@@ -789,6 +826,25 @@ ensure_python_venvs() {
           && ok "restarted vllm-mlx to apply the version change"
       else
         warn "vllm-mlx pin install failed; see $LOG_DIR/vllm-pin-install.log"
+      fi
+    fi
+  fi
+
+  # Same pin-sync for the mlxlm venv: set MLXLM_VERSION + `--apply` to up/downgrade.
+  if [ "${TEXT_ENGINE:-vllm}" = "mlx-lm" ] && [ -n "${MLXLM_VERSION:-}" ] && [ -x "$vdir/mlxlm/bin/python" ]; then
+    local cur_m
+    cur_m=$(/usr/bin/sudo -u "$TARGET_USER" -H "$vdir/mlxlm/bin/python" -c \
+      'import importlib.metadata as m; print(m.version("mlx-lm"))' 2>/dev/null)
+    if [ -n "$cur_m" ] && [ "$cur_m" != "$MLXLM_VERSION" ]; then
+      log "mlx-lm pin: $cur_m -> $MLXLM_VERSION (reinstalling)"
+      if /usr/bin/sudo -u "$TARGET_USER" -H "$vdir/mlxlm/bin/pip" install "mlx-lm==${MLXLM_VERSION}" \
+            >"$LOG_DIR/mlxlm-pin-install.log" 2>&1; then
+        ok "mlx-lm pinned to $MLXLM_VERSION"
+        daemon_loaded com.local.mlxlm.serve \
+          && /bin/launchctl kickstart -k system/com.local.mlxlm.serve >/dev/null 2>&1 \
+          && ok "restarted mlx_lm.server to apply the version change"
+      else
+        warn "mlx-lm pin install failed; see $LOG_DIR/mlxlm-pin-install.log"
       fi
     fi
   fi
@@ -1012,7 +1068,13 @@ render_all_plists() {
     fi
     # Skip optional services per config
     case "$label" in
-      com.local.vllm.*|com.local.litellm.*|com.local.glmocr.*)
+      com.local.vllm.mlx)
+        # Only the text engine TEXT_ENGINE selects (vllm) is loaded; the other
+        # is booted out so the two never fight over the internal text port.
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-vllm}" = vllm ]; }   || { remove_plist "$label"; continue; } ;;
+      com.local.mlxlm.serve)
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-vllm}" = mlx-lm ]; } || { remove_plist "$label"; continue; } ;;
+      com.local.litellm.*|com.local.glmocr.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.ollama.headless)
         [ "${INSTALL_OLLAMA:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
@@ -1459,9 +1521,20 @@ set_model_alias() {
     return 1
   fi
   # Refuse models the catalog flags BROKEN — selecting one just breaks the
-  # backend (server won't serve). Override only deliberately with FORCE_BROKEN=1.
-  if printf '%s' "$(catalog_field "$id" 13)" | /usr/bin/grep -qi 'BROKEN'; then
-    err "'$id' is flagged BROKEN on the current vllm-mlx — refusing (would break the server)."
+  # backend (server won't serve). BROKEN is engine-scoped: a model that crashes
+  # vllm-mlx may run fine on mlx_lm.server (gpt-oss/gemma-4 broke on vllm-specific
+  # bugs). Tags: BROKEN[vllm] / BROKEN[mlx-lm]; a bare legacy BROKEN = vllm-scoped.
+  # Refuse only when flagged broken for the engine TEXT_ENGINE currently selects.
+  local _notes _eng _broken=0
+  _notes=$(catalog_field "$id" 13)
+  _eng="${TEXT_ENGINE:-vllm}"
+  if printf '%s' "$_notes" | /usr/bin/grep -qiE "BROKEN\[$_eng\]"; then
+    _broken=1
+  elif [ "$_eng" = vllm ] && printf '%s' "$_notes" | /usr/bin/grep -qiE 'BROKEN([^[]|$)'; then
+    _broken=1
+  fi
+  if [ "$_broken" = 1 ]; then
+    err "'$id' is flagged BROKEN on the current text engine '$_eng' — refusing (would break the server)."
     warn "  see 'i $id' for the reason. Override (not advised): FORCE_BROKEN=1 …"
     [ "${FORCE_BROKEN:-0}" = 1 ] || return 1
     warn "FORCE_BROKEN=1 set — proceeding anyway."
@@ -1472,9 +1545,12 @@ set_model_alias() {
   render_litellm_config
   if [ "$slot" = main ]; then
     ram_guard_warn
-    if daemon_loaded com.local.vllm.mlx; then
-      /bin/launchctl kickstart -k system/com.local.vllm.mlx >/dev/null 2>&1 \
-        && ok "restarting vllm-mlx with new main model (load ~30–60 s, no hot-swap)"
+    # Restart whichever text daemon TEXT_ENGINE has active (one runs at a time).
+    local _text_label=com.local.vllm.mlx
+    [ "${TEXT_ENGINE:-vllm}" = mlx-lm ] && _text_label=com.local.mlxlm.serve
+    if daemon_loaded "$_text_label"; then
+      /bin/launchctl kickstart -k "system/$_text_label" >/dev/null 2>&1 \
+        && ok "restarting $_text_label with new main model (load ~30–60 s, no hot-swap)"
     fi
   elif [ "$slot" = ocr ]; then
     if daemon_running com.local.glmocr.serve; then
