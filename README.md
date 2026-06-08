@@ -90,6 +90,10 @@ Opt-in only (INSTALL_OLLAMA=1, off by default):
 The main model is kept warm; switching it is an **explicit** action (pick in
 `llm-models` → vllm-mlx restarts, ~30–60 s) — never a silent hot-swap.
 
+> **Connecting apps?** See **[INTEGRATIONS.md](INTEGRATIONS.md)** for the
+> endpoint reference and ready-to-paste configs (Home Assistant STT, Open WebUI,
+> paperless-gpt, OpenAI/Anthropic SDKs, embeddings/RAG).
+
 ## Quick start
 
 ### 1. On the Mac — enable remote access
