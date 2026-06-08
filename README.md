@@ -372,7 +372,7 @@ use the menu) to change a live box.
 | `MLXLM_PROMPT_CACHE_MB` | `8192` | mlx-lm prompt-cache RAM cap (`--prompt-cache-bytes`); bounds 16-bit KV (no kv-quant) |
 | `MLXLM_DECODE_CONCURRENCY` | _(empty)_ | mlx-lm `--decode-concurrency`; empty = reuse `VLLM_MAX_NUM_SEQS` |
 | `MLXLM_PROMPT_CONCURRENCY` | `1` | mlx-lm `--prompt-concurrency`; 1 on 32 GB |
-| `MLXLM_MAX_TOKENS` | _(empty)_ | mlx-lm default `--max-tokens`; empty = model default |
+| `MLXLM_MAX_TOKENS` | `16384` | mlx-lm server default `--max-tokens` = ceiling for `main`/`-precise`/`-creative` (would be only 512 if unset). 16384 ≈ unrestricted for chat; model stops at EOS. `main-metadata` overrides via `PRESET_METADATA_MAXTOK` |
 | `MLXLM_CHAT_TEMPLATE_ARGS` | _(empty)_ | mlx-lm `--chat-template-args` JSON, e.g. `{"enable_thinking":false}` |
 | `GLMOCR_PUBLIC_PORT` | `5002` | Public GLM-OCR port (proxy) |
 | `GLMOCR_BACKEND_PORT` | `15002` | Internal GLM-OCR backend port |

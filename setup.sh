@@ -165,7 +165,7 @@ config_default() {
     MLXLM_PROMPT_CACHE_MB)       echo 8192 ;;
     MLXLM_DECODE_CONCURRENCY)    echo "" ;;
     MLXLM_PROMPT_CONCURRENCY)    echo 1 ;;
-    MLXLM_MAX_TOKENS)            echo "" ;;
+    MLXLM_MAX_TOKENS)            echo 16384 ;;
     MLXLM_CHAT_TEMPLATE_ARGS)    echo "" ;;
     PRESET_ALIASES)              echo 1 ;;
     PRESET_PRECISE_TEMP)         echo 0.2 ;;
@@ -174,7 +174,7 @@ config_default() {
     PRESET_CREATIVE_TEMP)        echo 0.9 ;;
     PRESET_CREATIVE_TOPP)        echo 0.95 ;;
     PRESET_METADATA_TEMP)        echo 0.0 ;;
-    PRESET_METADATA_MAXTOK)      echo 256 ;;
+    PRESET_METADATA_MAXTOK)      echo 5000 ;;
     VLLM_EMBEDDING_MODEL)        echo "" ;;
     VLLM_STT_MODEL)              echo "" ;;
     LITELLM_PORT)                echo 11434 ;;
@@ -243,7 +243,7 @@ config_hint() {
     MLXLM_PROMPT_CACHE_MB)       echo "mlx-lm prompt-cache hard cap in MB (--prompt-cache-bytes). Bounds KV/prefix RAM (16-bit KV grows fast — no kv-quant); default 8192" ;;
     MLXLM_DECODE_CONCURRENCY)    echo "mlx-lm concurrent decode streams (--decode-concurrency). empty = reuse VLLM_MAX_NUM_SEQS" ;;
     MLXLM_PROMPT_CONCURRENCY)    echo "mlx-lm concurrent prompt prefills (--prompt-concurrency); default 1 on 32 GB (limits prefill RAM spikes)" ;;
-    MLXLM_MAX_TOKENS)            echo "mlx-lm default generation cap (--max-tokens). empty = model default" ;;
+    MLXLM_MAX_TOKENS)            echo "mlx-lm server default --max-tokens = ceiling for main/-precise/-creative (unset would be only 512!). 16384 = effectively unrestricted for chat/long text; model stops at EOS. main-metadata overrides via PRESET_METADATA_MAXTOK" ;;
     MLXLM_CHAT_TEMPLATE_ARGS)    echo "mlx-lm chat-template JSON (--chat-template-args), e.g. {\"enable_thinking\":false} to suppress reasoning output. empty = off" ;;
     PRESET_ALIASES)              echo "1 = also expose sampling-preset aliases (main-precise/-creative/-metadata) — same loaded model, different default sampling" ;;
     PRESET_PRECISE_TEMP)         echo "alias 'main-precise' temperature (factual, careful; default 0.2)" ;;
@@ -252,7 +252,7 @@ config_hint() {
     PRESET_CREATIVE_TEMP)        echo "alias 'main-creative' temperature (varied prose; default 0.9)" ;;
     PRESET_CREATIVE_TOPP)        echo "alias 'main-creative' top_p (default 0.95)" ;;
     PRESET_METADATA_TEMP)        echo "alias 'main-metadata' temperature (extraction, deterministic; default 0.0 — safe because output is capped)" ;;
-    PRESET_METADATA_MAXTOK)      echo "alias 'main-metadata' max_tokens cap (title/date extraction, no long text; default 256)" ;;
+    PRESET_METADATA_MAXTOK)      echo "alias 'main-metadata' max_tokens cap (extraction). 5000 so a reasoning main (e.g. gemma-4) can think AND finish the JSON; clean models still stop early at EOS. Only this alias is capped — main/-precise/-creative use MLXLM_MAX_TOKENS" ;;
     VLLM_EMBEDDING_MODEL)        echo "Optional HF embedding model served co-resident with main -> alias 'embed' (/v1/embeddings). empty=off. e.g. mlx-community/multilingual-e5-base-mlx" ;;
     VLLM_STT_MODEL)              echo "Optional Whisper STT (speech->text) served by vllm-mlx -> alias 'stt' (/v1/audio/transcriptions). Multilingual, Metal. empty=off. e.g. whisper-large-v3 (for Home Assistant voice)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
