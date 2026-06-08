@@ -65,7 +65,7 @@ run_as_user '/opt/homebrew/bin/brew cleanup -s --prune=7' || true
 # and Ollama stay at their installed versions. Upgrade them on purpose with
 # `setup.sh` (menu: Check for updates -> set the pin -> Install/update everything).
 step "held versions (available but NOT auto-upgraded — bump deliberately)"
-for pair in "vllm:vllm-mlx" "mlxvlm:mlx-vlm" "litellm:litellm"; do
+for pair in "vllm:vllm-mlx" "mlxlm:mlx-lm" "mlxvlm:mlx-vlm" "litellm:litellm"; do
   vn=${pair%%:*}; pk=${pair##*:}
   py="$VENV_DIR/$vn/bin/python"; [ -x "$py" ] || continue
   "$py" - "$pk" <<'PY' 2>/dev/null || true
@@ -84,7 +84,12 @@ echo "  -> to upgrade the LLM stack on purpose: VLLM_MLX_VERSION + 'sudo bash se
 
 step "restart long-running services"
 if [ "${INSTALL_MLX:-1}" = "1" ]; then
-  /bin/launchctl kickstart -k system/com.local.vllm.mlx       2>/dev/null || true
+  # Restart whichever text engine TEXT_ENGINE selects (only one is loaded).
+  if [ "${TEXT_ENGINE:-vllm}" = "mlx-lm" ]; then
+    /bin/launchctl kickstart -k system/com.local.mlxlm.serve  2>/dev/null || true
+  else
+    /bin/launchctl kickstart -k system/com.local.vllm.mlx     2>/dev/null || true
+  fi
   /bin/launchctl kickstart -k system/com.local.litellm.proxy  2>/dev/null || true
   /bin/launchctl kickstart -k system/com.local.glmocr.proxy   2>/dev/null || true
 fi

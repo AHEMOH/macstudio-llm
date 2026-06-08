@@ -11,6 +11,14 @@ self-update.
 Designed for a 32 GB M1 Max but scales unchanged to bigger Apple Silicon — just
 raise a couple of config keys.
 
+> **Two text engines, one switch.** `TEXT_ENGINE` picks which backend serves
+> `main`: **`vllm`** (default — continuous batching, 8-bit KV, 128K context) or
+> **`mlx-lm`** (Apple's reference `mlx_lm.server` — more stable, still does tool
+> calling + reasoning, but 16-bit KV only and no Prometheus metrics). Exactly one
+> text daemon runs at a time; flip `TEXT_ENGINE` and `sudo bash setup.sh --apply`
+> to switch or roll back. Use `mlx-lm` when you want maximum stability or to run a
+> model that vllm-mlx can't (e.g. gpt-oss / gemma-4).
+
 > **Why not Ollama?** Ollama bakes context length into the model load (every
 > `num_ctx` change = a 30–60 s reload) and has weaker concurrency. `vllm-mlx`
 > allocates KV per request (no reload when a prompt is longer/shorter) and
@@ -355,6 +363,13 @@ use the menu) to change a live box.
 | `VLLM_CACHE_MEMORY_MB` | _(empty)_ | KV cache pool size; empty = auto (wired − model_gb − reserve) |
 | `VLLM_CACHE_RESERVE_MB` | `4096` | RAM the auto pool leaves free for OS + on-demand GLM-OCR |
 | `LLM_REQUEST_TIMEOUT` | `1200` | Per-request timeout (s) for vllm-mlx **and** LiteLLM; 20 min for long docs/OCR |
+| `TEXT_ENGINE` | `vllm` | Backend for `main`: `vllm` \| `mlx-lm`. One runs at a time; flip + `--apply` to switch/rollback |
+| `MLXLM_VERSION` | `0.31.3` | Pinned mlx-lm for the dedicated `mlxlm` venv (only when `TEXT_ENGINE=mlx-lm`) |
+| `MLXLM_PROMPT_CACHE_MB` | `8192` | mlx-lm prompt-cache RAM cap (`--prompt-cache-bytes`); bounds 16-bit KV (no kv-quant) |
+| `MLXLM_DECODE_CONCURRENCY` | _(empty)_ | mlx-lm `--decode-concurrency`; empty = reuse `VLLM_MAX_NUM_SEQS` |
+| `MLXLM_PROMPT_CONCURRENCY` | `1` | mlx-lm `--prompt-concurrency`; 1 on 32 GB |
+| `MLXLM_MAX_TOKENS` | _(empty)_ | mlx-lm default `--max-tokens`; empty = model default |
+| `MLXLM_CHAT_TEMPLATE_ARGS` | _(empty)_ | mlx-lm `--chat-template-args` JSON, e.g. `{"enable_thinking":false}` |
 | `GLMOCR_PUBLIC_PORT` | `5002` | Public GLM-OCR port (proxy) |
 | `GLMOCR_BACKEND_PORT` | `15002` | Internal GLM-OCR backend port |
 | `IDLE_TIMEOUT_GLMOCR` | `900` | Seconds before GLM-OCR sleeps; **`-1` = never sleep** |
