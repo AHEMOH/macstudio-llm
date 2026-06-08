@@ -24,9 +24,19 @@ behind an alias can be swapped (`llm-models`) without the app noticing.
 | Alias  | What it is                       | Endpoint(s)                       | Backed by                     |
 |--------|----------------------------------|-----------------------------------|-------------------------------|
 | `main` | The big always-on text model     | `/v1/chat/completions`, `/v1/completions`, `/v1/messages` | vllm-mlx (always on)          |
+| `main-precise`  | `main` with low temperature (factual, careful) | same as `main` | **same loaded model**, different default sampling |
+| `main-creative` | `main` with high temperature (varied prose) | same as `main` | **same loaded model**, different default sampling |
+| `main-metadata` | `main` for extraction: deterministic + `max_tokens` cap (title/date, no long text) | same as `main` | **same loaded model**, different default sampling |
 | `ocr`  | Vision OCR (document → text)     | `/v1/chat/completions` (image input) | GLM-OCR via mlx-vlm (on-demand) |
 | `embed`| Text embeddings (RAG / search)   | `/v1/embeddings`                  | vllm-mlx co-resident model    |
 | `stt`  | Speech → text (Whisper)          | `/v1/audio/transcriptions`        | vllm-mlx, request-time loaded |
+
+The `main-*` aliases all point at the **one** loaded text model — they only differ
+in DEFAULT sampling (temperature/top_p/penalties/max_tokens), so picking one does
+**not** load a second model. `main` itself uses the per-model sampling defaults from
+the catalog; clients may override any of these per request. Toggle the presets with
+`PRESET_ALIASES` and tune them via the `PRESET_*` keys in
+`/usr/local/etc/macstudio.conf` (set via `setup.sh` → settings).
 
 `embed` and `stt` only exist if `VLLM_EMBEDDING_MODEL` / `VLLM_STT_MODEL` are set
 in `/usr/local/etc/macstudio.conf` (set via `setup.sh` → settings).
@@ -101,9 +111,10 @@ Notes:
 - **API Base URL:** `http://mac.home.arpa:11434/v1`
 - **API Key:** `sk-local`
 
-The models `main`, `ocr`, `embed` appear in the model picker. For chat use
-`main`. If the active main model emits reasoning (e.g. Qwen3), Open WebUI renders
-it as a foldable "thinking" block automatically.
+The models `main` (plus the `main-precise`/`main-creative`/`main-metadata` presets),
+`ocr`, `embed` appear in the model picker. For chat use `main`. If the active main
+model emits reasoning (e.g. Qwen3), Open WebUI renders it as a foldable "thinking"
+block automatically.
 
 For **RAG / Documents** in Open WebUI: **Settings → Documents → Embedding model
 engine = OpenAI**, same base URL/key, embedding model **`embed`**.

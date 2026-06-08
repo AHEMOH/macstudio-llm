@@ -76,6 +76,14 @@ CONFIG_KEYS=(
   VLLM_CACHE_MEMORY_MB
   VLLM_CACHE_RESERVE_MB
   LLM_REQUEST_TIMEOUT
+  PRESET_ALIASES
+  PRESET_PRECISE_TEMP
+  PRESET_PRECISE_TOPP
+  PRESET_PRECISE_FREQ
+  PRESET_CREATIVE_TEMP
+  PRESET_CREATIVE_TOPP
+  PRESET_METADATA_TEMP
+  PRESET_METADATA_MAXTOK
   VLLM_EMBEDDING_MODEL
   VLLM_STT_MODEL
   LITELLM_PORT
@@ -134,7 +142,7 @@ config_default() {
     VENV_DIR)                    echo /Users/mac/.macstudio-venvs ;;
     HF_CACHE_DIR)                echo /Users/mac/.cache/huggingface ;;
     VLLM_MLX_VERSION)            echo 0.3.0 ;;
-    ALIAS_MAIN)                  echo qwen36-35b-a3b ;;
+    ALIAS_MAIN)                  echo granite41-30b ;;
     ALIAS_OCR)                   echo glm-ocr ;;
     MODEL_PIN_MAIN)              echo 1 ;;
     VLLM_BACKEND_PORT)           echo 18000 ;;
@@ -143,13 +151,21 @@ config_default() {
     VLLM_KV_BITS)                echo 8 ;;
     VLLM_CACHE_MEMORY_MB)        echo "" ;;
     VLLM_CACHE_RESERVE_MB)       echo 4096 ;;
-    LLM_REQUEST_TIMEOUT)         echo 1200 ;;
+    LLM_REQUEST_TIMEOUT)         echo 3600 ;;
+    PRESET_ALIASES)              echo 1 ;;
+    PRESET_PRECISE_TEMP)         echo 0.2 ;;
+    PRESET_PRECISE_TOPP)         echo 0.8 ;;
+    PRESET_PRECISE_FREQ)         echo 0.4 ;;
+    PRESET_CREATIVE_TEMP)        echo 0.9 ;;
+    PRESET_CREATIVE_TOPP)        echo 0.95 ;;
+    PRESET_METADATA_TEMP)        echo 0.0 ;;
+    PRESET_METADATA_MAXTOK)      echo 256 ;;
     VLLM_EMBEDDING_MODEL)        echo "" ;;
     VLLM_STT_MODEL)              echo "" ;;
     LITELLM_PORT)                echo 11434 ;;
     GLMOCR_PUBLIC_PORT)          echo 5002 ;;
     GLMOCR_BACKEND_PORT)         echo 15002 ;;
-    IDLE_TIMEOUT_GLMOCR)         echo 900 ;;
+    IDLE_TIMEOUT_GLMOCR)         echo 60 ;;
     STARTUP_TIMEOUT_GLMOCR)      echo 120 ;;
     OLLAMA_PORT)                 echo 11434 ;;
     OLLAMA_MODELS)               echo /Users/mac/.ollama/models ;;
@@ -206,11 +222,19 @@ config_hint() {
     VLLM_KV_BITS)                echo "KV-cache quantization bits: 8 (recommended, halves KV RAM), 4 (max ctx), 0/empty=off" ;;
     VLLM_CACHE_MEMORY_MB)        echo "KV cache pool size in MB; empty = auto (wired - model_gb - reserve). Override only to pin it" ;;
     VLLM_CACHE_RESERVE_MB)       echo "RAM (MB) the auto cache pool leaves free for OS + on-demand GLM-OCR (default 4096)" ;;
-    LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for vllm-mlx + LiteLLM (default 1200 = 20 min; long docs/OCR)" ;;
+    LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for vllm-mlx + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
+    PRESET_ALIASES)              echo "1 = also expose sampling-preset aliases (main-precise/-creative/-metadata) — same loaded model, different default sampling" ;;
+    PRESET_PRECISE_TEMP)         echo "alias 'main-precise' temperature (factual, careful; default 0.2)" ;;
+    PRESET_PRECISE_TOPP)         echo "alias 'main-precise' top_p (default 0.8)" ;;
+    PRESET_PRECISE_FREQ)         echo "alias 'main-precise' frequency_penalty (anti-repetition; default 0.4)" ;;
+    PRESET_CREATIVE_TEMP)        echo "alias 'main-creative' temperature (varied prose; default 0.9)" ;;
+    PRESET_CREATIVE_TOPP)        echo "alias 'main-creative' top_p (default 0.95)" ;;
+    PRESET_METADATA_TEMP)        echo "alias 'main-metadata' temperature (extraction, deterministic; default 0.0 — safe because output is capped)" ;;
+    PRESET_METADATA_MAXTOK)      echo "alias 'main-metadata' max_tokens cap (title/date extraction, no long text; default 256)" ;;
     VLLM_EMBEDDING_MODEL)        echo "Optional HF embedding model served co-resident with main -> alias 'embed' (/v1/embeddings). empty=off. e.g. mlx-community/multilingual-e5-base-mlx" ;;
     VLLM_STT_MODEL)              echo "Optional Whisper STT (speech->text) served by vllm-mlx -> alias 'stt' (/v1/audio/transcriptions). Multilingual, Metal. empty=off. e.g. whisper-large-v3 (for Home Assistant voice)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
-    IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend sleeps; -1 = never sleep (stay warm)" ;;
+    IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend sleeps (default 60); -1 = never sleep (stay warm)" ;;
     OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: 10m (default), 1h, 24h, -1=forever" ;;
     OLLAMA_MAX_LOADED_MODELS)    echo "Max models in VRAM at once: 2 (default; e.g. text + OCR), 1 = single-model mode" ;;
     OLLAMA_KV_CACHE_TYPE)        echo "KV cache precision: q8_0 (recommended), q4_0 (aggressive), fp16 (default)" ;;
@@ -648,10 +672,11 @@ CATALOG_FILE="$CATALOG_DIR/catalog.tsv"
 LITELLM_CONFIG_FILE=/usr/local/etc/litellm.config.yaml
 
 # catalog_field <id> <column-number> — print a single field from the live
-# catalog, skipping comment lines. Columns (schema v2):
+# catalog, skipping comment lines. Columns (schema v3):
 #   1 id  2 hf_repo  3 role  4 engine  5 quant  6 gb  7 gated
 #   8 reasoning_parser  9 tool_parser  10 max_kv_size  11 max_num_seqs
-#   12 rating  13 notes
+#   12 rating  13 notes  14 temperature  15 top_p  16 frequency_penalty
+#   17 presence_penalty
 catalog_field() {
   [ -f "$CATALOG_FILE" ] || return 0
   /usr/bin/awk -F'|' -v id="$1" -v n="$2" '!/^#/ && $1==id {print $n; exit}' "$CATALOG_FILE"
@@ -861,13 +886,43 @@ render_litellm_config() {
   fi
   ocr_repo=$(catalog_repo "${ALIAS_OCR:-}")
 
+  # Per-model DEFAULT sampling (schema v3, cols 14-17) for the active main model.
+  # vllm-mlx serve takes no sampling flags, so we inject them into the LiteLLM
+  # alias instead; clients can still override per request (drop_params drops
+  # anything the backend rejects). Empty cell = omit (LiteLLM/backend default).
+  local m_temp m_topp m_freq m_pres
+  m_temp=$(catalog_field "${ALIAS_MAIN:-}" 14)
+  m_topp=$(catalog_field "${ALIAS_MAIN:-}" 15)
+  m_freq=$(catalog_field "${ALIAS_MAIN:-}" 16)
+  m_pres=$(catalog_field "${ALIAS_MAIN:-}" 17)
+
+  # emit_model <alias> <repo> <port> [temp] [top_p] [freq_pen] [pres_pen] [max_tok]
+  # One LiteLLM model_list entry; optional sampling lines only when non-empty.
+  emit_model() {
+    printf '  - model_name: %s\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' "$1" "$2" "$3"
+    [ -n "${4:-}" ] && printf '      temperature: %s\n' "$4"
+    [ -n "${5:-}" ] && printf '      top_p: %s\n' "$5"
+    [ -n "${6:-}" ] && printf '      frequency_penalty: %s\n' "$6"
+    [ -n "${7:-}" ] && printf '      presence_penalty: %s\n' "$7"
+    [ -n "${8:-}" ] && printf '      max_tokens: %s\n' "$8"
+    return 0
+  }
+
   tmp=$(/usr/bin/mktemp -t macstudio-litellm)
   {
     echo "# Managed by setup.sh -> render_litellm_config(). Do not edit by hand;"
     echo "# change aliases via 'llm-models'. Apps see only model_name aliases."
     echo "model_list:"
-    printf '  - model_name: main\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
-      "$main_repo" "${VLLM_BACKEND_PORT:-18000}"
+    emit_model main "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres"
+    # Sampling-preset aliases: SAME loaded model, different DEFAULT sampling
+    # (all share :18000 -> only ONE model stays resident). Apps pick the alias:
+    #   main-precise  factual/careful   main-creative  varied prose
+    #   main-metadata extraction (deterministic + max_tokens cap -> loop-safe)
+    if [ "${PRESET_ALIASES:-1}" = 1 ]; then
+      emit_model main-precise  "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_PRECISE_TEMP:-0.2}"  "${PRESET_PRECISE_TOPP:-0.8}"  "${PRESET_PRECISE_FREQ:-0.4}" "" ""
+      emit_model main-creative "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_CREATIVE_TEMP:-0.9}" "${PRESET_CREATIVE_TOPP:-0.95}" "" "" ""
+      emit_model main-metadata "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_METADATA_TEMP:-0.0}" "" "" "" "${PRESET_METADATA_MAXTOK:-256}"
+    fi
     if [ -n "$ocr_repo" ]; then
       printf '  - model_name: ocr\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
         "$ocr_repo" "${GLMOCR_PUBLIC_PORT:-5002}"
