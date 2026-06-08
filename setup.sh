@@ -142,7 +142,7 @@ config_default() {
     VENV_DIR)                    echo /Users/mac/.macstudio-venvs ;;
     HF_CACHE_DIR)                echo /Users/mac/.cache/huggingface ;;
     VLLM_MLX_VERSION)            echo 0.3.0 ;;
-    ALIAS_MAIN)                  echo glm47-flash ;;
+    ALIAS_MAIN)                  echo granite41-30b ;;
     ALIAS_OCR)                   echo glm-ocr ;;
     MODEL_PIN_MAIN)              echo 1 ;;
     VLLM_BACKEND_PORT)           echo 18000 ;;
