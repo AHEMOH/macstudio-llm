@@ -101,6 +101,7 @@ CONFIG_KEYS=(
   GLMOCR_BACKEND_PORT
   IDLE_TIMEOUT_GLMOCR
   STARTUP_TIMEOUT_GLMOCR
+  GLMOCR_MAX_TOKENS
   VISION_PUBLIC_PORT
   VISION_BACKEND_PORT
   IDLE_TIMEOUT_VISION
@@ -192,6 +193,7 @@ config_default() {
     GLMOCR_BACKEND_PORT)         echo 15002 ;;
     IDLE_TIMEOUT_GLMOCR)         echo 60 ;;
     STARTUP_TIMEOUT_GLMOCR)      echo 120 ;;
+    GLMOCR_MAX_TOKENS)           echo 8192 ;;
     VISION_PUBLIC_PORT)          echo 5003 ;;
     VISION_BACKEND_PORT)         echo 15003 ;;
     IDLE_TIMEOUT_VISION)         echo 60 ;;
@@ -276,6 +278,7 @@ config_hint() {
     PRESET_AGENTS_TOPP)          echo "alias 'main-agents' top_p (default 0.9)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
     IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend sleeps (default 60); -1 = never sleep (stay warm)" ;;
+    GLMOCR_MAX_TOKENS)           echo "Max output tokens for GLM-OCR (mlx-vlm default is only 2048 — a dense full page can exceed it and get truncated). Default 8192" ;;
     IDLE_TIMEOUT_VISION)         echo "Seconds before the on-demand vision backend sleeps (default 60); -1 = never sleep" ;;
     VISION_KV_BITS)              echo "mlx-vlm KV-cache quantization bits for the vision model: 8 (recommended), 4, or 3.5 with turboquant. empty=off" ;;
     VISION_KV_SCHEME)            echo "mlx-vlm KV quant scheme: uniform | turboquant (TurboQuant allows fractional bits like 3.5)" ;;
@@ -906,9 +909,13 @@ render_litellm_config() {
 
   # emit_model <alias> <repo> <port> [temp] [top_p] [freq_pen] [pres_pen] [max_tok] [nothink]
   # One LiteLLM model_list entry; optional sampling lines only when non-empty.
-  # nothink (arg 9) non-empty -> inject chat_template_kwargs to suppress the model's
-  # reasoning at the proxy (so clients like OpenWebUI never see a thinking block).
-  # LiteLLM forwards extra_body to the OpenAI-compatible backend (mlx_lm/mlx_vlm).
+  # nothink (arg 9) non-empty -> inject extra_body to suppress the model's reasoning at
+  # the proxy (so clients like OpenWebUI never see a thinking block, and short-output
+  # tasks like paperless extraction aren't eaten by hidden think tokens). The wire form
+  # is ENGINE-SPECIFIC: mlx_vlm.server reads a TOP-LEVEL `enable_thinking`; mlx_lm.server
+  # reads it inside `chat_template_kwargs`. LiteLLM forwards extra_body verbatim.
+  local _nothink_body='{"enable_thinking": false}'
+  [ "${TEXT_ENGINE:-mlx-vlm}" = mlx-lm ] && _nothink_body='{"chat_template_kwargs": {"enable_thinking": false}}'
   emit_model() {
     printf '  - model_name: %s\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' "$1" "$2" "$3"
     [ -n "${4:-}" ] && printf '      temperature: %s\n' "$4"
@@ -916,7 +923,7 @@ render_litellm_config() {
     [ -n "${6:-}" ] && printf '      frequency_penalty: %s\n' "$6"
     [ -n "${7:-}" ] && printf '      presence_penalty: %s\n' "$7"
     [ -n "${8:-}" ] && printf '      max_tokens: %s\n' "$8"
-    [ -n "${9:-}" ] && printf '      extra_body: {"chat_template_kwargs": {"enable_thinking": false}}\n'
+    [ -n "${9:-}" ] && printf '      extra_body: %s\n' "$_nothink_body"
     return 0
   }
   tmp=$(/usr/bin/mktemp -t macstudio-litellm)

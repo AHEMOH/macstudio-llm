@@ -24,9 +24,12 @@ if [ -z "${REPO:-}" ]; then
   exit 78
 fi
 
-echo "[start-glmocr] serving ocr='$MODEL_ID' repo='$REPO' on 127.0.0.1:${GLMOCR_BACKEND_PORT:-15002}"
+echo "[start-glmocr] serving ocr='$MODEL_ID' repo='$REPO' on 127.0.0.1:${GLMOCR_BACKEND_PORT:-15002} (max_tokens=${GLMOCR_MAX_TOKENS:-8192})"
 
+# --max-tokens raised above mlx-vlm's 2048 default: a full dense page of OCR text
+# can exceed 2048 tokens and would otherwise be truncated mid-page.
 exec "$VENV_DIR/mlxvlm/bin/python" -m mlx_vlm.server \
   --model "$REPO" \
   --host 127.0.0.1 \
-  --port "${GLMOCR_BACKEND_PORT:-15002}"
+  --port "${GLMOCR_BACKEND_PORT:-15002}" \
+  --max-tokens "${GLMOCR_MAX_TOKENS:-8192}"
