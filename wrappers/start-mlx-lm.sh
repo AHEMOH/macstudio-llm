@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
-# Launched by com.local.mlxlm.serve — the STABILITY-focused text engine
-# (Apple's reference mlx_lm.server, the mature layer vllm-mlx itself wraps).
-# Serves exactly ONE model, internal-only; LiteLLM (public :LITELLM_PORT) puts
-# the stable 'main' alias in front, exactly as it does for vllm-mlx.
+# Launched by com.local.mlxlm.serve — the always-on text engine
+# (Apple's reference mlx_lm.server). Serves exactly ONE model, internal-only;
+# LiteLLM (public :LITELLM_PORT) puts the stable 'main' alias in front.
 #
-# Active ONLY when TEXT_ENGINE=mlx-lm. render_all_plists() then bootouts the
-# vllm-mlx daemon so the two never fight over the internal text port. Flipping
-# TEXT_ENGINE back to vllm + `--apply` is a one-step rollback.
-#
-# Why mlx-lm: gpt-oss / gemma-4 are flagged BROKEN only because of vllm-mlx
-# bugs; on the reference server they may just work. Tradeoffs vs vllm-mlx:
+# Tradeoffs of mlx_lm.server:
 #   - NO KV quantization (mlx-lm issue #1308) -> 16-bit KV. We cap RAM with
 #     --prompt-cache-bytes (MLXLM_PROMPT_CACHE_MB) instead of --kv-bits.
-#   - NO Prometheus metrics endpoint (vllm-only Grafana panels go dark).
+#     (Vision via mlx-vlm DOES have --kv-bits — see start-vision.sh.)
+#   - NO Prometheus metrics endpoint.
 # Tool calling + reasoning are NOT lost: mlx_lm.server auto-infers a per-model
 # tool parser from the chat template (returns OpenAI tool_calls) and splits
 # reasoning into its own field. So catalog col 9 (tool_parser) is informational

@@ -18,10 +18,12 @@ fi
 # Fallback: inline minimal status if setup.sh wasn't installed to the
 # expected path. Keeps `llm-status` useful on a broken install.
 LABELS=(
-  "com.local.vllm.mlx"
+  "com.local.mlxlm.serve"
   "com.local.litellm.proxy"
   "com.local.glmocr.proxy"
   "com.local.glmocr.serve"
+  "com.local.vision.proxy"
+  "com.local.vision.serve"
   "com.local.ollama.headless"
   "com.local.immich.proxy"
   "com.local.immich.ml"
