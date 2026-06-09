@@ -1,4 +1,4 @@
-# schema: 5
+# schema: 6
 # MacStudio LLM — model catalog (seed)
 #
 # Pipe-delimited, shell-readable, TUI-editable (see `llm-models`). This file is a
@@ -24,8 +24,28 @@
 # This seed is intentionally LEAN: a gemma-4 unified main + GLM-OCR. Add more (granite/qwen/
 # glm/etc.) via `llm-models` — e.g. if you switch to TEXT_ENGINE=mlx-lm for a text-only main.
 #
+# ── Benchmark 26b vs 12b (mlx-vlm 0.6.2, --kv-bits 8, thinking-off, M1 Max 32 GB, 2026-06-09) ──
+#   metric            gemma4-26b (A4B MoE)        gemma4-12b (dense)
+#   token rate        ~44 tok/s  (FASTER)         ~26 tok/s
+#   fact-check        3/3                          3/3
+#   tool calling      yes (finish=tool_calls)      yes
+#   repetition loops  none (finish=stop)           none
+#   max context       14K prompt verified OK       14K OK   (native 262144 / 256K both)
+#   RAM resident      ~12.8 GB                      ~7.0 GB
+#   audio-in          NO (see below)               NO
+#   => 26b is FASTER *and* stronger (only 4B active params); 12b's sole edge is the smaller
+#      footprint (~7 GB). Default main = 26b; pick 12b only under tight memory.
+#
+# ── Audio (answer to "kann gemma/mlx-vlm audio?") ──
+#   gemma-4 ships audio modules in mlx-vlm (models/gemma4/audio.py + audio_feature_extractor.py;
+#   audio_config in the model). BUT the OpenAI `input_audio` server path is INERT: a WAV sent as
+#   input_audio is NOT delivered to the model — both gemmas replied "keine Audioaufnahme". So
+#   audio-IN does NOT work out of the box via mlx_vlm.server right now (no endpoint rewiring done).
+#   For audio later: dedicated STT = mlx-whisper; audio-OUT (TTS) = mlx-audio (Kokoro) — both
+#   optional, not wired. macOS `say` makes test clips locally.
+#
 # columns:
 # id|hf_repo|role|engine|quant|gb|gated|reasoning_parser|tool_parser|max_kv_size|max_num_seqs|rating|notes|temperature|top_p|frequency_penalty|presence_penalty
-gemma4-26b|mlx-community/gemma-4-26b-a4b-it-4bit|text|mlxvlm|4bit|16|yes|gemma4|gemma4|131072|3|5|DEFAULT unified main (TEXT_ENGINE=mlx-vlm): text + images + tool calling in ONE model, ~24 tok/s, KV-quant. 26B-A4B MoE, strong German; gated. native max: 262144 (256K)|0.7|0.95|0.3|0.3
-gemma4-12b|mlx-community/gemma-4-12B-it-4bit|text|mlxvlm|4bit|8|yes|gemma4|gemma4|131072|6|4|Lighter unified main (mlx-vlm): text+images+tools, smaller/faster than 26b. gemma4_unified arch -> BROKEN[mlx-lm] (runs ONLY on mlx-vlm). German; gated. native max: 262144 (256K)|0.7|0.95|0.3|0.3
+gemma4-26b|mlx-community/gemma-4-26b-a4b-it-4bit|text|mlxvlm|4bit|16|yes|gemma4|gemma4|131072|3|5|DEFAULT unified main (TEXT_ENGINE=mlx-vlm): text + images + tool calling in ONE model. 26B-A4B MoE, FASTEST (~44 tok/s thinking-off, ~24 w/ thinking), KV-quant. facts 3/3, tools ok, no repetition loops, 14K ctx verified. audio-in NOT working via server. ~12.8 GB RAM. strong German; gated. native max: 262144 (256K)|0.7|0.95|0.3|0.3
+gemma4-12b|mlx-community/gemma-4-12B-it-4bit|text|mlxvlm|4bit|8|yes|gemma4|gemma4|131072|6|4|Lighter unified main (mlx-vlm): text+images+tools. SLOWER than 26b (~26 tok/s, dense) but only ~7 GB RAM — pick only under memory pressure. facts 3/3, tools ok, no loops, 14K ctx ok, audio-in NOT working. gemma4_unified arch -> BROKEN[mlx-lm] (runs ONLY on mlx-vlm). German; gated. native max: 262144 (256K)|0.7|0.95|0.3|0.3
 glm-ocr|mlx-community/GLM-OCR-4bit|ocr|mlxvlm|4bit|2|no|||||5|Default OCR, on-demand. #1 OmniDocBench. GLMOCR_MAX_TOKENS=8192 covers a full page. alt: mlx-community/GLM-OCR-bf16||||
