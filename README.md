@@ -256,21 +256,14 @@ generation ceiling for `main`/`main-precise`/`main-creative` is `MLXLM_MAX_TOKEN
 HF cache (`$HF_CACHE_DIR/.../token`, mode 600) — **never** in `macstudio.conf`
 or git. Needed for gated repos (e.g. Gemma) and for higher download rate limits.
 
-Seeded models (all verified to exist as ready MLX builds):
+Seeded models — intentionally **lean** (a gemma-4 unified main + GLM-OCR). Add more via
+`llm-models` (e.g. `granite`/`qwen`/`glm` if you switch to `TEXT_ENGINE=mlx-lm`):
 
 | id | role | ~GB | notes |
 |---|---|---|---|
-| `granite41-30b` | text | 17 | clean enterprise/RAG main for `mlx-lm` mode (text-only, no vision) |
-| `qwen36-35b-a3b` | text | 20 | agentic Hermes-style tool use, multilingual, MoE (fast) |
-| `glm47-flash` | text | 19 | strong coding + tools |
 | `gemma4-26b` | text | 16 | **default main** — unified text+images+tools on `mlx-vlm` (~24 tok/s, KV-quant), German MoE (**gated**) |
-| `gemma4-31b` | text | 18 | Gemma 4 31B, German, tool calling (**gated**; text-only on mlx-lm) |
-| `qwen36-27b` | text | 16 | dense alternative |
-| `gptoss-20b` | text | 13 | runs, but raw harmony output — use with a harmony-aware client |
-| `glm-ocr` | ocr | 2 | **default ocr**, on-demand, #1 OmniDocBench |
-| `qwen35-9b-vl` | ocr | 9 | vision-language alternative to GLM-OCR |
-| `gemma4-12b-vis` | vision | 8 | **default vision** (gemma4_unified — runs only on mlx-vlm); German + images (**gated**) |
-| `gemma4-26b-vis` | vision | 16 | larger vision (does NOT co-reside with a 16 GB text main) (**gated**) |
+| `gemma4-12b` | text | 8 | lighter unified main (mlx-vlm only — `gemma4_unified`), smaller/faster, German (**gated**) |
+| `glm-ocr` | ocr | 2 | **default ocr**, on-demand, #1 OmniDocBench (full page via `GLMOCR_MAX_TOKENS`) |
 
 ## Prerequisites installed automatically
 
