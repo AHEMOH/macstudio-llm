@@ -2,11 +2,11 @@
   Mac Studio Headless LLM Server          (Apple Silicon, @TOTAL_RAM_GB@ GB)
 ══════════════════════════════════════════════════════════════════════
   Primary:    LiteLLM       :@LITELLM_PORT@   (public gateway; alias 'main' → one MLX model)
-              vllm-mlx      :@VLLM_BACKEND_PORT@   (internal; continuous batching, paged KV)
+              mlx_lm.server :@VLLM_BACKEND_PORT@   (internal; text engine)
   On-demand:  GLM-OCR       :@GLMOCR_PUBLIC_PORT@    (auto-wakes for OCR, only model run in parallel)
               immich-ml     :@ML_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_IMMICH@m)
               docling-serve :@DOCLING_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_DOCLING@m)
-  Monitoring: node_exporter :@NODE_EXPORTER_PORT@
+  Monitoring (opt-in): node_exporter :@NODE_EXPORTER_PORT@
               silicon       :@SILICON_EXPORTER_PORT@   (GPU, power, thermal, mem-pressure)
               ondemand      :@ONDEMAND_EXPORTER_PORT@   (proxy + backend state)
 ══════════════════════════════════════════════════════════════════════
@@ -30,7 +30,7 @@
     explicit step via 'llm-models' and never happens on the fly.
 
   Settings:     sudo bash /opt/macstudio/setup.sh
-  Logs:         tail -F /var/log/macstudio/vllm.log    (or litellm.log / glmocr-serve.log)
+  Logs:         tail -F /var/log/macstudio/mlxlm.log    (or litellm.log / glmocr-serve.log)
   Weekly auto:  @AUTOUPDATE_HUMAN@ → /var/log/macstudio/autoupdate.log
 
   Maintenance (FileVault is ON — reboot needs a key):

@@ -1,4 +1,4 @@
-# schema: 3
+# schema: 4
 # MacStudio LLM — model catalog (seed)
 #
 # Pipe-delimited, shell-readable, TUI-editable (see `llm-models`).
@@ -14,36 +14,30 @@
 # Download status (—/PART/ok) is computed by the TUI from HF_CACHE_DIR.
 #
 # Roles & engines (the backend is fixed per role):
-#   role=text -> engine=vllm       (vllm-mlx, alias 'main', text only)
-#   role=text -> engine=vllm-mllm  (vllm-mlx + --mllm: multimodal/vision text model)
-#   role=ocr  -> engine=mlxvlm     (mlx-vlm, alias 'ocr', on-demand)
-# max_num_seqs is set per model by footprint; the KV cache pool is auto-sized from
-# the model's gb (see start-vllm.sh). max_kv_size is left empty = global 128K
-# (set it per row only for a model whose native context is < 128K).
+#   role=text   -> mlx_lm.server (alias 'main', text only — tool calling + reasoning)
+#   role=ocr    -> mlx-vlm       (alias 'ocr', on-demand, document OCR)
+#   role=vision -> mlx-vlm       (alias 'vision', on-demand, general images + KV-quant)
+# Legacy col-4 engine values (vllm / vllm-mllm) are HISTORICAL — vllm-mlx is retired;
+# all role=text rows are now served by mlx_lm.server regardless of col 4.
+# max_num_seqs / max_kv_size are per-model footprint hints; on mlx_lm.server context
+# is bounded by the model + MLXLM_* config, on mlx-vlm by VISION_MAX_KV_SIZE.
 #
-# reasoning_parser / tool_parser apply ONLY to engine=vllm (mlx_vlm ignores them).
-#   empty cell = omit the flag. Values come from `vllm-mlx serve` choices:
-#   reasoning {qwen3,deepseek_r1,gpt_oss,gemma4,glm4}
-#   tool      {qwen,qwen3_coder,hermes,gpt-oss,granite,gemma4,glm47,mistral,llama,...}
-#   NOTE: under TEXT_ENGINE=mlx-lm (Apple mlx_lm.server) these two columns are
-#   INFORMATIONAL ONLY — the server auto-infers the tool parser from the chat
-#   template and splits reasoning into its own field. (gpt-oss harmony tools are
-#   not yet auto-detected there, so gpt-oss = text/reasoning only on mlx-lm.)
+# reasoning_parser / tool_parser (cols 8-9) are INFORMATIONAL — the live engines
+#   auto-detect them. mlx_lm.server (text 'main') infers the tool parser from the
+#   chat template and splits reasoning into its own field; mlx-vlm does the same.
+#   (gpt-oss harmony tools are not auto-detected yet -> gpt-oss = text/reasoning only.)
+#   Legacy hint values: reasoning {qwen3,deepseek_r1,gpt_oss,gemma4,glm4} / tool {qwen,hermes,...}.
 #
-# BROKEN flags are ENGINE-SCOPED: BROKEN[vllm] = fails on vllm-mlx (may run on
-#   mlx-lm — retest), BROKEN[mlx-lm] = fails on mlx_lm.server. A bare legacy
-#   BROKEN is treated as vllm-scoped. set_model_alias refuses a model only when
-#   it is flagged broken for the engine TEXT_ENGINE currently selects.
-# max_kv_size / max_num_seqs: empty = use the global VLLM_* default; set = per-model override.
-# max_kv_size is set to 131072 (128K) for all text models. "native max:" in notes = the
-# model's true ceiling — raise max_kv_size toward it (and check RAM) if you need more context.
-# (ocr/mlxvlm rows: max_kv_size is ignored by mlx-vlm, left empty.)
-# rating = 1..5 for THIS box (M1 Max 32 GB), agentic document work (hermes-agent), offline.
+# BROKEN flags: BROKEN[mlx-lm] (or a bare legacy BROKEN) = refused by set_model_alias.
+#   BROKEN[vllm] is HISTORICAL (vllm-mlx retired) and does NOT block selection.
+# max_kv_size / max_num_seqs (cols 10-11): per-model footprint hints (legacy vllm
+#   sizing). On mlx_lm.server context is bounded by the model + MLXLM_* config.
+#   "native max:" in notes = the model's true context ceiling.
+# rating = 1..5 for THIS box (M1 Max 32 GB), agentic document work, offline.
 #
-# temperature/top_p/frequency_penalty/presence_penalty (schema v3): per-model DEFAULT
-# sampling. vllm-mlx serve takes no sampling flags, so these are injected by
-# render_litellm_config() into the LiteLLM 'main' alias (clients can override per
-# request). Tune per model to curb repetition loops. Leave empty for ocr/mlxvlm rows.
+# temperature/top_p/frequency_penalty/presence_penalty (cols 14-17): per-model DEFAULT
+# sampling, injected by render_litellm_config() into the LiteLLM 'main' alias (clients
+# can override per request). Tune to curb repetition. Leave empty for ocr/vision rows.
 #
 # columns:
 # id|hf_repo|role|engine|quant|gb|gated|reasoning_parser|tool_parser|max_kv_size|max_num_seqs|rating|notes|temperature|top_p|frequency_penalty|presence_penalty
@@ -61,3 +55,5 @@ gptoss-20b|mlx-community/gpt-oss-20b-MXFP4-Q8|text|vllm|mxfp4-q8|12|no|gpt_oss|g
 lfm25-8b|LiquidAI/LFM2.5-8B-A1B-MLX-8bit|text|vllm|8bit|5|no|||131072|8|3|BROKEN[vllm] on vllm-mlx 0.3.0 (loads, but batch-gen ValueError: not enough values to unpack - lfm2 arch; 0 tokens / mid-stream error). native max: 131072 (128K)|0.6|0.95|0.3|0.3
 qwen35-9b-vl|mlx-community/Qwen3.5-9B-MLX-8bit|ocr|mlxvlm|8bit|9|no|||||3|Vision-language alternative to GLM-OCR. native max: 262144 (256K; mlxvlm ignores max_kv_size)||||
 glm-ocr|mlx-community/GLM-OCR-4bit|ocr|mlxvlm|4bit|2|no|||||5|Default ocr, on-demand. #1 OmniDocBench. alt: mlx-community/GLM-OCR-bf16. page-level (mlxvlm ignores max_kv_size)||||
+gemma4-12b-vis|mlx-community/gemma-4-12B-it-4bit|vision|mlxvlm|4bit|8|yes|||||4|On-demand VISION (alias vision), engine mlx-vlm. gemma4_unified arch runs ONLY on mlx-vlm. German + images; ~8GB so it can co-reside with the ~16GB text main (verify). gated. KV-quant via VISION_KV_BITS||||
+gemma4-26b-vis|mlx-community/gemma-4-26b-a4b-it-4bit|vision|mlxvlm|4bit|16|yes|||||3|On-demand VISION (alias vision), engine mlx-vlm. 26B-A4B MoE + images. ~16GB so it does NOT co-reside with a 16GB text main (swap risk) - prefer gemma4-12b-vis. gated||||

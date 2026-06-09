@@ -29,10 +29,10 @@ MOTD_BACKUP=/etc/motd.macstudio.bak
 # --- Labels & their plist source filenames ---------------------------------
 # Always-on services
 ALWAYS_ON_LABELS=(
-  com.local.vllm.mlx
   com.local.mlxlm.serve
   com.local.litellm.proxy
   com.local.glmocr.proxy
+  com.local.vision.proxy
   com.local.ollama.headless
   com.local.immich.proxy
   com.local.docling.proxy
@@ -49,6 +49,7 @@ ALWAYS_ON_LABELS=(
 # On-demand backends (KeepAlive=false, RunAtLoad=false)
 ONDEMAND_LABELS=(
   com.local.glmocr.serve
+  com.local.vision.serve
   com.local.immich.ml
   com.local.docling.serve
 )
@@ -66,18 +67,13 @@ CONFIG_KEYS=(
   INSTALL_OLLAMA
   VENV_DIR
   HF_CACHE_DIR
-  VLLM_MLX_VERSION
   ALIAS_MAIN
   ALIAS_OCR
+  ALIAS_VISION
   MODEL_PIN_MAIN
   VLLM_BACKEND_PORT
-  VLLM_MAX_MODEL_LEN
   VLLM_MAX_NUM_SEQS
-  VLLM_KV_BITS
-  VLLM_CACHE_MEMORY_MB
-  VLLM_CACHE_RESERVE_MB
   LLM_REQUEST_TIMEOUT
-  TEXT_ENGINE
   MLXLM_VERSION
   MLXLM_PROMPT_CACHE_MB
   MLXLM_DECODE_CONCURRENCY
@@ -92,13 +88,19 @@ CONFIG_KEYS=(
   PRESET_CREATIVE_TOPP
   PRESET_METADATA_TEMP
   PRESET_METADATA_MAXTOK
-  VLLM_EMBEDDING_MODEL
-  VLLM_STT_MODEL
   LITELLM_PORT
   GLMOCR_PUBLIC_PORT
   GLMOCR_BACKEND_PORT
   IDLE_TIMEOUT_GLMOCR
   STARTUP_TIMEOUT_GLMOCR
+  VISION_PUBLIC_PORT
+  VISION_BACKEND_PORT
+  IDLE_TIMEOUT_VISION
+  STARTUP_TIMEOUT_VISION
+  VISION_KV_BITS
+  VISION_KV_SCHEME
+  VISION_MAX_KV_SIZE
+  VISION_ENABLE_THINKING
   OLLAMA_PORT
   OLLAMA_MODELS
   OLLAMA_MAX_LOADED_MODELS
@@ -149,18 +151,13 @@ config_default() {
     INSTALL_OLLAMA)              echo 0 ;;
     VENV_DIR)                    echo /Users/mac/.macstudio-venvs ;;
     HF_CACHE_DIR)                echo /Users/mac/.cache/huggingface ;;
-    VLLM_MLX_VERSION)            echo 0.3.0 ;;
     ALIAS_MAIN)                  echo granite41-30b ;;
     ALIAS_OCR)                   echo glm-ocr ;;
+    ALIAS_VISION)                echo "" ;;
     MODEL_PIN_MAIN)              echo 1 ;;
     VLLM_BACKEND_PORT)           echo 18000 ;;
-    VLLM_MAX_MODEL_LEN)          echo 131072 ;;
     VLLM_MAX_NUM_SEQS)           echo 4 ;;
-    VLLM_KV_BITS)                echo 8 ;;
-    VLLM_CACHE_MEMORY_MB)        echo "" ;;
-    VLLM_CACHE_RESERVE_MB)       echo 4096 ;;
     LLM_REQUEST_TIMEOUT)         echo 3600 ;;
-    TEXT_ENGINE)                 echo vllm ;;
     MLXLM_VERSION)               echo 0.31.3 ;;
     MLXLM_PROMPT_CACHE_MB)       echo 8192 ;;
     MLXLM_DECODE_CONCURRENCY)    echo "" ;;
@@ -175,13 +172,19 @@ config_default() {
     PRESET_CREATIVE_TOPP)        echo 0.95 ;;
     PRESET_METADATA_TEMP)        echo 0.0 ;;
     PRESET_METADATA_MAXTOK)      echo 5000 ;;
-    VLLM_EMBEDDING_MODEL)        echo "" ;;
-    VLLM_STT_MODEL)              echo "" ;;
     LITELLM_PORT)                echo 11434 ;;
     GLMOCR_PUBLIC_PORT)          echo 5002 ;;
     GLMOCR_BACKEND_PORT)         echo 15002 ;;
     IDLE_TIMEOUT_GLMOCR)         echo 60 ;;
     STARTUP_TIMEOUT_GLMOCR)      echo 120 ;;
+    VISION_PUBLIC_PORT)          echo 5003 ;;
+    VISION_BACKEND_PORT)         echo 15003 ;;
+    IDLE_TIMEOUT_VISION)         echo 60 ;;
+    STARTUP_TIMEOUT_VISION)      echo 180 ;;
+    VISION_KV_BITS)              echo 8 ;;
+    VISION_KV_SCHEME)            echo uniform ;;
+    VISION_MAX_KV_SIZE)          echo "" ;;
+    VISION_ENABLE_THINKING)      echo 0 ;;
     OLLAMA_PORT)                 echo 11434 ;;
     OLLAMA_MODELS)               echo /Users/mac/.ollama/models ;;
     OLLAMA_MAX_LOADED_MODELS)    echo 2 ;;
@@ -208,7 +211,7 @@ config_default() {
     SILICON_SAMPLE_INTERVAL_MS)  echo 1000 ;;
     INSTALL_IMMICH)              echo 1 ;;
     INSTALL_DOCLING)             echo 1 ;;
-    INSTALL_EXPORTERS)           echo 1 ;;
+    INSTALL_EXPORTERS)           echo 0 ;;
     INSTALL_TUI)                 echo 1 ;;
     INSTALL_WATCHDOG)            echo 1 ;;
     WATCHDOG_PRESSURE_THRESHOLD) echo warn ;;
@@ -224,22 +227,18 @@ config_default() {
 config_hint() {
   case "$1" in
     IOGPU_WIRED_LIMIT_MB)        echo "GPU wired memory ceiling in MB (28672–30720 on 32 GB; 2048 headroom for OS)" ;;
-    INSTALL_MLX)                 echo "1 = install the MLX stack (vllm-mlx + LiteLLM + GLM-OCR) as the primary backend" ;;
+    INSTALL_MLX)                 echo "1 = install the MLX stack (mlx_lm.server text engine + LiteLLM + GLM-OCR/vision) as the primary backend" ;;
     INSTALL_OLLAMA)              echo "0 = Ollama kept as a code/install OPTION only (no daemon/dirs); 1 = run it too" ;;
-    VENV_DIR)                    echo "Where the vllm/litellm/mlxvlm Python venvs live (owned by TARGET_USER)" ;;
+    VENV_DIR)                    echo "Where the mlxlm/litellm/mlxvlm Python venvs live (owned by TARGET_USER)" ;;
     HF_CACHE_DIR)                echo "HuggingFace model cache (HF_HOME) — where downloaded MLX models land" ;;
-    VLLM_MLX_VERSION)            echo "Pinned vllm-mlx version (alpha pkg). empty=latest. Bump deliberately + --apply; e.g. 0.4.0rc1" ;;
     ALIAS_MAIN)                  echo "Catalog id of the ONE active main/text model (manage via 'llm-models')" ;;
     ALIAS_OCR)                   echo "Catalog id of the on-demand OCR model (engine mlxvlm)" ;;
+    ALIAS_VISION)                echo "Catalog id of the on-demand VISION model (role=vision, engine mlxvlm) -> alias 'vision' for images. empty = vision off" ;;
     MODEL_PIN_MAIN)              echo "1 = keep the main model permanently warm (agentic main load)" ;;
-    VLLM_MAX_MODEL_LEN)          echo "max-kv-size: max context tokens (paged KV). 131072=128K. Per-model override in catalog" ;;
-    VLLM_MAX_NUM_SEQS)           echo "Max concurrent sequences (continuous batching); excess requests queue" ;;
-    VLLM_KV_BITS)                echo "KV-cache quantization bits: 8 (recommended, halves KV RAM), 4 (max ctx), 0/empty=off" ;;
-    VLLM_CACHE_MEMORY_MB)        echo "KV cache pool size in MB; empty = auto (wired - model_gb - reserve). Override only to pin it" ;;
-    VLLM_CACHE_RESERVE_MB)       echo "RAM (MB) the auto cache pool leaves free for OS + on-demand GLM-OCR (default 4096)" ;;
-    LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for vllm-mlx + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
-    TEXT_ENGINE)                 echo "Backend that serves 'main': vllm (continuous batching, 8-bit KV, 128K) | mlx-lm (Apple mlx_lm.server, STABLE, tool calling + reasoning, 16-bit KV, no metrics). One runs at a time; flip + --apply to switch/rollback" ;;
-    MLXLM_VERSION)               echo "Pinned mlx-lm for the dedicated 'mlxlm' venv (independent of vllm-mlx). Bump deliberately + --apply" ;;
+    VLLM_BACKEND_PORT)           echo "Internal port the text engine (mlx_lm.server) binds; LiteLLM fronts it. (Legacy VLLM_ name kept to avoid config churn.)" ;;
+    VLLM_MAX_NUM_SEQS)           echo "Fallback for MLXLM_DECODE_CONCURRENCY (concurrent decode streams). (Legacy VLLM_ name.)" ;;
+    LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
+    MLXLM_VERSION)               echo "Pinned mlx-lm for the 'mlxlm' venv (the text engine). Bump deliberately + --apply" ;;
     MLXLM_PROMPT_CACHE_MB)       echo "mlx-lm prompt-cache hard cap in MB (--prompt-cache-bytes). Bounds KV/prefix RAM (16-bit KV grows fast — no kv-quant); default 8192" ;;
     MLXLM_DECODE_CONCURRENCY)    echo "mlx-lm concurrent decode streams (--decode-concurrency). empty = reuse VLLM_MAX_NUM_SEQS" ;;
     MLXLM_PROMPT_CONCURRENCY)    echo "mlx-lm concurrent prompt prefills (--prompt-concurrency); default 1 on 32 GB (limits prefill RAM spikes)" ;;
@@ -253,10 +252,13 @@ config_hint() {
     PRESET_CREATIVE_TOPP)        echo "alias 'main-creative' top_p (default 0.95)" ;;
     PRESET_METADATA_TEMP)        echo "alias 'main-metadata' temperature (extraction, deterministic; default 0.0 — safe because output is capped)" ;;
     PRESET_METADATA_MAXTOK)      echo "alias 'main-metadata' max_tokens cap (extraction). 5000 so a reasoning main (e.g. gemma-4) can think AND finish the JSON; clean models still stop early at EOS. Only this alias is capped — main/-precise/-creative use MLXLM_MAX_TOKENS" ;;
-    VLLM_EMBEDDING_MODEL)        echo "Optional HF embedding model served co-resident with main -> alias 'embed' (/v1/embeddings). empty=off. e.g. mlx-community/multilingual-e5-base-mlx" ;;
-    VLLM_STT_MODEL)              echo "Optional Whisper STT (speech->text) served by vllm-mlx -> alias 'stt' (/v1/audio/transcriptions). Multilingual, Metal. empty=off. e.g. whisper-large-v3 (for Home Assistant voice)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
     IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend sleeps (default 60); -1 = never sleep (stay warm)" ;;
+    IDLE_TIMEOUT_VISION)         echo "Seconds before the on-demand vision backend sleeps (default 60); -1 = never sleep" ;;
+    VISION_KV_BITS)              echo "mlx-vlm KV-cache quantization bits for the vision model: 8 (recommended), 4, or 3.5 with turboquant. empty=off" ;;
+    VISION_KV_SCHEME)            echo "mlx-vlm KV quant scheme: uniform | turboquant (TurboQuant allows fractional bits like 3.5)" ;;
+    VISION_MAX_KV_SIZE)          echo "mlx-vlm context cap (--max-kv-size) for the vision model; empty = model default" ;;
+    VISION_ENABLE_THINKING)      echo "1 = enable the vision model's reasoning by default; 0 = off (faster captions)" ;;
     OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: 10m (default), 1h, 24h, -1=forever" ;;
     OLLAMA_MAX_LOADED_MODELS)    echo "Max models in VRAM at once: 2 (default; e.g. text + OCR), 1 = single-model mode" ;;
     OLLAMA_KV_CACHE_TYPE)        echo "KV cache precision: q8_0 (recommended), q4_0 (aggressive), fp16 (default)" ;;
@@ -430,12 +432,10 @@ load_config() {
   local _lbl
   for _lbl in "${ALL_LABELS[@]}"; do
     case "$_lbl" in
-      com.local.vllm.mlx)
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-vllm}" = vllm ]; }   || continue ;;
-      com.local.mlxlm.serve)
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-vllm}" = mlx-lm ]; } || continue ;;
-      com.local.litellm.*|com.local.glmocr.*)
+      com.local.mlxlm.serve|com.local.litellm.*|com.local.glmocr.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || continue ;;
+      com.local.vision.*)
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ -n "${ALIAS_VISION:-}" ]; } || continue ;;
       com.local.ollama.headless)
         [ "${INSTALL_OLLAMA:-0}" = 1 ] || continue ;;
       com.local.ollama.exporter)
@@ -469,11 +469,12 @@ save_config_key() {
 # --- label → log file mapping ---------------------------------------------
 label_log() {
   case "$1" in
-    com.local.vllm.mlx)          echo "$LOG_DIR/vllm.log" ;;
     com.local.mlxlm.serve)       echo "$LOG_DIR/mlxlm.log" ;;
     com.local.litellm.proxy)     echo "$LOG_DIR/litellm.log" ;;
     com.local.glmocr.proxy)      echo "$LOG_DIR/glmocr-proxy.log" ;;
     com.local.glmocr.serve)      echo "$LOG_DIR/glmocr-serve.log" ;;
+    com.local.vision.proxy)      echo "$LOG_DIR/vision-proxy.log" ;;
+    com.local.vision.serve)      echo "$LOG_DIR/vision-serve.log" ;;
     com.local.ollama.headless)   echo "$LOG_DIR/ollama.log" ;;
     com.local.immich.proxy)      echo "$LOG_DIR/immich-proxy.log" ;;
     com.local.immich.ml)         echo "$LOG_DIR/immich-ml.log" ;;
@@ -638,7 +639,7 @@ ensure_formulas() {
 }
 
 ensure_modern_python() {
-  # The MLX stack (vllm-mlx, mlx-vlm, litellm) and docling-serve all need
+  # The MLX stack (mlx-lm, mlx-vlm, litellm) and docling-serve all need
   # Python ≥ 3.10; macOS ships /usr/bin/python3 at 3.9. Install python@3.12
   # via brew so those venvs have a compatible interpreter. Skip only if both
   # the MLX stack and docling are off.
@@ -790,48 +791,17 @@ ensure_python_venvs() {
     fi
   }
 
-  # vllm-mlx is alpha → pin an explicit version so neither a fresh build nor the
-  # weekly autoupdate floats it unexpectedly. mlx-vlm/litellm stay at the version
-  # they were first built with (no auto-upgrade).
-  local vllm_spec="vllm-mlx"
-  [ -n "${VLLM_MLX_VERSION:-}" ] && vllm_spec="vllm-mlx==${VLLM_MLX_VERSION}"
-  _ensure_venv vllm    bin:vllm-mlx  "$vllm_spec" 'huggingface_hub[cli]'
-  _ensure_venv litellm bin:litellm   'litellm[proxy]'
-  _ensure_venv mlxvlm  mod:mlx_vlm   mlx-vlm 'huggingface_hub[cli]'
+  # The text engine is Apple's mlx_lm.server (venv 'mlxlm'), pinned via
+  # MLXLM_VERSION so neither a fresh build nor the weekly autoupdate floats it.
+  # mlx-vlm (vision/OCR) + litellm stay at the version first built (no auto-upgrade).
+  _ensure_venv litellm bin:litellm       'litellm[proxy]'
+  _ensure_venv mlxvlm  mod:mlx_vlm        mlx-vlm 'huggingface_hub[cli]'
+  local mlxlm_spec="mlx-lm"
+  [ -n "${MLXLM_VERSION:-}" ] && mlxlm_spec="mlx-lm==${MLXLM_VERSION}"
+  _ensure_venv mlxlm   bin:mlx_lm.server  "$mlxlm_spec" 'huggingface_hub[cli]'
 
-  # mlx-lm (Apple's reference engine) gets its OWN pinned venv, built only when
-  # TEXT_ENGINE=mlx-lm so vllm-only installs stay lean. Dedicated (not the vllm
-  # venv, where mlx-lm rides as a transitive dep) so the stable fallback is
-  # decoupled from vllm-mlx version bumps.
-  if [ "${TEXT_ENGINE:-vllm}" = "mlx-lm" ]; then
-    local mlxlm_spec="mlx-lm"
-    [ -n "${MLXLM_VERSION:-}" ] && mlxlm_spec="mlx-lm==${MLXLM_VERSION}"
-    _ensure_venv mlxlm bin:mlx_lm.server "$mlxlm_spec" 'huggingface_hub[cli]'
-  fi
-
-  # Version-sync: if the pin changed since the venv was built, switch to it and
-  # restart vllm so the new version is actually live. This is how the user
-  # upgrades/downgrades — set VLLM_MLX_VERSION + `--apply`.
-  if [ -n "${VLLM_MLX_VERSION:-}" ] && [ -x "$vdir/vllm/bin/python" ]; then
-    local cur_v
-    cur_v=$(/usr/bin/sudo -u "$TARGET_USER" -H "$vdir/vllm/bin/python" -c \
-      'import importlib.metadata as m; print(m.version("vllm-mlx"))' 2>/dev/null)
-    if [ -n "$cur_v" ] && [ "$cur_v" != "$VLLM_MLX_VERSION" ]; then
-      log "vllm-mlx pin: $cur_v -> $VLLM_MLX_VERSION (reinstalling)"
-      if /usr/bin/sudo -u "$TARGET_USER" -H "$vdir/vllm/bin/pip" install "vllm-mlx==${VLLM_MLX_VERSION}" \
-            >"$LOG_DIR/vllm-pin-install.log" 2>&1; then
-        ok "vllm-mlx pinned to $VLLM_MLX_VERSION"
-        daemon_loaded com.local.vllm.mlx \
-          && /bin/launchctl kickstart -k system/com.local.vllm.mlx >/dev/null 2>&1 \
-          && ok "restarted vllm-mlx to apply the version change"
-      else
-        warn "vllm-mlx pin install failed; see $LOG_DIR/vllm-pin-install.log"
-      fi
-    fi
-  fi
-
-  # Same pin-sync for the mlxlm venv: set MLXLM_VERSION + `--apply` to up/downgrade.
-  if [ "${TEXT_ENGINE:-vllm}" = "mlx-lm" ] && [ -n "${MLXLM_VERSION:-}" ] && [ -x "$vdir/mlxlm/bin/python" ]; then
+  # Version-sync: set MLXLM_VERSION + `--apply` to up/downgrade the text engine.
+  if [ -n "${MLXLM_VERSION:-}" ] && [ -x "$vdir/mlxlm/bin/python" ]; then
     local cur_m
     cur_m=$(/usr/bin/sudo -u "$TARGET_USER" -H "$vdir/mlxlm/bin/python" -c \
       'import importlib.metadata as m; print(m.version("mlx-lm"))' 2>/dev/null)
@@ -883,54 +853,9 @@ ensure_model_catalog() {
   fi
 }
 
-# Pre-warm the Whisper STT model and FIX a vllm-mlx/mlx-audio quirk: the
-# mlx-community whisper repos ship only config.json + weights (no HF processor),
-# so mlx_audio's WhisperProcessor.from_pretrained() fails at transcribe time
-# ("Processor not found"). We download the small processor/tokenizer files from
-# the original openai/whisper-large-v3 repo into the MLX snapshot dir. Gated on
-# VLLM_STT_MODEL; idempotent (skips if the processor is already present).
-ensure_whisper_stt() {
-  [ "${INSTALL_MLX:-1}" = 1 ] || return 0
-  [ -n "${VLLM_STT_MODEL:-}" ] || return 0
-  local py="${VENV_DIR:-/Users/mac/.macstudio-venvs}/vllm/bin/python"
-  [ -x "$py" ] || { warn "vllm venv missing — STT processor fix skipped"; return 0; }
-  /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env \
-      HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
-      "$py" - "$VLLM_STT_MODEL" <<'PY'
-import sys, os, glob, shutil
-from huggingface_hub import snapshot_download
-ALIASES = {
-    "whisper-large-v3":       "mlx-community/whisper-large-v3-mlx",
-    "whisper-large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
-    "whisper-medium":         "mlx-community/whisper-medium-mlx",
-    "whisper-small":          "mlx-community/whisper-small-mlx",
-}
-req = sys.argv[1]
-repo = ALIASES.get(req, req)
-if "whisper" not in repo.lower():
-    print("[stt] '%s' is not a whisper model — no processor fix needed." % req); sys.exit(0)
-print("[stt] ensuring %s (resolved from '%s')" % (repo, req))
-dst = snapshot_download(repo)                       # weights (pre-warm, no cold first call)
-if os.path.exists(os.path.join(dst, "preprocessor_config.json")):
-    print("[stt] processor already present — ok."); sys.exit(0)
-proc = snapshot_download("openai/whisper-large-v3", allow_patterns=[
-    "preprocessor_config.json","tokenizer.json","tokenizer_config.json","vocab.json",
-    "merges.txt","normalizer.json","special_tokens_map.json","added_tokens.json",
-    "generation_config.json"])
-n = 0
-for f in os.listdir(proc):
-    d = os.path.join(dst, f)
-    if not os.path.exists(d):
-        shutil.copy(os.path.realpath(os.path.join(proc, f)), d); n += 1
-print("[stt] injected %d processor file(s) into %s" % (n, dst))
-PY
-  if [ $? -eq 0 ]; then ok "Whisper STT '$VLLM_STT_MODEL' ready (alias 'stt', /v1/audio/transcriptions)"
-  else warn "Whisper STT setup had an issue (see output above) — STT may 500 until fixed"; fi
-}
-
 # Generate /usr/local/etc/litellm.config.yaml from the active alias
-# assignments. Two roles only: `main` (the ONE loaded vllm-mlx text model) and
-# `ocr` (the on-demand GLM-OCR proxy). Only rewrites + reloads on a real change.
+# assignments. Roles: `main` (the ONE loaded mlx_lm.server text model), `ocr`
+# and `vision` (on-demand mlx-vlm proxies). Only rewrites + reloads on a real change.
 render_litellm_config() {
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   local main_repo ocr_repo tmp
@@ -943,9 +868,9 @@ render_litellm_config() {
   ocr_repo=$(catalog_repo "${ALIAS_OCR:-}")
 
   # Per-model DEFAULT sampling (schema v3, cols 14-17) for the active main model.
-  # vllm-mlx serve takes no sampling flags, so we inject them into the LiteLLM
-  # alias instead; clients can still override per request (drop_params drops
-  # anything the backend rejects). Empty cell = omit (LiteLLM/backend default).
+  # We inject per-model default sampling into the LiteLLM alias; clients can
+  # still override per request (drop_params drops anything the backend rejects).
+  # Empty cell = omit (LiteLLM/backend default).
   local m_temp m_topp m_freq m_pres
   m_temp=$(catalog_field "${ALIAS_MAIN:-}" 14)
   m_topp=$(catalog_field "${ALIAS_MAIN:-}" 15)
@@ -983,16 +908,12 @@ render_litellm_config() {
       printf '  - model_name: ocr\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
         "$ocr_repo" "${GLMOCR_PUBLIC_PORT:-5002}"
     fi
-    if [ -n "${VLLM_EMBEDDING_MODEL:-}" ]; then
-      printf '  - model_name: embed\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
-        "$VLLM_EMBEDDING_MODEL" "${VLLM_BACKEND_PORT:-18000}"
-    fi
-    # Whisper STT (speech->text) served by vllm-mlx (request-time loaded, Metal).
-    # alias 'stt' -> POST /v1/audio/transcriptions. mode tells LiteLLM to route
-    # multipart audio uploads. Multilingual (de/ru/…). Great for Home Assistant.
-    if [ -n "${VLLM_STT_MODEL:-}" ]; then
-      printf '  - model_name: stt\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: audio_transcription\n' \
-        "$VLLM_STT_MODEL" "${VLLM_BACKEND_PORT:-18000}"
+    # On-demand vision (mlx-vlm): images via the 'vision' alias -> mlx_vlm.server
+    # (same on-demand proxy pattern as ocr; gemma4/gemma4_unified + KV-quant).
+    if [ -n "${ALIAS_VISION:-}" ]; then
+      local vision_repo; vision_repo=$(catalog_repo "${ALIAS_VISION}")
+      [ -n "$vision_repo" ] && printf '  - model_name: vision\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
+        "$vision_repo" "${VISION_PUBLIC_PORT:-5003}"
     fi
     echo "litellm_settings:"
     echo "  drop_params: true"
@@ -1068,14 +989,11 @@ render_all_plists() {
     fi
     # Skip optional services per config
     case "$label" in
-      com.local.vllm.mlx)
-        # Only the text engine TEXT_ENGINE selects (vllm) is loaded; the other
-        # is booted out so the two never fight over the internal text port.
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-vllm}" = vllm ]; }   || { remove_plist "$label"; continue; } ;;
-      com.local.mlxlm.serve)
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-vllm}" = mlx-lm ]; } || { remove_plist "$label"; continue; } ;;
-      com.local.litellm.*|com.local.glmocr.*)
+      com.local.mlxlm.serve|com.local.litellm.*|com.local.glmocr.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
+      com.local.vision.*)
+        # On-demand vision (mlx-vlm) — only when a model is assigned.
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ -n "${ALIAS_VISION:-}" ]; } || { remove_plist "$label"; continue; } ;;
       com.local.ollama.headless)
         [ "${INSTALL_OLLAMA:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.ollama.exporter)
@@ -1249,7 +1167,6 @@ apply_everything() {
   dbg "step: ensure_docling_venv";     ensure_docling_venv
   dbg "step: ensure_python_venvs";     ensure_python_venvs || true
   dbg "step: ensure_model_catalog";    ensure_model_catalog
-  dbg "step: ensure_whisper_stt";      ensure_whisper_stt || true
   dbg "step: render_wrappers";        render_wrappers
   dbg "step: render_services";        render_services
   dbg "step: render_bin";             render_bin
@@ -1354,13 +1271,13 @@ menu_select_services() {
   load_config
   while true; do
     printf "\n${C_BOLD}── Select services to install ─────────────────${C_RST}\n"
-    printf "%s\n" "The MLX stack (vllm-mlx + LiteLLM + on-demand GLM-OCR) is the primary"
+    printf "%s\n" "The MLX stack (mlx_lm.server + LiteLLM + on-demand GLM-OCR/vision) is the primary"
     printf "%s\n" "backend. Ollama is kept in the repo as an OPTION only — turn it on if"
     printf "%s\n" "you want it back. The GPU-wired-limit helper, caffeinate and the weekly"
     printf "%s\n" "autoupdate are always installed. Re-running setup.sh never overwrites a"
     printf "%s\n" "healthy installed service."
     echo
-    printf "  1) %-18s [%s]   MLX stack: vllm-mlx :%s internal, LiteLLM :%s public, GLM-OCR :%s\n" \
+    printf "  1) %-18s [%s]   MLX stack: mlx_lm.server :%s internal, LiteLLM :%s public, GLM-OCR :%s\n" \
       INSTALL_MLX       "$(onoff_label "${INSTALL_MLX:-1}")" \
       "${VLLM_BACKEND_PORT:-18000}" "${LITELLM_PORT:-11434}" "${GLMOCR_PUBLIC_PORT:-5002}"
     printf "  2) %-18s [%s]   Ollama fallback engine (:%s) — off by default\n" \
@@ -1454,7 +1371,7 @@ menu_settings() {
 # renamed `huggingface-cli` -> `hf`; the old name is a deprecated no-op shim.)
 hf_cli() {
   local base="${VENV_DIR:-/Users/mac/.macstudio-venvs}"
-  if [ -x "$base/vllm/bin/hf" ]; then echo "$base/vllm/bin/hf"
+  if [ -x "$base/mlxlm/bin/hf" ]; then echo "$base/mlxlm/bin/hf"
   else echo "$base/mlxvlm/bin/hf"; fi
 }
 
@@ -1510,31 +1427,27 @@ set_model_alias() {
   st=$(model_status "$repo")
   [ "$st" = ok ] || { err "'$id' is not fully downloaded (status=$st) — run 'd $id' first"; return 1; }
   case "$slot" in
-    main)   key=ALIAS_MAIN; want_role=text ;;
-    ocr)    key=ALIAS_OCR;  want_role=ocr  ;;
+    main)   key=ALIAS_MAIN;   want_role=text ;;
+    ocr)    key=ALIAS_OCR;    want_role=ocr  ;;
+    vision) key=ALIAS_VISION; want_role=vision ;;
     *) err "bad slot: $slot"; return 1 ;;
   esac
-  # Two roles only: text models go to 'main' (vllm), ocr models to 'ocr' (mlxvlm).
+  # Roles: text -> 'main' (mlx_lm.server), ocr -> 'ocr' + vision -> 'vision' (both mlx-vlm).
   role=$(catalog_role "$id"); role=${role:-text}
   if [ "$role" != "$want_role" ]; then
     err "'$id' has role '$role' but slot '$slot' needs role '$want_role' — wrong list"
     return 1
   fi
-  # Refuse models the catalog flags BROKEN — selecting one just breaks the
-  # backend (server won't serve). BROKEN is engine-scoped: a model that crashes
-  # vllm-mlx may run fine on mlx_lm.server (gpt-oss/gemma-4 broke on vllm-specific
-  # bugs). Tags: BROKEN[vllm] / BROKEN[mlx-lm]; a bare legacy BROKEN = vllm-scoped.
-  # Refuse only when flagged broken for the engine TEXT_ENGINE currently selects.
-  local _notes _eng _broken=0
+  # Refuse models the catalog flags BROKEN for the live engines — selecting one
+  # just breaks the server. Blocks a bare legacy BROKEN or BROKEN[mlx-lm]; a
+  # BROKEN[vllm] tag is HISTORICAL (vllm-mlx is retired) and does NOT block.
+  local _notes _broken=0
   _notes=$(catalog_field "$id" 13)
-  _eng="${TEXT_ENGINE:-vllm}"
-  if printf '%s' "$_notes" | /usr/bin/grep -qiE "BROKEN\[$_eng\]"; then
-    _broken=1
-  elif [ "$_eng" = vllm ] && printf '%s' "$_notes" | /usr/bin/grep -qiE 'BROKEN([^[]|$)'; then
+  if printf '%s' "$_notes" | /usr/bin/grep -qiE 'BROKEN\[mlx-lm\]|BROKEN([^[]|$)'; then
     _broken=1
   fi
   if [ "$_broken" = 1 ]; then
-    err "'$id' is flagged BROKEN on the current text engine '$_eng' — refusing (would break the server)."
+    err "'$id' is flagged BROKEN — refusing (would break the server)."
     warn "  see 'i $id' for the reason. Override (not advised): FORCE_BROKEN=1 …"
     [ "${FORCE_BROKEN:-0}" = 1 ] || return 1
     warn "FORCE_BROKEN=1 set — proceeding anyway."
@@ -1545,17 +1458,19 @@ set_model_alias() {
   render_litellm_config
   if [ "$slot" = main ]; then
     ram_guard_warn
-    # Restart whichever text daemon TEXT_ENGINE has active (one runs at a time).
-    local _text_label=com.local.vllm.mlx
-    [ "${TEXT_ENGINE:-vllm}" = mlx-lm ] && _text_label=com.local.mlxlm.serve
-    if daemon_loaded "$_text_label"; then
-      /bin/launchctl kickstart -k "system/$_text_label" >/dev/null 2>&1 \
-        && ok "restarting $_text_label with new main model (load ~30–60 s, no hot-swap)"
+    if daemon_loaded com.local.mlxlm.serve; then
+      /bin/launchctl kickstart -k system/com.local.mlxlm.serve >/dev/null 2>&1 \
+        && ok "restarting mlx_lm.server with new main model (load ~30–60 s, no hot-swap)"
     fi
   elif [ "$slot" = ocr ]; then
     if daemon_running com.local.glmocr.serve; then
       /bin/launchctl stop com.local.glmocr.serve >/dev/null 2>&1 || true
       ok "stopped GLM-OCR backend; next OCR request wakes it with the new model"
+    fi
+  elif [ "$slot" = vision ]; then
+    if daemon_running com.local.vision.serve; then
+      /bin/launchctl stop com.local.vision.serve >/dev/null 2>&1 || true
+      ok "stopped vision backend; next image request wakes it with the new model"
     fi
   fi
 }
@@ -1709,13 +1624,13 @@ menu_models() {
   while true; do
     clear 2>/dev/null || true
     printf "${C_BOLD}── Models & aliases ───────────────────────────${C_RST}\n"
-    printf "Active:  main=%s  ocr=%s  embed=%s\n" \
-      "${ALIAS_MAIN:-none}" "${ALIAS_OCR:-none}" "${VLLM_EMBEDDING_MODEL:-off}"
-    printf "${C_DIM}(ONE text model loads; switch = explicit restart, no hot-swap. embed set in menu 4: VLLM_EMBEDDING_MODEL)${C_RST}\n\n"
+    printf "Active:  main=%s  ocr=%s  vision=%s\n" \
+      "${ALIAS_MAIN:-none}" "${ALIAS_OCR:-none}" "${ALIAS_VISION:-off}"
+    printf "${C_DIM}(ONE text model loads on mlx_lm.server; ocr + vision are on-demand mlx-vlm)${C_RST}\n\n"
     print_catalog_table
     printf "\nSTATUS ok = downloaded+verified (only ok is selectable).  FLAG: ${C_RED}BROKEN${C_RST}=not selectable  ${C_GRN}REC${C_RST}=recommended (rating 5).\n"
-    printf "Roles: text -> 's' (alias main, vllm)   ocr -> 'o' (alias ocr, on-demand mlx-vlm). Source: HuggingFace repo-ids.\n"
-    printf "Actions:  i <id> info   d <id> download   s <id> set TEXT/main   o <id> set OCR\n"
+    printf "Roles: text -> 's' (alias main)   ocr -> 'o' (alias ocr)   vision -> 'v' (alias vision). Source: HuggingFace repo-ids.\n"
+    printf "Actions:  i <id> info   d <id> download   s <id> set TEXT/main   o <id> set OCR   v <id> set VISION\n"
     printf "          a add   e <id> edit   x <id> remove   r <id> delete-local   t HF token   q back\n"
     read -r -p "models> " line || return 0
     local cmd arg
@@ -1724,8 +1639,9 @@ menu_models() {
     case "$cmd" in
       i) print_model_detail "$arg";    pause_enter ;;
       d) download_model "$arg";        pause_enter ;;
-      s) set_model_alias main "$arg";  pause_enter ;;
-      o) set_model_alias ocr "$arg";   pause_enter ;;
+      s) set_model_alias main "$arg";   pause_enter ;;
+      o) set_model_alias ocr "$arg";    pause_enter ;;
+      v) set_model_alias vision "$arg"; pause_enter ;;
       a) catalog_add_entry;            pause_enter ;;
       e) catalog_edit_entry "$arg";    pause_enter ;;
       x) catalog_remove_entry "$arg";  pause_enter ;;
@@ -1738,15 +1654,15 @@ menu_models() {
 }
 
 # Read-only "what could be updated" view. Changes NOTHING — the LLM stack is
-# frozen on purpose; the user bumps it deliberately via VLLM_MLX_VERSION.
+# frozen on purpose; the user bumps it deliberately via MLXLM_VERSION.
 menu_updates() {
   load_config
   printf "\n${C_BOLD}── Check for updates (read-only) ──────────────${C_RST}\n"
-  printf "vllm-mlx pin: VLLM_MLX_VERSION=%s   (alpha pkg — frozen unless you bump it)\n\n" \
-    "${VLLM_MLX_VERSION:-<float=latest>}"
+  printf "mlx-lm pin: MLXLM_VERSION=%s   (text engine — frozen unless you bump it)\n\n" \
+    "${MLXLM_VERSION:-<float=latest>}"
   printf "LLM stack (installed vs PyPI):\n"
   local pair vn pk py
-  for pair in vllm:vllm-mlx mlxvlm:mlx-vlm litellm:litellm; do
+  for pair in mlxlm:mlx-lm mlxvlm:mlx-vlm litellm:litellm; do
     vn=${pair%%:*}; pk=${pair##*:}
     py="${VENV_DIR:-/Users/mac/.macstudio-venvs}/$vn/bin/python"
     if [ ! -x "$py" ]; then printf "  %-10s (venv not built)\n" "$pk"; continue; fi
@@ -1773,7 +1689,7 @@ PY
   brew_ outdated 2>/dev/null | /usr/bin/sed 's/^/  /' || echo "  (brew n/a)"
   printf "macOS updates:\n"
   /usr/sbin/softwareupdate -l 2>&1 | /usr/bin/grep -iE 'label:|recommended|^\* |no new software' | /usr/bin/sed 's/^/  /' | /usr/bin/head -8
-  printf "\n${C_DIM}Upgrade the LLM stack on purpose: menu 4 -> set VLLM_MLX_VERSION (e.g. 0.4.0rc1) -> menu 1.${C_RST}\n"
+  printf "\n${C_DIM}Upgrade the LLM stack on purpose: menu 4 -> set MLXLM_VERSION -> menu 1.${C_RST}\n"
   pause_enter
 }
 
@@ -1840,14 +1756,14 @@ menu_cleanup() {
 }
 
 # Follow a log live; Ctrl-C returns to the menu (trap keeps the TUI alive).
-# For vllm.log we filter to the lines that show what the model is actually
-# doing (requests, completions, running/queued, errors) — the rest is polling noise.
+# For the text-engine log we filter to the lines that show what the model is
+# actually doing (requests, completions, running/queued, errors) — rest is noise.
 follow_log() {
   local f=$1
   printf "\n${C_DIM}── live: %s  (Ctrl-C to stop) ──${C_RST}\n" "$f"
   trap 'true' INT
   case "$f" in
-    *vllm.log)
+    *mlxlm.log|*vllm.log)
       /usr/bin/tail -n 20 -F "$f" 2>/dev/null \
         | /usr/bin/grep --line-buffered -E 'REQUEST|Chat completion|tok/s|running=|ABORTED|schedule|Error|Traceback|mllm=' || true ;;
     *)

@@ -23,13 +23,12 @@ behind an alias can be swapped (`llm-models`) without the app noticing.
 
 | Alias  | What it is                       | Endpoint(s)                       | Backed by                     |
 |--------|----------------------------------|-----------------------------------|-------------------------------|
-| `main` | The big always-on text model     | `/v1/chat/completions`, `/v1/completions`, `/v1/messages` | vllm-mlx (always on)          |
+| `main` | The big always-on text model     | `/v1/chat/completions`, `/v1/completions`, `/v1/messages` | mlx_lm.server (always on)      |
 | `main-precise`  | `main` with low temperature (factual, careful) | same as `main` | **same loaded model**, different default sampling |
 | `main-creative` | `main` with high temperature (varied prose) | same as `main` | **same loaded model**, different default sampling |
 | `main-metadata` | `main` for extraction: deterministic + `max_tokens` cap (title/date, no long text) | same as `main` | **same loaded model**, different default sampling |
 | `ocr`  | Vision OCR (document → text)     | `/v1/chat/completions` (image input) | GLM-OCR via mlx-vlm (on-demand) |
-| `embed`| Text embeddings (RAG / search)   | `/v1/embeddings`                  | vllm-mlx co-resident model    |
-| `stt`  | Speech → text (Whisper)          | `/v1/audio/transcriptions`        | vllm-mlx, request-time loaded |
+| `vision` | General multimodal/vision (images → text) | `/v1/chat/completions` (`image_url` input) | mlx-vlm (on-demand; opt-in via `ALIAS_VISION`) |
 
 The `main-*` aliases all point at the **one** loaded text model — they only differ
 in DEFAULT sampling (temperature/top_p/penalties/max_tokens), so picking one does
@@ -38,8 +37,9 @@ the catalog; clients may override any of these per request. Toggle the presets w
 `PRESET_ALIASES` and tune them via the `PRESET_*` keys in
 `/usr/local/etc/macstudio.conf` (set via `setup.sh` → settings).
 
-`embed` and `stt` only exist if `VLLM_EMBEDDING_MODEL` / `VLLM_STT_MODEL` are set
-in `/usr/local/etc/macstudio.conf` (set via `setup.sh` → settings).
+`vision` only exists if `ALIAS_VISION` is set (a `role=vision` model) — via
+`setup.sh` → settings or `llm-models` → `v`. The text `main` is **text-only**;
+send images to `ocr` (documents) or `vision` (general).
 
 ### Authentication
 
@@ -52,11 +52,9 @@ put anything there.
 | Method & path                     | Use with model | Purpose                                  |
 |-----------------------------------|----------------|------------------------------------------|
 | `GET  /v1/models`                 | —              | List available aliases                   |
-| `POST /v1/chat/completions`       | `main`, `ocr`  | Chat (OpenAI). Supports `stream: true`   |
+| `POST /v1/chat/completions`       | `main`, `ocr`, `vision` | Chat (OpenAI). `stream: true`; image input for `ocr`/`vision` |
 | `POST /v1/completions`            | `main`         | Legacy text completion                   |
 | `POST /v1/messages`               | `main`         | **Anthropic** Messages API               |
-| `POST /v1/embeddings`             | `embed`        | Embedding vectors                        |
-| `POST /v1/audio/transcriptions`   | `stt`          | Transcribe an audio file (multipart)     |
 
 ### Quick smoke tests
 
@@ -69,38 +67,13 @@ curl -s http://mac.home.arpa:11434/v1/chat/completions \
   -H "Authorization: Bearer sk-local" -H "Content-Type: application/json" \
   -d '{"model":"main","messages":[{"role":"user","content":"Say hi"}]}'
 
-# embeddings (returns a 768-dim vector with the default embed model)
-curl -s http://mac.home.arpa:11434/v1/embeddings \
+# vision / image Q&A (wakes the on-demand mlx-vlm backend; needs ALIAS_VISION set)
+curl -s http://mac.home.arpa:11434/v1/chat/completions \
   -H "Authorization: Bearer sk-local" -H "Content-Type: application/json" \
-  -d '{"model":"embed","input":"hello world"}'
-
-# speech-to-text (German or Russian, etc.)
-curl -s http://mac.home.arpa:11434/v1/audio/transcriptions \
-  -H "Authorization: Bearer sk-local" \
-  -F "file=@/path/to/audio.wav" -F "model=stt" -F "language=de"
+  -d '{"model":"vision","messages":[{"role":"user","content":[
+        {"type":"text","text":"What is in this image?"},
+        {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}]}]}'
 ```
-
----
-
-## Home Assistant — Speech-to-Text (Whisper on the Mac)
-
-Offload HA's speech recognition to the Mac (Metal-accelerated Whisper,
-multilingual — German, Russian, …). Keep TTS on HA's own Piper.
-
-1. **HACS → Integrations** → install an **OpenAI-compatible Speech-to-Text**
-   integration that allows a **custom base URL** (search "OpenAI Whisper STT").
-2. Configure it with:
-   - **Base URL / endpoint:** `http://mac.home.arpa:11434/v1`
-   - **API key:** anything, e.g. `sk-local`
-   - **Model:** `stt`
-   - **Language:** `ru` (or `de`)
-3. **Settings → Voice assistants →** your pipeline → set **Speech-to-text** to the
-   new engine. Leave **Text-to-speech** on Piper.
-
-Notes:
-- The first request after a `vllm-mlx` restart loads the Whisper model (~5 s);
-  afterwards it stays resident and responses take ~1 s.
-- Endpoint used under the hood: `POST /v1/audio/transcriptions` with `model=stt`.
 
 ---
 
@@ -155,14 +128,15 @@ r = client.chat.completions.create(
 )
 print(r.choices[0].message.content)
 
-# embeddings
-e = client.embeddings.create(model="embed", input=["doc one", "doc two"])
-print(len(e.data[0].embedding))   # 768 with the default embed model
-
-# speech-to-text
-with open("audio.wav", "rb") as f:
-    t = client.audio.transcriptions.create(model="stt", file=f, language="de")
-print(t.text)
+# vision / image Q&A (needs ALIAS_VISION set; wakes the on-demand mlx-vlm backend)
+v = client.chat.completions.create(
+    model="vision",
+    messages=[{"role": "user", "content": [
+        {"type": "text", "text": "Was steht auf diesem Bild?"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
+    ]}],
+)
+print(v.choices[0].message.content)
 ```
 
 ---
@@ -188,7 +162,7 @@ print(msg.content[0].text)
 ## Things to know
 
 - **One text model at a time.** `main` is whatever model is currently loaded;
-  switching it (`llm-models`) restarts `vllm-mlx` (~30–60 s) — there is no silent
+  switching it (`llm-models`) restarts `mlx_lm.server` (~30–60 s) — there is no silent
   hot-swap. `ocr`, `embed`, and `stt` are the only things that co-reside.
 - **On-demand backends** (`ocr`, and the companion services) wake on the first
   request after idle — expect a one-time spin-up delay, then normal latency.
