@@ -19,6 +19,7 @@ fi
 # expected path. Keeps `llm-status` useful on a broken install.
 LABELS=(
   "com.local.mlxlm.serve"
+  "com.local.mlxvlm.main"
   "com.local.litellm.proxy"
   "com.local.glmocr.proxy"
   "com.local.glmocr.serve"

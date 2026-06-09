@@ -38,8 +38,10 @@ the catalog; clients may override any of these per request. Toggle the presets w
 `/usr/local/etc/macstudio.conf` (set via `setup.sh` → settings).
 
 `vision` only exists if `ALIAS_VISION` is set (a `role=vision` model) — via
-`setup.sh` → settings or `llm-models` → `v`. The text `main` is **text-only**;
-send images to `ocr` (documents) or `vision` (general).
+`setup.sh` → settings or `llm-models` → `v`. With the default `TEXT_ENGINE=mlx-lm`
+the text `main` is **text-only**; send images to `ocr` (documents) or `vision`
+(general). With **`TEXT_ENGINE=mlx-vlm`** the `main` is itself multimodal — send
+`image_url` straight to `main` (and `vision` becomes redundant; set `ALIAS_VISION=""`).
 
 ### Authentication
 

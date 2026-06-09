@@ -84,7 +84,12 @@ echo "  -> to upgrade the LLM stack on purpose: MLXLM_VERSION + 'sudo bash setup
 
 step "restart long-running services"
 if [ "${INSTALL_MLX:-1}" = "1" ]; then
-  /bin/launchctl kickstart -k system/com.local.mlxlm.serve    2>/dev/null || true
+  # Restart whichever text engine TEXT_ENGINE selects (only one is loaded).
+  if [ "${TEXT_ENGINE:-mlx-lm}" = "mlx-vlm" ]; then
+    /bin/launchctl kickstart -k system/com.local.mlxvlm.main  2>/dev/null || true
+  else
+    /bin/launchctl kickstart -k system/com.local.mlxlm.serve  2>/dev/null || true
+  fi
   /bin/launchctl kickstart -k system/com.local.litellm.proxy  2>/dev/null || true
   /bin/launchctl kickstart -k system/com.local.glmocr.proxy   2>/dev/null || true
   /bin/launchctl kickstart -k system/com.local.vision.proxy   2>/dev/null || true
