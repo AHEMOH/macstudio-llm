@@ -185,8 +185,8 @@ config_default() {
     PRESET_CREATIVE_TEMP)        echo 0.9 ;;
     PRESET_CREATIVE_TOPP)        echo 0.95 ;;
     PRESET_METADATA_TEMP)        echo 0.0 ;;
-    PRESET_METADATA_MAXTOK)      echo 5000 ;;
-    PRESET_AGENTS_TEMP)          echo 0.3 ;;
+    PRESET_METADATA_MAXTOK)      echo 2048 ;;
+    PRESET_AGENTS_TEMP)          echo 0.2 ;;
     PRESET_AGENTS_TOPP)          echo 0.9 ;;
     LITELLM_PORT)                echo 11434 ;;
     GLMOCR_PUBLIC_PORT)          echo 5002 ;;
@@ -273,8 +273,8 @@ config_hint() {
     PRESET_CREATIVE_TEMP)        echo "alias 'main-creative' temperature (varied prose; default 0.9)" ;;
     PRESET_CREATIVE_TOPP)        echo "alias 'main-creative' top_p (default 0.95)" ;;
     PRESET_METADATA_TEMP)        echo "alias 'main-metadata' temperature (extraction, deterministic; default 0.0 — safe because output is capped)" ;;
-    PRESET_METADATA_MAXTOK)      echo "alias 'main-metadata' max_tokens cap (extraction). 5000 so a reasoning main (e.g. gemma-4) can think AND finish the JSON; clean models still stop early at EOS. Only this alias is capped — main/-precise/-creative use MLXLM_MAX_TOKENS" ;;
-    PRESET_AGENTS_TEMP)          echo "alias 'main-agents' temperature — low/deterministic for reliable tool calls (default 0.3). main-agents is thinking-OFF + tool-tuned" ;;
+    PRESET_METADATA_MAXTOK)      echo "alias 'main-metadata' max_tokens cap (extraction). 2048 — output is short JSON (<400 tok); the low ceiling also aborts a repetition loop sooner. metadata is thinking-OFF; only this alias is capped (main/-precise/-creative use MLXLM_MAX_TOKENS)" ;;
+    PRESET_AGENTS_TEMP)          echo "alias 'main-agents' temperature — low/deterministic for reliable tool-call formatting (default 0.2). main-agents is thinking-OFF + tool-tuned, no max_tokens cap" ;;
     PRESET_AGENTS_TOPP)          echo "alias 'main-agents' top_p (default 0.9)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
     IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend sleeps (default 60); -1 = never sleep (stay warm)" ;;
