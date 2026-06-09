@@ -373,9 +373,9 @@ use the menu) to change a live box.
 | `MLXLM_CHAT_TEMPLATE_ARGS` | _(empty)_ | mlx-lm `--chat-template-args` JSON, e.g. `{"enable_thinking":false}` |
 | `MLXVLM_MAIN_KV_BITS` / `_KV_SCHEME` | `8` / `uniform` | KV-quant for the **mlx-vlm** unified main (`turboquant` for fractional bits) |
 | `MLXVLM_MAIN_MAX_KV_SIZE` | _(empty)_ | mlx-vlm main context cap; raise to exploit KV-quant for big context |
-| `MLXVLM_MAIN_ENABLE_THINKING` | `0` | `1` = let the mlx-vlm main reason by default (off = clean/fast) |
-| `DISABLE_THINKING` | `1` | Suppress the reasoning block on `main`/`-precise`/`-creative` at the proxy (so OpenWebUI hides it); `main-metadata` is always thinking-off |
-| `PRESET_ALIASES` | `1` | Expose `main-precise` / `-creative` / `-metadata` sampling presets |
+| `MLXVLM_MAIN_ENABLE_THINKING` | `1` | mlx-vlm main thinks by default (so `main`/`-precise`/`-creative` reason). `main-metadata` + `main-agents` are forced thinking-off at the proxy; clients can override per request |
+| `PRESET_AGENTS_TEMP` / `_TOPP` | `0.3` / `0.9` | `main-agents` sampling — low temp for reliable tool calls (thinking-off + tool-tuned) |
+| `PRESET_ALIASES` | `1` | Expose `main-precise` / `-creative` / `-metadata` / `-agents` sampling presets |
 | `PRESET_METADATA_MAXTOK` | `5000` | `main-metadata` max_tokens cap (think + finish JSON; only this alias is capped) |
 | `GLMOCR_PUBLIC_PORT` | `5002` | Public GLM-OCR port (proxy) |
 | `GLMOCR_BACKEND_PORT` | `15002` | Internal GLM-OCR backend port |
