@@ -14,11 +14,13 @@
 # Download status (—/PART/ok) is computed by the TUI from HF_CACHE_DIR.
 #
 # Roles & engines (the backend is fixed per role):
-#   role=text   -> mlx_lm.server (alias 'main', text only — tool calling + reasoning)
+#   role=text   -> alias 'main'. Engine per TEXT_ENGINE: mlx-lm (mlx_lm.server, text-only,
+#                  broad archs incl. granite/glm) | mlx-vlm (mlx_vlm.server, UNIFIED text+images,
+#                  KV-quant — requires a VLM arch: gemma-4 / Qwen3.x, NOT granite/glm-text).
 #   role=ocr    -> mlx-vlm       (alias 'ocr', on-demand, document OCR)
-#   role=vision -> mlx-vlm       (alias 'vision', on-demand, general images + KV-quant)
-# Legacy col-4 engine values (vllm / vllm-mllm) are HISTORICAL — vllm-mlx is retired;
-# all role=text rows are now served by mlx_lm.server regardless of col 4.
+#   role=vision -> mlx-vlm       (alias 'vision', on-demand, general images + KV-quant;
+#                  redundant under TEXT_ENGINE=mlx-vlm where 'main' already does images)
+# Legacy col-4 engine values (vllm / vllm-mllm) are HISTORICAL — vllm-mlx is retired.
 # max_num_seqs / max_kv_size are per-model footprint hints; on mlx_lm.server context
 # is bounded by the model + MLXLM_* config, on mlx-vlm by VISION_MAX_KV_SIZE.
 #

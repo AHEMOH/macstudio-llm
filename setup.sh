@@ -30,6 +30,7 @@ MOTD_BACKUP=/etc/motd.macstudio.bak
 # Always-on services
 ALWAYS_ON_LABELS=(
   com.local.mlxlm.serve
+  com.local.mlxvlm.main
   com.local.litellm.proxy
   com.local.glmocr.proxy
   com.local.vision.proxy
@@ -74,12 +75,18 @@ CONFIG_KEYS=(
   VLLM_BACKEND_PORT
   VLLM_MAX_NUM_SEQS
   LLM_REQUEST_TIMEOUT
+  TEXT_ENGINE
   MLXLM_VERSION
   MLXLM_PROMPT_CACHE_MB
   MLXLM_DECODE_CONCURRENCY
   MLXLM_PROMPT_CONCURRENCY
   MLXLM_MAX_TOKENS
   MLXLM_CHAT_TEMPLATE_ARGS
+  MLXVLM_MAIN_KV_BITS
+  MLXVLM_MAIN_KV_SCHEME
+  MLXVLM_MAIN_MAX_KV_SIZE
+  MLXVLM_MAIN_ENABLE_THINKING
+  DISABLE_THINKING
   PRESET_ALIASES
   PRESET_PRECISE_TEMP
   PRESET_PRECISE_TOPP
@@ -158,12 +165,18 @@ config_default() {
     VLLM_BACKEND_PORT)           echo 18000 ;;
     VLLM_MAX_NUM_SEQS)           echo 4 ;;
     LLM_REQUEST_TIMEOUT)         echo 3600 ;;
+    TEXT_ENGINE)                 echo mlx-lm ;;
     MLXLM_VERSION)               echo 0.31.3 ;;
     MLXLM_PROMPT_CACHE_MB)       echo 8192 ;;
     MLXLM_DECODE_CONCURRENCY)    echo "" ;;
     MLXLM_PROMPT_CONCURRENCY)    echo 1 ;;
     MLXLM_MAX_TOKENS)            echo 16384 ;;
     MLXLM_CHAT_TEMPLATE_ARGS)    echo "" ;;
+    MLXVLM_MAIN_KV_BITS)         echo 8 ;;
+    MLXVLM_MAIN_KV_SCHEME)       echo uniform ;;
+    MLXVLM_MAIN_MAX_KV_SIZE)     echo "" ;;
+    MLXVLM_MAIN_ENABLE_THINKING) echo 0 ;;
+    DISABLE_THINKING)            echo 1 ;;
     PRESET_ALIASES)              echo 1 ;;
     PRESET_PRECISE_TEMP)         echo 0.2 ;;
     PRESET_PRECISE_TOPP)         echo 0.8 ;;
@@ -238,12 +251,18 @@ config_hint() {
     VLLM_BACKEND_PORT)           echo "Internal port the text engine (mlx_lm.server) binds; LiteLLM fronts it. (Legacy VLLM_ name kept to avoid config churn.)" ;;
     VLLM_MAX_NUM_SEQS)           echo "Fallback for MLXLM_DECODE_CONCURRENCY (concurrent decode streams). (Legacy VLLM_ name.)" ;;
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
+    TEXT_ENGINE)                 echo "Which engine serves 'main': mlx-lm (Apple mlx_lm.server — text-only, batches, broad models incl. granite/glm) | mlx-vlm (mlx_vlm.server — UNIFIED text+images in one model, KV-quant, single-stream; needs a VLM main like gemma-4). Flip + --apply to switch/rollback; one runs at a time" ;;
     MLXLM_VERSION)               echo "Pinned mlx-lm for the 'mlxlm' venv (the text engine). Bump deliberately + --apply" ;;
     MLXLM_PROMPT_CACHE_MB)       echo "mlx-lm prompt-cache hard cap in MB (--prompt-cache-bytes). Bounds KV/prefix RAM (16-bit KV grows fast — no kv-quant); default 8192" ;;
     MLXLM_DECODE_CONCURRENCY)    echo "mlx-lm concurrent decode streams (--decode-concurrency). empty = reuse VLLM_MAX_NUM_SEQS" ;;
     MLXLM_PROMPT_CONCURRENCY)    echo "mlx-lm concurrent prompt prefills (--prompt-concurrency); default 1 on 32 GB (limits prefill RAM spikes)" ;;
     MLXLM_MAX_TOKENS)            echo "mlx-lm server default --max-tokens = ceiling for main/-precise/-creative (unset would be only 512!). 16384 = effectively unrestricted for chat/long text; model stops at EOS. main-metadata overrides via PRESET_METADATA_MAXTOK" ;;
     MLXLM_CHAT_TEMPLATE_ARGS)    echo "mlx-lm chat-template JSON (--chat-template-args), e.g. {\"enable_thinking\":false} to suppress reasoning output. empty = off" ;;
+    MLXVLM_MAIN_KV_BITS)         echo "KV-cache quant bits for the mlx-vlm unified main: 8 (recommended), 4, or 3.5 with turboquant. empty=off. (Only when TEXT_ENGINE=mlx-vlm)" ;;
+    MLXVLM_MAIN_KV_SCHEME)       echo "mlx-vlm main KV quant scheme: uniform | turboquant (fractional bits like 3.5)" ;;
+    MLXVLM_MAIN_MAX_KV_SIZE)     echo "mlx-vlm main context cap (--max-kv-size); empty = model default. Raise to exploit KV-quant for big context on 32 GB" ;;
+    MLXVLM_MAIN_ENABLE_THINKING) echo "1 = let the mlx-vlm main reason by default; 0 = off (default; clean/fast). Clients can still pass enable_thinking per request" ;;
+    DISABLE_THINKING)            echo "1 = suppress the reasoning block on main/-precise/-creative aliases at the proxy (so OpenWebUI doesn't show it); 0 = allow. main-metadata is ALWAYS thinking-off" ;;
     PRESET_ALIASES)              echo "1 = also expose sampling-preset aliases (main-precise/-creative/-metadata) — same loaded model, different default sampling" ;;
     PRESET_PRECISE_TEMP)         echo "alias 'main-precise' temperature (factual, careful; default 0.2)" ;;
     PRESET_PRECISE_TOPP)         echo "alias 'main-precise' top_p (default 0.8)" ;;
@@ -432,7 +451,11 @@ load_config() {
   local _lbl
   for _lbl in "${ALL_LABELS[@]}"; do
     case "$_lbl" in
-      com.local.mlxlm.serve|com.local.litellm.*|com.local.glmocr.*)
+      com.local.mlxlm.serve)
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = mlx-lm ]; }  || continue ;;
+      com.local.mlxvlm.main)
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = mlx-vlm ]; } || continue ;;
+      com.local.litellm.*|com.local.glmocr.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || continue ;;
       com.local.vision.*)
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ -n "${ALIAS_VISION:-}" ]; } || continue ;;
@@ -470,6 +493,7 @@ save_config_key() {
 label_log() {
   case "$1" in
     com.local.mlxlm.serve)       echo "$LOG_DIR/mlxlm.log" ;;
+    com.local.mlxvlm.main)       echo "$LOG_DIR/mlxvlm-main.log" ;;
     com.local.litellm.proxy)     echo "$LOG_DIR/litellm.log" ;;
     com.local.glmocr.proxy)      echo "$LOG_DIR/glmocr-proxy.log" ;;
     com.local.glmocr.serve)      echo "$LOG_DIR/glmocr-serve.log" ;;
@@ -877,8 +901,11 @@ render_litellm_config() {
   m_freq=$(catalog_field "${ALIAS_MAIN:-}" 16)
   m_pres=$(catalog_field "${ALIAS_MAIN:-}" 17)
 
-  # emit_model <alias> <repo> <port> [temp] [top_p] [freq_pen] [pres_pen] [max_tok]
+  # emit_model <alias> <repo> <port> [temp] [top_p] [freq_pen] [pres_pen] [max_tok] [nothink]
   # One LiteLLM model_list entry; optional sampling lines only when non-empty.
+  # nothink (arg 9) non-empty -> inject chat_template_kwargs to suppress the model's
+  # reasoning at the proxy (so clients like OpenWebUI never see a thinking block).
+  # LiteLLM forwards extra_body to the OpenAI-compatible backend (mlx_lm/mlx_vlm).
   emit_model() {
     printf '  - model_name: %s\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' "$1" "$2" "$3"
     [ -n "${4:-}" ] && printf '      temperature: %s\n' "$4"
@@ -886,23 +913,27 @@ render_litellm_config() {
     [ -n "${6:-}" ] && printf '      frequency_penalty: %s\n' "$6"
     [ -n "${7:-}" ] && printf '      presence_penalty: %s\n' "$7"
     [ -n "${8:-}" ] && printf '      max_tokens: %s\n' "$8"
+    [ -n "${9:-}" ] && printf '      extra_body: {"chat_template_kwargs": {"enable_thinking": false}}\n'
     return 0
   }
+  # main/-precise/-creative: suppress thinking when DISABLE_THINKING=1 (default).
+  # main-metadata: ALWAYS suppress (deterministic JSON, no reasoning).
+  local _nothink=""; [ "${DISABLE_THINKING:-1}" = 1 ] && _nothink=1
 
   tmp=$(/usr/bin/mktemp -t macstudio-litellm)
   {
     echo "# Managed by setup.sh -> render_litellm_config(). Do not edit by hand;"
     echo "# change aliases via 'llm-models'. Apps see only model_name aliases."
     echo "model_list:"
-    emit_model main "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres"
+    emit_model main "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" "$_nothink"
     # Sampling-preset aliases: SAME loaded model, different DEFAULT sampling
     # (all share :18000 -> only ONE model stays resident). Apps pick the alias:
     #   main-precise  factual/careful   main-creative  varied prose
     #   main-metadata extraction (deterministic + max_tokens cap -> loop-safe)
     if [ "${PRESET_ALIASES:-1}" = 1 ]; then
-      emit_model main-precise  "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_PRECISE_TEMP:-0.2}"  "${PRESET_PRECISE_TOPP:-0.8}"  "${PRESET_PRECISE_FREQ:-0.4}" "" ""
-      emit_model main-creative "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_CREATIVE_TEMP:-0.9}" "${PRESET_CREATIVE_TOPP:-0.95}" "" "" ""
-      emit_model main-metadata "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_METADATA_TEMP:-0.0}" "" "" "" "${PRESET_METADATA_MAXTOK:-256}"
+      emit_model main-precise  "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_PRECISE_TEMP:-0.2}"  "${PRESET_PRECISE_TOPP:-0.8}"  "${PRESET_PRECISE_FREQ:-0.4}" "" "" "$_nothink"
+      emit_model main-creative "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_CREATIVE_TEMP:-0.9}" "${PRESET_CREATIVE_TOPP:-0.95}" "" "" "" "$_nothink"
+      emit_model main-metadata "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_METADATA_TEMP:-0.0}" "" "" "" "${PRESET_METADATA_MAXTOK:-256}" 1
     fi
     if [ -n "$ocr_repo" ]; then
       printf '  - model_name: ocr\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
@@ -989,10 +1020,16 @@ render_all_plists() {
     fi
     # Skip optional services per config
     case "$label" in
-      com.local.mlxlm.serve|com.local.litellm.*|com.local.glmocr.*)
+      com.local.mlxlm.serve)
+        # Text engine: mlx_lm.server (text-only). One text daemon at a time.
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = mlx-lm ]; }  || { remove_plist "$label"; continue; } ;;
+      com.local.mlxvlm.main)
+        # Text engine: mlx_vlm.server (unified text+vision). One text daemon at a time.
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = mlx-vlm ]; } || { remove_plist "$label"; continue; } ;;
+      com.local.litellm.*|com.local.glmocr.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.vision.*)
-        # On-demand vision (mlx-vlm) — only when a model is assigned.
+        # On-demand vision (mlx-vlm) — only when a model is assigned (redundant under mlx-vlm main).
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ -n "${ALIAS_VISION:-}" ]; } || { remove_plist "$label"; continue; } ;;
       com.local.ollama.headless)
         [ "${INSTALL_OLLAMA:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
@@ -1458,9 +1495,11 @@ set_model_alias() {
   render_litellm_config
   if [ "$slot" = main ]; then
     ram_guard_warn
-    if daemon_loaded com.local.mlxlm.serve; then
-      /bin/launchctl kickstart -k system/com.local.mlxlm.serve >/dev/null 2>&1 \
-        && ok "restarting mlx_lm.server with new main model (load ~30–60 s, no hot-swap)"
+    local _text_label=com.local.mlxlm.serve
+    [ "${TEXT_ENGINE:-mlx-lm}" = mlx-vlm ] && _text_label=com.local.mlxvlm.main
+    if daemon_loaded "$_text_label"; then
+      /bin/launchctl kickstart -k "system/$_text_label" >/dev/null 2>&1 \
+        && ok "restarting $_text_label with new main model (load ~30–60 s, no hot-swap)"
     fi
   elif [ "$slot" = ocr ]; then
     if daemon_running com.local.glmocr.serve; then
@@ -1763,7 +1802,7 @@ follow_log() {
   printf "\n${C_DIM}── live: %s  (Ctrl-C to stop) ──${C_RST}\n" "$f"
   trap 'true' INT
   case "$f" in
-    *mlxlm.log|*vllm.log)
+    *mlxlm.log|*mlxvlm-main.log|*vllm.log)
       /usr/bin/tail -n 20 -F "$f" 2>/dev/null \
         | /usr/bin/grep --line-buffered -E 'REQUEST|Chat completion|tok/s|running=|ABORTED|schedule|Error|Traceback|mllm=' || true ;;
     *)

@@ -11,6 +11,14 @@ on power loss, weekly self-update.
 Designed for a 32 GB M1 Max but scales unchanged to bigger Apple Silicon — just
 raise a couple of config keys.
 
+> **Text engine — one switch (`TEXT_ENGINE`).** Default **`mlx-lm`** (Apple
+> `mlx_lm.server`: text-only, batches parallel requests, broad model support incl.
+> granite/glm). Flip to **`mlx-vlm`** and the `main` becomes **one unified model
+> that handles text *and* images in the same chat** (`mlx_vlm.server`) with KV-cache
+> quantization (bigger context on 32 GB) — needs a VLM main like **gemma-4** and is
+> single-stream. One text daemon runs at a time; `--apply` to switch or roll back.
+> Either way only **one big model** is in memory (GLM-OCR is the lone on-demand extra).
+
 > **Why not Ollama?** Ollama bakes context length into the model load (every
 > `num_ctx` change = a 30–60 s reload). `mlx_lm.server` keeps one model warm and
 > serves OpenAI `/v1` directly. Ollama is still shipped here as an **opt-in
@@ -356,12 +364,17 @@ use the menu) to change a live box.
 | `VLLM_BACKEND_PORT` | `18000` | Internal text-engine port (legacy `VLLM_` name; mlx_lm.server binds it) |
 | `VLLM_MAX_NUM_SEQS` | `4` | Fallback for `MLXLM_DECODE_CONCURRENCY` (legacy `VLLM_` name) |
 | `LLM_REQUEST_TIMEOUT` | `3600` | Per-request timeout (s) for the text engine **and** LiteLLM; long docs/OCR |
+| `TEXT_ENGINE` | `mlx-lm` | Engine for `main`: `mlx-lm` (text-only, batches, broad archs) \| `mlx-vlm` (**unified text+images** in one model, KV-quant, single-stream — needs a VLM main like gemma-4). Flip + `--apply` to switch/rollback |
 | `MLXLM_VERSION` | `0.31.3` | Pinned mlx-lm for the `mlxlm` venv (the text engine) |
 | `MLXLM_PROMPT_CACHE_MB` | `8192` | mlx-lm prompt-cache RAM cap (`--prompt-cache-bytes`); bounds 16-bit KV |
 | `MLXLM_DECODE_CONCURRENCY` | _(empty)_ | mlx-lm `--decode-concurrency`; empty = reuse `VLLM_MAX_NUM_SEQS` |
 | `MLXLM_PROMPT_CONCURRENCY` | `1` | mlx-lm `--prompt-concurrency`; 1 on 32 GB |
 | `MLXLM_MAX_TOKENS` | `16384` | mlx-lm default `--max-tokens` = ceiling for `main`/`-precise`/`-creative` (else only 512). 16384 ≈ unrestricted for chat; stops at EOS. `main-metadata` uses `PRESET_METADATA_MAXTOK` |
 | `MLXLM_CHAT_TEMPLATE_ARGS` | _(empty)_ | mlx-lm `--chat-template-args` JSON, e.g. `{"enable_thinking":false}` |
+| `MLXVLM_MAIN_KV_BITS` / `_KV_SCHEME` | `8` / `uniform` | KV-quant for the **mlx-vlm** unified main (`turboquant` for fractional bits) |
+| `MLXVLM_MAIN_MAX_KV_SIZE` | _(empty)_ | mlx-vlm main context cap; raise to exploit KV-quant for big context |
+| `MLXVLM_MAIN_ENABLE_THINKING` | `0` | `1` = let the mlx-vlm main reason by default (off = clean/fast) |
+| `DISABLE_THINKING` | `1` | Suppress the reasoning block on `main`/`-precise`/`-creative` at the proxy (so OpenWebUI hides it); `main-metadata` is always thinking-off |
 | `PRESET_ALIASES` | `1` | Expose `main-precise` / `-creative` / `-metadata` sampling presets |
 | `PRESET_METADATA_MAXTOK` | `5000` | `main-metadata` max_tokens cap (think + finish JSON; only this alias is capped) |
 | `GLMOCR_PUBLIC_PORT` | `5002` | Public GLM-OCR port (proxy) |
