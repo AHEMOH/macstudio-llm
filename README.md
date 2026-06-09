@@ -1,23 +1,24 @@
 # Mac Studio Headless LLM Server
 
-Headless Apple Silicon Mac as an **MLX inference server**: one big text model
-permanently warm via **Apple's `mlx_lm.server`** (OpenAI-compatible, tool calling
-+ reasoning), a **LiteLLM gateway** that gives apps stable aliases, and on-demand
-**vision** models (GLM-OCR + a general `vision` endpoint via `mlx-vlm`) — plus
-optional companion services (image AI, document conversion) that sleep when idle
-and wake on first request. Runs fully unattended: no GUI, no login, auto-restart
-on power loss, weekly self-update.
+Headless Apple Silicon Mac as an **MLX inference server**: **one unified
+multimodal model permanently warm** — by default **gemma-4-26b on `mlx_vlm.server`**,
+which handles **text *and* images in the same chat** plus tool calling, with KV-cache
+quantization — a **LiteLLM gateway** that gives apps stable aliases, and an on-demand
+**GLM-OCR** model for document OCR. Plus optional companion services (image AI,
+document conversion) that sleep when idle and wake on first request. Runs fully
+unattended: no GUI, no login, auto-restart on power loss, weekly self-update.
 
 Designed for a 32 GB M1 Max but scales unchanged to bigger Apple Silicon — just
 raise a couple of config keys.
 
-> **Text engine — one switch (`TEXT_ENGINE`).** Default **`mlx-lm`** (Apple
-> `mlx_lm.server`: text-only, batches parallel requests, broad model support incl.
-> granite/glm). Flip to **`mlx-vlm`** and the `main` becomes **one unified model
-> that handles text *and* images in the same chat** (`mlx_vlm.server`) with KV-cache
-> quantization (bigger context on 32 GB) — needs a VLM main like **gemma-4** and is
-> single-stream. One text daemon runs at a time; `--apply` to switch or roll back.
-> Either way only **one big model** is in memory (GLM-OCR is the lone on-demand extra).
+> **Text engine — one switch (`TEXT_ENGINE`).** Default **`mlx-vlm`** (`mlx_vlm.server`):
+> the `main` is **one unified model that handles text *and* images in the same chat**,
+> with KV-cache quantization (bigger context on 32 GB) — needs a VLM main like
+> **gemma-4** (the default `gemma4-26b`) and is single-stream (fine for one user).
+> Flip to **`mlx-lm`** (Apple `mlx_lm.server`) for a text-only main that **batches**
+> parallel requests and supports broad archs (granite/glm) — but no images, no KV-quant.
+> One text daemon runs at a time; `--apply` to switch or roll back. Either way only
+> **one big model** is in memory (GLM-OCR is the lone on-demand extra).
 
 > **Why not Ollama?** Ollama bakes context length into the model load (every
 > `num_ctx` change = a 30–60 s reload). `mlx_lm.server` keeps one model warm and
@@ -172,14 +173,13 @@ The first `--apply` builds the venvs (several minutes of pip wheels). It does
 
 ```bash
 llm-models                    # opens the model & alias manager
-#   t                         → paste your HuggingFace token (for gated repos + speed)
-#   d granite41-30b           → download the default text model (live progress)
-#   s granite41-30b           → set it as the active 'main' (text) model
+#   t                         → paste your HuggingFace token (gemma is gated — required)
+#   d gemma4-26b              → download the default unified main (~16 GB, live progress)
+#   s gemma4-26b              → set it as the active 'main' (text+images under mlx-vlm)
 #   d glm-ocr                 → download GLM-OCR (~2 GB)
 #   o glm-ocr                 → set it as the active 'ocr' model
-#   d gemma4-12b-vis          → (optional) download a vision model (~8 GB, gated)
-#   v gemma4-12b-vis          → (optional) set it as the active 'vision' model
 #   q                         → back
+# (Prefer a text-only main that batches? Set TEXT_ENGINE=mlx-lm and pick e.g. granite41-30b.)
 ```
 
 Only `STATUS=ok` (fully downloaded + verified) models are selectable. After
@@ -260,10 +260,10 @@ Seeded models (all verified to exist as ready MLX builds):
 
 | id | role | ~GB | notes |
 |---|---|---|---|
-| `granite41-30b` | text | 17 | **default main** — enterprise/RAG, clean output, tool calling |
+| `granite41-30b` | text | 17 | clean enterprise/RAG main for `mlx-lm` mode (text-only, no vision) |
 | `qwen36-35b-a3b` | text | 20 | agentic Hermes-style tool use, multilingual, MoE (fast) |
 | `glm47-flash` | text | 19 | strong coding + tools |
-| `gemma4-26b` | text | 16 | Gemma 4 26B-A4B MoE, German, tool calling (**gated**; text-only on mlx-lm) |
+| `gemma4-26b` | text | 16 | **default main** — unified text+images+tools on `mlx-vlm` (~24 tok/s, KV-quant), German MoE (**gated**) |
 | `gemma4-31b` | text | 18 | Gemma 4 31B, German, tool calling (**gated**; text-only on mlx-lm) |
 | `qwen36-27b` | text | 16 | dense alternative |
 | `gptoss-20b` | text | 13 | runs, but raw harmony output — use with a harmony-aware client |
@@ -356,7 +356,7 @@ use the menu) to change a live box.
 | `INSTALL_OLLAMA` | `0` | Opt-in Ollama fallback (kept in repo, off by default) |
 | `VENV_DIR` | `/Users/mac/.macstudio-venvs` | Where the mlxlm/litellm/mlxvlm venvs live |
 | `HF_CACHE_DIR` | `/Users/mac/.cache/huggingface` | HF model cache (`HF_HOME`) + token store |
-| `ALIAS_MAIN` | `granite41-30b` | Catalog id of the active text model |
+| `ALIAS_MAIN` | `gemma4-26b` | Catalog id of the active text model (a VLM like gemma-4 under `mlx-vlm`; any text arch under `mlx-lm`) |
 | `ALIAS_OCR` | `glm-ocr` | Catalog id of the on-demand OCR model |
 | `ALIAS_VISION` | _(empty)_ | Catalog id of the on-demand vision model → alias `vision`; empty = vision off |
 | `MODEL_PIN_MAIN` | `1` | Keep the main model permanently warm |
@@ -364,7 +364,7 @@ use the menu) to change a live box.
 | `VLLM_BACKEND_PORT` | `18000` | Internal text-engine port (legacy `VLLM_` name; mlx_lm.server binds it) |
 | `VLLM_MAX_NUM_SEQS` | `4` | Fallback for `MLXLM_DECODE_CONCURRENCY` (legacy `VLLM_` name) |
 | `LLM_REQUEST_TIMEOUT` | `3600` | Per-request timeout (s) for the text engine **and** LiteLLM; long docs/OCR |
-| `TEXT_ENGINE` | `mlx-lm` | Engine for `main`: `mlx-lm` (text-only, batches, broad archs) \| `mlx-vlm` (**unified text+images** in one model, KV-quant, single-stream — needs a VLM main like gemma-4). Flip + `--apply` to switch/rollback |
+| `TEXT_ENGINE` | `mlx-vlm` | Engine for `main`: **`mlx-vlm`** (default — **unified text+images** in one model, KV-quant, single-stream; needs a VLM main like gemma-4) \| `mlx-lm` (text-only, batches parallel requests, broad archs incl. granite/glm). Flip + `--apply` to switch/rollback |
 | `MLXLM_VERSION` | `0.31.3` | Pinned mlx-lm for the `mlxlm` venv (the text engine) |
 | `MLXLM_PROMPT_CACHE_MB` | `8192` | mlx-lm prompt-cache RAM cap (`--prompt-cache-bytes`); bounds 16-bit KV |
 | `MLXLM_DECODE_CONCURRENCY` | _(empty)_ | mlx-lm `--decode-concurrency`; empty = reuse `VLLM_MAX_NUM_SEQS` |
