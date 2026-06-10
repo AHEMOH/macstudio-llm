@@ -248,9 +248,10 @@ them from the model. The `engine` column values `vllm`/`vllm-mllm` are
 
 **Per-model sampling** (temperature/top_p/…) defaults are injected into the
 LiteLLM `main` alias; clients can override per request. On `mlx_lm.server` the
-generation ceiling for `main`/`main-precise`/`main-creative` is `MLXLM_MAX_TOKENS`
-(default 16384 ≈ unrestricted for chat); `main-metadata` is capped by
-`PRESET_METADATA_MAXTOK` (default 5000) for short, loop-safe extraction.
+generation ceiling for `main` is `MLXLM_MAX_TOKENS` (default 16384 ≈ unrestricted
+for chat); the preset aliases `main-metadata`/`main-ocr`/`main-agents` are capped
+by `PRESET_METADATA_MAXTOK`/`PRESET_OCR_MAXTOK`/`PRESET_AGENTS_MAXTOK` for short,
+loop-safe output.
 
 **HuggingFace token:** set it via `llm-models` → `t`. It is stored in the user's
 HF cache (`$HF_CACHE_DIR/.../token`, mode 600) — **never** in `macstudio.conf`
@@ -362,14 +363,17 @@ use the menu) to change a live box.
 | `MLXLM_PROMPT_CACHE_MB` | `8192` | mlx-lm prompt-cache RAM cap (`--prompt-cache-bytes`); bounds 16-bit KV |
 | `MLXLM_DECODE_CONCURRENCY` | _(empty)_ | mlx-lm `--decode-concurrency`; empty = reuse `VLLM_MAX_NUM_SEQS` |
 | `MLXLM_PROMPT_CONCURRENCY` | `1` | mlx-lm `--prompt-concurrency`; 1 on 32 GB |
-| `MLXLM_MAX_TOKENS` | `16384` | mlx-lm default `--max-tokens` = ceiling for `main`/`-precise`/`-creative` (else only 512). 16384 ≈ unrestricted for chat; stops at EOS. `main-metadata` uses `PRESET_METADATA_MAXTOK` |
+| `MLXLM_MAX_TOKENS` | `16384` | mlx-lm default `--max-tokens` = ceiling for `main` (else only 512). 16384 ≈ unrestricted for chat; stops at EOS. The preset aliases use their own `*_MAXTOK` caps |
 | `MLXLM_CHAT_TEMPLATE_ARGS` | _(empty)_ | mlx-lm `--chat-template-args` JSON, e.g. `{"enable_thinking":false}` |
 | `MLXVLM_MAIN_KV_BITS` / `_KV_SCHEME` | `8` / `uniform` | KV-quant for the **mlx-vlm** unified main (`turboquant` for fractional bits) |
 | `MLXVLM_MAIN_MAX_KV_SIZE` | _(empty)_ | mlx-vlm main context cap; raise to exploit KV-quant for big context |
-| `MLXVLM_MAIN_ENABLE_THINKING` | `1` | mlx-vlm main thinks by default (so `main`/`-precise`/`-creative` reason). `main-metadata` + `main-agents` are forced thinking-off at the proxy; clients can override per request |
+| `MLXVLM_MAIN_ENABLE_THINKING` | `1` | mlx-vlm main thinks by default (so `main` reasons). `main-agents` + `main-metadata` + `main-ocr` are forced thinking-off at the proxy; clients can override per request |
+| `PRESET_ALIASES` | `1` | Expose `main-agents` / `-metadata` / `-ocr` sampling presets (same loaded model) |
 | `PRESET_AGENTS_TEMP` / `_TOPP` | `0.3` / `0.9` | `main-agents` sampling — low temp for reliable tool calls (thinking-off + tool-tuned) |
-| `PRESET_ALIASES` | `1` | Expose `main-precise` / `-creative` / `-metadata` / `-agents` sampling presets |
-| `PRESET_METADATA_MAXTOK` | `5000` | `main-metadata` max_tokens cap (think + finish JSON; only this alias is capped) |
+| `PRESET_AGENTS_FREQ` / `_MAXTOK` | `0.2` / `4096` | `main-agents` mild anti-repetition + runaway backstop (set FREQ 0 if tool JSON degrades) |
+| `PRESET_METADATA_TEMP` / `_MAXTOK` | `0.0` / `2048` | `main-metadata` = paperless-ngx JSON: deterministic + tight cap (thinking-off) |
+| `PRESET_OCR_TEMP` / `_TOPP` | `0.2` / `0.9` | `main-ocr` (gemma document OCR) sampling — faithful but non-greedy (0.0 loops) |
+| `PRESET_OCR_FREQ` / `_MAXTOK` | `0.3` / `4096` | `main-ocr` anti-repetition (mlx-vlm has no repetition_penalty) + A4-page cap |
 | `GLMOCR_PUBLIC_PORT` | `5002` | Public GLM-OCR port (proxy) |
 | `GLMOCR_BACKEND_PORT` | `15002` | Internal GLM-OCR backend port |
 | `IDLE_TIMEOUT_GLMOCR` | `60` | Seconds before GLM-OCR sleeps; **`-1` = never sleep** |
