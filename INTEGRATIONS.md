@@ -23,12 +23,11 @@ behind an alias can be swapped (`llm-models`) without the app noticing.
 
 | Alias  | What it is                       | Endpoint(s)                       | Backed by                     |
 |--------|----------------------------------|-----------------------------------|-------------------------------|
-| `main` | The big always-on text model     | `/v1/chat/completions`, `/v1/completions`, `/v1/messages` | mlx_lm.server (always on)      |
-| `main-precise`  | `main` with low temperature (factual, careful) | same as `main` | **same loaded model**, different default sampling |
-| `main-creative` | `main` with high temperature (varied prose) | same as `main` | **same loaded model**, different default sampling |
-| `main-metadata` | `main` for extraction: deterministic + `max_tokens` cap, **no thinking** (title/date JSON) | same as `main` | **same loaded model**, different default sampling |
-| `main-agents` | `main` tuned for **tool use**: low temp, deterministic, **no thinking** | same as `main` | **same loaded model**, agent sampling |
-| `ocr`  | Vision OCR (document → text)     | `/v1/chat/completions` (image input) | GLM-OCR via mlx-vlm (on-demand) |
+| `main` | The big always-on model (chat)   | `/v1/chat/completions`, `/v1/completions`, `/v1/messages` | mlx_lm.server (always on)      |
+| `main-agents` | `main` tuned for **tool use / web / cron / email**: low temp, **no thinking**, mild anti-repetition + `max_tokens` backstop | same as `main` | **same loaded model**, agent sampling |
+| `main-metadata` | `main` for **paperless-ngx JSON**: deterministic + tight `max_tokens` cap, **no thinking** (title/date/tags JSON) | same as `main` | **same loaded model**, different default sampling |
+| `main-ocr` | `main` (gemma) for **document transcription**: anti-loop sampling (`frequency_penalty`), A4-page `max_tokens` cap, **no thinking** | same as `main` | **same loaded model**, OCR sampling |
+| `ocr`  | Dedicated OCR (document → text), best quality | `/v1/chat/completions` (image input) | GLM-OCR via mlx-vlm (on-demand) |
 | `vision` | General multimodal/vision (images → text) | `/v1/chat/completions` (`image_url` input) | mlx-vlm (on-demand; opt-in via `ALIAS_VISION`) |
 
 The `main-*` aliases all point at the **one** loaded text model — they only differ
@@ -38,10 +37,11 @@ the catalog; clients may override any of these per request. Toggle the presets w
 `PRESET_ALIASES` and tune them via the `PRESET_*` keys in
 `/usr/local/etc/macstudio.conf` (set via `setup.sh` → settings).
 
-**Thinking/reasoning:** `main`, `main-precise`, `main-creative` reason by default (a
-reasoning model thinks; clients can send `enable_thinking:false` to turn it off).
-**`main-metadata` and `main-agents` always run without thinking** (suppressed at the
-gateway) — so metadata returns clean JSON and agent tool-calls stay tight.
+**Thinking/reasoning:** `main` reasons by default (a reasoning model thinks; clients
+can send `enable_thinking:false` to turn it off). **`main-agents`, `main-metadata`
+and `main-ocr` always run without thinking** (suppressed at the gateway) — so
+agent tool-calls stay tight, metadata returns clean JSON, and OCR transcribes
+without reasoning overhead.
 
 `vision` only exists if `ALIAS_VISION` is set (a `role=vision` model) — via
 `setup.sh` → settings or `llm-models` → `v`. With the default `TEXT_ENGINE=mlx-lm`
@@ -92,11 +92,11 @@ curl -s http://mac.home.arpa:11434/v1/chat/completions \
 - **API Base URL:** `http://mac.home.arpa:11434/v1`
 - **API Key:** `sk-local`
 
-The models `main` (plus the `main-precise`/`main-creative`/`main-metadata`/`main-agents`
-presets) and `ocr` (and `vision` if enabled) appear in the model picker. For chat use
-`main`. `main`/`-precise`/`-creative` may emit reasoning, which Open WebUI renders as a
-foldable "thinking" block; `main-metadata` and `main-agents` are thinking-off, so they
-return clean output with no thinking block. (Embeddings/STT are not served by this stack.)
+The models `main` (plus the `main-agents`/`main-metadata`/`main-ocr` presets) and
+`ocr` (and `vision` if enabled) appear in the model picker. For chat use `main`,
+which may emit reasoning that Open WebUI renders as a foldable "thinking" block;
+`main-agents`, `main-metadata` and `main-ocr` are thinking-off, so they return clean
+output with no thinking block. (Embeddings/STT are not served by this stack.)
 
 ---
 

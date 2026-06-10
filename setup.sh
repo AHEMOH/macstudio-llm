@@ -87,15 +87,16 @@ CONFIG_KEYS=(
   MLXVLM_MAIN_MAX_KV_SIZE
   MLXVLM_MAIN_ENABLE_THINKING
   PRESET_ALIASES
-  PRESET_PRECISE_TEMP
-  PRESET_PRECISE_TOPP
-  PRESET_PRECISE_FREQ
-  PRESET_CREATIVE_TEMP
-  PRESET_CREATIVE_TOPP
   PRESET_METADATA_TEMP
   PRESET_METADATA_MAXTOK
   PRESET_AGENTS_TEMP
   PRESET_AGENTS_TOPP
+  PRESET_AGENTS_FREQ
+  PRESET_AGENTS_MAXTOK
+  PRESET_OCR_TEMP
+  PRESET_OCR_TOPP
+  PRESET_OCR_FREQ
+  PRESET_OCR_MAXTOK
   LITELLM_PORT
   GLMOCR_PUBLIC_PORT
   GLMOCR_BACKEND_PORT
@@ -179,15 +180,16 @@ config_default() {
     MLXVLM_MAIN_MAX_KV_SIZE)     echo "" ;;
     MLXVLM_MAIN_ENABLE_THINKING) echo 1 ;;
     PRESET_ALIASES)              echo 1 ;;
-    PRESET_PRECISE_TEMP)         echo 0.2 ;;
-    PRESET_PRECISE_TOPP)         echo 0.8 ;;
-    PRESET_PRECISE_FREQ)         echo 0.4 ;;
-    PRESET_CREATIVE_TEMP)        echo 0.9 ;;
-    PRESET_CREATIVE_TOPP)        echo 0.95 ;;
     PRESET_METADATA_TEMP)        echo 0.0 ;;
     PRESET_METADATA_MAXTOK)      echo 2048 ;;
-    PRESET_AGENTS_TEMP)          echo 0.2 ;;
+    PRESET_AGENTS_TEMP)          echo 0.3 ;;
     PRESET_AGENTS_TOPP)          echo 0.9 ;;
+    PRESET_AGENTS_FREQ)          echo 0.2 ;;
+    PRESET_AGENTS_MAXTOK)        echo 4096 ;;
+    PRESET_OCR_TEMP)             echo 0.2 ;;
+    PRESET_OCR_TOPP)             echo 0.9 ;;
+    PRESET_OCR_FREQ)             echo 0.3 ;;
+    PRESET_OCR_MAXTOK)           echo 4096 ;;
     LITELLM_PORT)                echo 11434 ;;
     GLMOCR_PUBLIC_PORT)          echo 5002 ;;
     GLMOCR_BACKEND_PORT)         echo 15002 ;;
@@ -265,17 +267,18 @@ config_hint() {
     MLXVLM_MAIN_KV_BITS)         echo "KV-cache quant bits for the mlx-vlm unified main: 8 (recommended), 4, or 3.5 with turboquant. empty=off. (Only when TEXT_ENGINE=mlx-vlm)" ;;
     MLXVLM_MAIN_KV_SCHEME)       echo "mlx-vlm main KV quant scheme: uniform | turboquant (fractional bits like 3.5)" ;;
     MLXVLM_MAIN_MAX_KV_SIZE)     echo "mlx-vlm main context cap (--max-kv-size); empty = model default. Raise to exploit KV-quant for big context on 32 GB" ;;
-    MLXVLM_MAIN_ENABLE_THINKING) echo "mlx-vlm main: 1 = think by default (default — so main/-precise/-creative reason; OpenWebUI shows it), 0 = off. main-metadata + main-agents are forced thinking-off at the proxy regardless; clients can override per request" ;;
-    PRESET_ALIASES)              echo "1 = also expose sampling-preset aliases (main-precise/-creative/-metadata) — same loaded model, different default sampling" ;;
-    PRESET_PRECISE_TEMP)         echo "alias 'main-precise' temperature (factual, careful; default 0.2)" ;;
-    PRESET_PRECISE_TOPP)         echo "alias 'main-precise' top_p (default 0.8)" ;;
-    PRESET_PRECISE_FREQ)         echo "alias 'main-precise' frequency_penalty (anti-repetition; default 0.4)" ;;
-    PRESET_CREATIVE_TEMP)        echo "alias 'main-creative' temperature (varied prose; default 0.9)" ;;
-    PRESET_CREATIVE_TOPP)        echo "alias 'main-creative' top_p (default 0.95)" ;;
-    PRESET_METADATA_TEMP)        echo "alias 'main-metadata' temperature (extraction, deterministic; default 0.0 — safe because output is capped)" ;;
-    PRESET_METADATA_MAXTOK)      echo "alias 'main-metadata' max_tokens cap (extraction). 2048 — output is short JSON (<400 tok); the low ceiling also aborts a repetition loop sooner. metadata is thinking-OFF; only this alias is capped (main/-precise/-creative use MLXLM_MAX_TOKENS)" ;;
-    PRESET_AGENTS_TEMP)          echo "alias 'main-agents' temperature — low/deterministic for reliable tool-call formatting (default 0.2). main-agents is thinking-OFF + tool-tuned, no max_tokens cap" ;;
+    MLXVLM_MAIN_ENABLE_THINKING) echo "mlx-vlm main: 1 = think by default (default — so 'main' reasons; OpenWebUI shows it), 0 = off. main-agents + main-metadata + main-ocr are forced thinking-off at the proxy regardless; clients can override per request" ;;
+    PRESET_ALIASES)              echo "1 = also expose sampling-preset aliases (main-agents/-metadata/-ocr) — same loaded model, different default sampling" ;;
+    PRESET_METADATA_TEMP)        echo "alias 'main-metadata' temperature (paperless-ngx JSON output, deterministic; default 0.0 — safe because output is capped)" ;;
+    PRESET_METADATA_MAXTOK)      echo "alias 'main-metadata' max_tokens cap (paperless JSON). 2048 — output is short JSON (<400 tok); the low ceiling also aborts a repetition loop sooner. metadata is thinking-OFF; capped (main uses MLXLM_MAX_TOKENS)" ;;
+    PRESET_AGENTS_TEMP)          echo "alias 'main-agents' temperature — low for reliable tool-call formatting, slight headroom for analysis/email (default 0.3). main-agents is thinking-OFF + tool-tuned" ;;
     PRESET_AGENTS_TOPP)          echo "alias 'main-agents' top_p (default 0.9)" ;;
+    PRESET_AGENTS_FREQ)          echo "alias 'main-agents' frequency_penalty (mild anti-repetition; default 0.2). Set 0 if tool-call JSON formatting degrades" ;;
+    PRESET_AGENTS_MAXTOK)        echo "alias 'main-agents' max_tokens cap as a runaway backstop (default 4096 — long enough for an email/web analysis, bounds a loop)" ;;
+    PRESET_OCR_TEMP)             echo "alias 'main-ocr' temperature (gemma document transcription; default 0.2 — faithful but NOT greedy, since 0.0 is the most loop-prone)" ;;
+    PRESET_OCR_TOPP)             echo "alias 'main-ocr' top_p (default 0.9 — nucleus sampling helps escape repetition loops)" ;;
+    PRESET_OCR_FREQ)             echo "alias 'main-ocr' frequency_penalty — primary anti-repetition lever (default 0.3; mlx-vlm has no repetition_penalty)" ;;
+    PRESET_OCR_MAXTOK)           echo "alias 'main-ocr' max_tokens cap (default 4096 — covers a dense A4 page + bounds a runaway loop). main-ocr is thinking-OFF" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
     IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend sleeps (default 60); -1 = never sleep (stay warm)" ;;
     GLMOCR_MAX_TOKENS)           echo "Max output tokens for GLM-OCR (mlx-vlm default is only 2048 — a dense full page can exceed it and get truncated). Default 8192" ;;
@@ -931,20 +934,21 @@ render_litellm_config() {
     echo "# Managed by setup.sh -> render_litellm_config(). Do not edit by hand;"
     echo "# change aliases via 'llm-models'. Apps see only model_name aliases."
     echo "model_list:"
-    # main / -precise / -creative: thinking is left to the model/client (a reasoning
-    # model thinks by default; a client can pass enable_thinking per request).
-    # main-metadata + main-agents: thinking ALWAYS off at the proxy (emit_model arg 9).
+    # main: thinking is left to the model/client (a reasoning model thinks by
+    # default; a client can pass enable_thinking per request).
+    # main-agents / -metadata / -ocr: thinking ALWAYS off at the proxy (emit_model arg 9).
     emit_model main "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres"
-    # Sampling-preset aliases: SAME loaded model, different DEFAULT sampling
-    # (all share :18000 -> only ONE model stays resident). Apps pick the alias:
-    #   main-precise  factual/careful   main-creative  varied prose
-    #   main-metadata extraction (deterministic + max_tokens cap, no think)
-    #   main-agents   tool use (low temp, deterministic, no think)
+    # Sampling-preset aliases: SAME loaded gemma model, different DEFAULT sampling
+    # (all share :18000 -> only ONE model stays resident). Apps pick the alias per
+    # workload. mlx-vlm has NO repetition_penalty -> anti-loop = non-greedy temp +
+    # frequency_penalty + a max_tokens backstop. Aliases:
+    #   main-agents   tool use / web / cron / email (low temp, no think, freq+cap backstop)
+    #   main-metadata paperless-ngx JSON (deterministic, no think, tight cap)
+    #   main-ocr      gemma document transcription (anti-loop sampling, A4-sized cap, no think)
     if [ "${PRESET_ALIASES:-1}" = 1 ]; then
-      emit_model main-precise  "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_PRECISE_TEMP:-0.2}"  "${PRESET_PRECISE_TOPP:-0.8}"  "${PRESET_PRECISE_FREQ:-0.4}" "" ""
-      emit_model main-creative "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_CREATIVE_TEMP:-0.9}" "${PRESET_CREATIVE_TOPP:-0.95}" "" "" ""
-      emit_model main-metadata "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_METADATA_TEMP:-0.0}" "" "" "" "${PRESET_METADATA_MAXTOK:-256}" 1
-      emit_model main-agents   "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_AGENTS_TEMP:-0.3}"   "${PRESET_AGENTS_TOPP:-0.9}"  "" "" "" 1
+      emit_model main-agents   "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_AGENTS_TEMP:-0.3}"   "${PRESET_AGENTS_TOPP:-0.9}" "${PRESET_AGENTS_FREQ:-0.2}" "" "${PRESET_AGENTS_MAXTOK:-4096}" 1
+      emit_model main-metadata "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_METADATA_TEMP:-0.0}" "" "" "" "${PRESET_METADATA_MAXTOK:-2048}" 1
+      emit_model main-ocr      "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_OCR_TEMP:-0.2}"      "${PRESET_OCR_TOPP:-0.9}"   "${PRESET_OCR_FREQ:-0.3}"    "" "${PRESET_OCR_MAXTOK:-4096}"    1
     fi
     if [ -n "$ocr_repo" ]; then
       printf '  - model_name: ocr\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
