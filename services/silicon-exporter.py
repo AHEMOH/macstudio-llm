@@ -177,8 +177,17 @@ def render_metrics() -> str:
         lines.append("# TYPE apple_silicon_package_power_watts gauge")
         lines.append(f"apple_silicon_package_power_watts {pkg_power_w:.3f}")
 
-        # GPU
-        gpu_active = float(gpu.get("gpu_active_ratio") or gpu.get("active_ratio", 0))
+        # GPU active fraction. powermetrics builds differ: some report
+        # gpu_active_ratio/active_ratio directly; the M1 Max build reports only
+        # idle_ratio (e.g. 0.0008 = ~99.9% active), so derive 1 - idle_ratio.
+        if gpu.get("gpu_active_ratio") is not None:
+            gpu_active = float(gpu["gpu_active_ratio"])
+        elif gpu.get("active_ratio") is not None:
+            gpu_active = float(gpu["active_ratio"])
+        elif gpu.get("idle_ratio") is not None:
+            gpu_active = max(0.0, 1.0 - float(gpu["idle_ratio"]))
+        else:
+            gpu_active = 0.0
         gpu_freq = int(gpu.get("freq_hz") or 0)
         lines.append("# HELP apple_silicon_gpu_active_ratio GPU active fraction (0..1)")
         lines.append("# TYPE apple_silicon_gpu_active_ratio gauge")
