@@ -46,6 +46,7 @@ ALWAYS_ON_LABELS=(
   com.local.preventsleep
   com.local.iogpu.wiredlimit
   com.local.weekly.autoupdate
+  com.local.mqtt.bridge
 )
 # On-demand backends (KeepAlive=false, RunAtLoad=false)
 ONDEMAND_LABELS=(
@@ -145,6 +146,14 @@ CONFIG_KEYS=(
   INFERENCE_STALL_TIMEOUT_MIN
   INFERENCE_WATCHDOG_POLL_SEC
   INFERENCE_WATCHDOG_GPU_THRESHOLD
+  INSTALL_MQTT
+  MQTT_HOST
+  MQTT_PORT
+  MQTT_USER
+  MQTT_PASS
+  MQTT_TOPIC_PREFIX
+  MQTT_DISCOVERY_PREFIX
+  MQTT_PUBLISH_INTERVAL_SEC
   AUTO_ACCEPT
 )
 # Bash-3.2 safe (macOS ships /bin/bash 3.2): lookup functions instead of
@@ -238,6 +247,14 @@ config_default() {
     INFERENCE_STALL_TIMEOUT_MIN)      echo 15 ;;
     INFERENCE_WATCHDOG_POLL_SEC)      echo 30 ;;
     INFERENCE_WATCHDOG_GPU_THRESHOLD) echo 0.5 ;;
+    INSTALL_MQTT)                echo 0 ;;
+    MQTT_HOST)                   echo mqtt.home.arpa ;;
+    MQTT_PORT)                   echo 1883 ;;
+    MQTT_USER)                   echo "" ;;
+    MQTT_PASS)                   echo "" ;;
+    MQTT_TOPIC_PREFIX)           echo macstudio ;;
+    MQTT_DISCOVERY_PREFIX)       echo homeassistant ;;
+    MQTT_PUBLISH_INTERVAL_SEC)   echo 10 ;;
     AUTO_ACCEPT)                 echo 0 ;;
     *)                           echo "" ;;
   esac
@@ -299,6 +316,14 @@ config_hint() {
     INFERENCE_STALL_TIMEOUT_MIN) echo "Minutes of stuck inference (GPU active + no GIN 200 + open TCP) before kill" ;;
     INFERENCE_WATCHDOG_POLL_SEC) echo "How often the inference watchdog polls (seconds)" ;;
     INFERENCE_WATCHDOG_GPU_THRESHOLD) echo "gpu_active_ratio threshold (0..1) above which the GPU is considered busy" ;;
+    INSTALL_MQTT)                echo "1 = run the MQTT bridge (publishes runtime data + Home Assistant autodiscovery; lets HA switch the main model). Needs MQTT_HOST set" ;;
+    MQTT_HOST)                   echo "MQTT broker host/IP for the bridge (e.g. mqtt.home.arpa). Empty = bridge idles" ;;
+    MQTT_PORT)                   echo "MQTT broker port (default 1883, plain TCP — home network)" ;;
+    MQTT_USER)                   echo "MQTT username (empty = anonymous). Stored plaintext in this 644 conf — use a dedicated low-privilege broker user" ;;
+    MQTT_PASS)                   echo "MQTT password (empty = none). Plaintext in this 644 conf; avoid \$ and quote if it has spaces" ;;
+    MQTT_TOPIC_PREFIX)           echo "Base topic for state/command (default 'macstudio' -> macstudio/state, macstudio/model/set)" ;;
+    MQTT_DISCOVERY_PREFIX)       echo "Home Assistant MQTT discovery prefix (default 'homeassistant' — match HA's mqtt integration setting)" ;;
+    MQTT_PUBLISH_INTERVAL_SEC)   echo "Seconds between fast telemetry publishes (power/status/model; default 10). Version/update checks run every 6 h" ;;
     *)                           echo "" ;;
   esac
 }
@@ -478,6 +503,8 @@ load_config() {
         [ "${INSTALL_EXPORTERS:-1}" = 1 ] || continue ;;
       com.local.llm.watchdog|com.local.inference.watchdog)
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || continue ;;
+      com.local.mqtt.bridge)
+        [ "${INSTALL_MQTT:-0}" = 1 ] || continue ;;
     esac
     ACTIVE_LABELS+=("$_lbl")
   done
@@ -522,6 +549,7 @@ label_log() {
     com.local.preventsleep)      echo "$LOG_DIR/preventsleep.log" ;;
     com.local.iogpu.wiredlimit)  echo "$LOG_DIR/iogpu-wired-limit.log" ;;
     com.local.weekly.autoupdate) echo "$LOG_DIR/autoupdate.log" ;;
+    com.local.mqtt.bridge)       echo "$LOG_DIR/mqtt-bridge.log" ;;
     *) echo "$LOG_DIR/${1#com.local.}.log" ;;
   esac
 }
@@ -1000,16 +1028,26 @@ render_wrappers() {
 }
 
 render_services() {
-  local changed=0
+  local changed=0 mqtt_changed=0
   for src in "$REPO_DIR"/services/*.py; do
     local name dst; name=$(basename "$src"); dst="$LIBEXEC_DIR/$name"
-    if install_if_different "$src" "$dst" 755; then changed=$((changed+1)); ok "updated $dst"; fi
+    if install_if_different "$src" "$dst" 755; then
+      changed=$((changed+1)); ok "updated $dst"
+      [ "$name" = mqtt-bridge.py ] && mqtt_changed=1
+    fi
   done
   if install_if_different "$REPO_DIR/services/llm-watchdog.sh" "$LIBEXEC_DIR/llm-watchdog.sh" 755; then
     changed=$((changed+1)); ok "updated $LIBEXEC_DIR/llm-watchdog.sh"
   fi
   if install_if_different "$REPO_DIR/services/weekly-autoupdate.sh" "$SBIN_DIR/weekly-autoupdate.sh" 755; then
     changed=$((changed+1)); ok "updated $SBIN_DIR/weekly-autoupdate.sh"
+  fi
+  # A .py-only change doesn't touch the plist, so render_all_plists sees no diff
+  # and never restarts the daemon — it would keep running stale code. The bridge
+  # is the one always-on pure-Python daemon we hot-restart on a code update.
+  if [ "$mqtt_changed" = 1 ] && daemon_loaded com.local.mqtt.bridge; then
+    /bin/launchctl kickstart -k system/com.local.mqtt.bridge >/dev/null 2>&1 \
+      && ok "restarted mqtt-bridge with updated code"
   fi
   [ "$changed" -eq 0 ] && ok "services up to date"
 }
@@ -1056,6 +1094,8 @@ render_all_plists() {
         [ "${INSTALL_EXPORTERS:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.llm.watchdog|com.local.inference.watchdog)
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
+      com.local.mqtt.bridge)
+        [ "${INSTALL_MQTT:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
     esac
     local before_hash; before_hash=$(hash_file "$dst")
     render_template "$src" "$dst" 644 root:wheel || true
@@ -1205,6 +1245,17 @@ apply_tui_sudoers() {
 # Orchestration
 # ===========================================================================
 
+mqtt_apply_warnings() {
+  [ "${INSTALL_MQTT:-0}" = 1 ] || return 0
+  if [ -z "${MQTT_HOST:-}" ]; then
+    warn "INSTALL_MQTT=1 but MQTT_HOST is empty — the bridge will idle until you set it (menu 4)."
+  fi
+  if [ "${INSTALL_EXPORTERS:-0}" != 1 ]; then
+    warn "INSTALL_MQTT=1 but INSTALL_EXPORTERS=0 — power/GPU sensors will be 'unavailable' in Home Assistant"
+    warn "  (the bridge scrapes the silicon exporter on :${SILICON_EXPORTER_PORT:-9101}). Enable exporters in menu 'Select services' to get them."
+  fi
+}
+
 apply_everything() {
   need_root "$@"
   dbg "step: load_config";            load_config
@@ -1224,6 +1275,7 @@ apply_everything() {
   dbg "step: render_bin";             render_bin
   dbg "step: render_litellm_config";   render_litellm_config
   dbg "step: render_all_plists";      render_all_plists
+  dbg "step: mqtt_apply_warnings";    mqtt_apply_warnings
   dbg "step: render_motd";            render_motd
   dbg "step: apply_iogpu_wired_limit"; apply_iogpu_wired_limit
   dbg "step: ensure_ollama_models";    ensure_ollama_models
@@ -1343,13 +1395,15 @@ menu_select_services() {
       "${NODE_EXPORTER_PORT:-9100}" "${SILICON_EXPORTER_PORT:-9101}" "${ONDEMAND_EXPORTER_PORT:-9103}"
     printf "  6) %-18s [%s]   Memory-pressure safety watchdog\n" \
       INSTALL_WATCHDOG  "$(onoff_label "${INSTALL_WATCHDOG:-1}")"
+    printf "  7) %-18s [%s]   MQTT bridge -> Home Assistant (runtime data + model switch); host %s\n" \
+      INSTALL_MQTT      "$(onoff_label "${INSTALL_MQTT:-0}")" "${MQTT_HOST:-<unset>}"
     echo
     if [ "${INSTALL_MLX:-1}" = 1 ] && [ "${INSTALL_OLLAMA:-0}" = 1 ] \
        && [ "${LITELLM_PORT:-11434}" = "${OLLAMA_PORT:-11434}" ]; then
       warn "MLX and Ollama are both on but share port ${LITELLM_PORT:-11434} — change OLLAMA_PORT in settings."
     fi
     echo "   a) Apply these choices now     q) Back (don't apply)"
-    read -r -p "Toggle which? [1-6 / a / q]: " c
+    read -r -p "Toggle which? [1-7 / a / q]: " c
     case "$c" in
       1) toggle_install_flag INSTALL_MLX       ;;
       2) toggle_install_flag INSTALL_OLLAMA    ;;
@@ -1357,6 +1411,7 @@ menu_select_services() {
       4) toggle_install_flag INSTALL_DOCLING   ;;
       5) toggle_install_flag INSTALL_EXPORTERS ;;
       6) toggle_install_flag INSTALL_WATCHDOG  ;;
+      7) toggle_install_flag INSTALL_MQTT      ;;
       a|A) apply_everything; pause_enter; return 0 ;;
       q|Q|"") return 0 ;;
       *) warn "unknown: $c"; sleep 1 ;;
@@ -1490,13 +1545,22 @@ set_model_alias() {
     err "'$id' has role '$role' but slot '$slot' needs role '$want_role' — wrong list"
     return 1
   fi
-  # Refuse models the catalog flags BROKEN for the live engines — selecting one
-  # just breaks the server. Blocks a bare legacy BROKEN or BROKEN[mlx-lm]; a
-  # BROKEN[vllm] tag is HISTORICAL (vllm-mlx is retired) and does NOT block.
-  local _notes _broken=0
+  # Refuse models the catalog flags BROKEN for the engine that will actually run
+  # this slot — selecting one just breaks the server. A bare legacy BROKEN always
+  # blocks; an engine-tagged BROKEN[<engine>] blocks ONLY for that engine. So
+  # BROKEN[mlx-lm] (e.g. gemma4-12b = gemma4_unified) is fine under mlx-vlm and
+  # selectable there; BROKEN[vllm] is HISTORICAL (vllm-mlx retired) and never blocks.
+  # main runs on TEXT_ENGINE; ocr/vision always run on mlx-vlm.
+  local _notes _broken=0 _check_engine
+  case "$slot" in
+    main) _check_engine="${TEXT_ENGINE:-mlx-vlm}" ;;
+    *)    _check_engine="mlx-vlm" ;;
+  esac
   _notes=$(catalog_field "$id" 13)
-  if printf '%s' "$_notes" | /usr/bin/grep -qiE 'BROKEN\[mlx-lm\]|BROKEN([^[]|$)'; then
-    _broken=1
+  if printf '%s' "$_notes" | /usr/bin/grep -qiE 'BROKEN([^[]|$)'; then
+    _broken=1   # bare BROKEN — broken everywhere
+  elif printf '%s' "$_notes" | /usr/bin/grep -qiF "BROKEN[$_check_engine]"; then
+    _broken=1   # broken on the engine this slot uses
   fi
   if [ "$_broken" = 1 ]; then
     err "'$id' is flagged BROKEN — refusing (would break the server)."
@@ -1527,6 +1591,16 @@ set_model_alias() {
       ok "stopped vision backend; next image request wakes it with the new model"
     fi
   fi
+}
+
+cli_set_model() {
+  # Non-interactive model switch — e.g. invoked by the MQTT bridge when Home
+  # Assistant selects a model. Reuses set_model_alias and ALL its validation
+  # (downloaded, role match, BROKEN refusal). Usage: --set-model <slot> <id>.
+  INTERACTIVE=0
+  load_config
+  [ "$#" -eq 2 ] || { err "usage: --set-model <main|ocr|vision> <id>"; exit 2; }
+  set_model_alias "$1" "$2" || exit 1
 }
 
 set_hf_token() {
@@ -1957,6 +2031,9 @@ MacStudio LLM Server — setup.sh v${SCRIPT_VERSION}
   sudo bash setup.sh             Interactive TUI (recommended)
   sudo bash setup.sh --apply     Non-interactive install/update (no prompts)
   sudo bash setup.sh --status    Print live status and exit
+  sudo bash setup.sh --set-model <main|ocr|vision> <id>
+                                 Switch a model slot non-interactively (same
+                                 validation as the TUI; used by the MQTT bridge)
   sudo bash setup.sh --help      Show this help
 
 Global modifiers (combine with any mode above):
@@ -2031,6 +2108,7 @@ case "${1:-}" in
   --apply)  APPLY_MODE=1; INTERACTIVE=0; shift; apply_everything "$@" ;;
   --status) INTERACTIVE=0; load_config; verify_and_summary ;;
   --models) need_root "$@"; menu_models ;;
+  --set-model) need_root "$@"; shift; cli_set_model "$@" ;;
   --check-updates) need_root "$@"; menu_updates ;;
   --help|-h) show_help ;;
   "") main_menu "$@" ;;
