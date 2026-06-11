@@ -173,8 +173,8 @@ print(msg.content[0].text)
   Under `TEXT_ENGINE=mlx-vlm` the `main` model handles images itself.
 - **On-demand backends** (`ocr`, and the companion services) wake on the first
   request after idle — expect a one-time spin-up delay, then normal latency.
-- **Long requests:** the gateway timeout is `LLM_REQUEST_TIMEOUT` (default 1200 s
-  = 20 min) with **no retries**, sized for long documents / OCR.
+- **Long requests:** the gateway timeout is `LLM_REQUEST_TIMEOUT` (default 3600 s
+  = 60 min) with **no retries**, sized for long documents / OCR.
 - **Streaming** is supported on chat completions (`"stream": true`).
 - **Health check:** `GET /v1/models` returns 200 with the alias list when the
   gateway and backend are up.
