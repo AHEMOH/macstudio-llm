@@ -427,6 +427,16 @@ render_template() {
 }
 
 # --- Config file management -------------------------------------------------
+# Shell-quote a value so `. macstudio.conf` survives spaces and shell
+# metacharacters (& $ ` " ' etc.) in free-form values like MQTT_PASS — every
+# wrapper sources this file (some under `set -e`), so an unquoted `&`/space
+# would be parsed as a command and abort the daemon. `printf %q` is a bash
+# builtin (3.2+) that emits reusable shell input: simple values stay bare (so
+# numbers/paths/ids still parse), only specials get escaped. Empty -> ''.
+conf_quote() {
+  if [ -z "$1" ]; then printf "''"; else printf '%q' "$1"; fi
+}
+
 write_default_config() {
   /bin/mkdir -p "$(dirname "$CONF_FILE")"
   {
@@ -435,7 +445,7 @@ write_default_config() {
     echo "# Free-form edits are respected; unknown keys are preserved."
     echo
     for k in "${CONFIG_KEYS[@]}"; do
-      printf '%s=%s\n' "$k" "$(config_default "$k")"
+      printf '%s=%s\n' "$k" "$(conf_quote "$(config_default "$k")")"
     done
   } >"$CONF_FILE"
   /bin/chmod 644 "$CONF_FILE"
@@ -461,7 +471,7 @@ load_config() {
       echo ""
       echo "# keys added on $(date '+%F')"
       for k in "${missing[@]}"; do
-        printf '%s=%s\n' "$k" "$(config_default "$k")"
+        printf '%s=%s\n' "$k" "$(conf_quote "$(config_default "$k")")"
       done
     } >>"$CONF_FILE"
   fi
@@ -511,16 +521,23 @@ load_config() {
 }
 
 save_config_key() {
-  # save_config_key KEY VALUE — edit the single line in-place
-  local key=$1 value=$2
+  # save_config_key KEY VALUE — edit the single line in-place. The value is
+  # single-quoted (conf_quote) so it survives sourcing; a plain bash read loop
+  # rewrites the matching line so arbitrary metacharacters in VALUE are never
+  # interpreted (awk -v would mangle backslashes / C-escapes).
+  local key=$1 value=$2 qv
+  qv=$(conf_quote "$value")
   if /usr/bin/grep -qE "^${key}=" "$CONF_FILE"; then
-    local tmp; tmp=$(/usr/bin/mktemp)
-    /usr/bin/awk -v k="$key" -v v="$value" -F= '
-      $1==k { printf "%s=%s\n", k, v; next }
-            { print }' "$CONF_FILE" >"$tmp"
+    local tmp line; tmp=$(/usr/bin/mktemp)
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        "$key="*) printf '%s=%s\n' "$key" "$qv" ;;
+        *)        printf '%s\n' "$line" ;;
+      esac
+    done <"$CONF_FILE" >"$tmp"
     /bin/mv -f "$tmp" "$CONF_FILE"
   else
-    printf '%s=%s\n' "$key" "$value" >>"$CONF_FILE"
+    printf '%s=%s\n' "$key" "$qv" >>"$CONF_FILE"
   fi
   /bin/chmod 644 "$CONF_FILE"
 }
