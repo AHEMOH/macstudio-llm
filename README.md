@@ -62,6 +62,10 @@ raise a couple of config keys.
 - **Prometheus exporters** for Grafana are **opt-in** (`INSTALL_EXPORTERS=1`,
   off by default): node_exporter (:9100), Apple-Silicon metrics (:9101),
   on-demand stack state (:9103). Note: `mlx_lm.server` has no `/metrics` endpoint.
+- **MQTT bridge → Home Assistant** is **opt-in** (`INSTALL_MQTT=1`, off by
+  default): publishes power/GPU/thermal/RAM/disk/update telemetry with HA
+  autodiscovery and exposes a **one-click main-model switch** as an HA `select`.
+  See [INTEGRATIONS.md](INTEGRATIONS.md#mac-studio-in-home-assistant-mqtt).
 - **One script** (`setup.sh`): install, update, settings, **model manager**,
   service control, clean-up, uninstall. TUI by default, `--apply` for
   non-interactive runs. Idempotent — re-run safely any time.
@@ -92,6 +96,9 @@ Opt-in metrics (INSTALL_EXPORTERS=1, off by default):
   com.local.node.exporter          :9100    Prometheus system metrics
   com.local.silicon.exporter       :9101    GPU / power / thermal / mem-pressure
   com.local.ondemand.exporter      :9103    on-demand backend + proxy liveness
+
+Opt-in Home Assistant (INSTALL_MQTT=1, off by default):
+  com.local.mqtt.bridge                     MQTT telemetry + HA autodiscovery + model switch
 
 One-shot at boot:
   com.local.iogpu.wiredlimit                sets iogpu.wired_limit_mb
@@ -391,6 +398,11 @@ use the menu) to change a live box.
 | `OLLAMA_*` | — | Only used when `INSTALL_OLLAMA=1` |
 | `INSTALL_IMMICH` / `INSTALL_DOCLING` / `INSTALL_TUI` / `INSTALL_WATCHDOG` | `1` | Toggle optional pieces |
 | `INSTALL_EXPORTERS` | `0` | Prometheus exporters — **off by default** |
+| `INSTALL_MQTT` | `0` | MQTT bridge → Home Assistant — **off by default** |
+| `MQTT_HOST` / `MQTT_PORT` | `mqtt.home.arpa` / `1883` | Broker (empty host = bridge idles) |
+| `MQTT_USER` / `MQTT_PASS` | _(empty)_ | Broker auth (plaintext in the 644 conf) |
+| `MQTT_TOPIC_PREFIX` / `MQTT_DISCOVERY_PREFIX` | `macstudio` / `homeassistant` | Topic base / HA discovery prefix |
+| `MQTT_PUBLISH_INTERVAL_SEC` | `10` | Telemetry cadence (updates polled every 6 h) |
 | `WATCHDOG_PRESSURE_THRESHOLD` | `warn` | `warn` or `critical` |
 | `AUTO_ACCEPT` | `0` | `1` = skip "press Enter" prompts in the TUI |
 

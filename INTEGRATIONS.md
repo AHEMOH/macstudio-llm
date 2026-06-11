@@ -85,6 +85,80 @@ curl -s http://mac.home.arpa:11434/v1/chat/completions \
 
 ---
 
+## Mac Studio in Home Assistant (MQTT)
+
+Besides serving LLMs, the Mac can publish its **runtime telemetry** to your MQTT
+broker and appear in Home Assistant as a device — power draw, GPU load,
+thermal/memory pressure, RAM/disk, the active model, update status — plus a
+**`select` to switch the main model from HA with one click**. This is separate
+from the LLM gateway above; it's the `com.local.mqtt.bridge` daemon (stdlib
+Python, speaks MQTT 3.1.1 directly — no add-on needed on the Mac).
+
+**Turn it on:** `sudo bash setup.sh` → *Select services* → toggle `INSTALL_MQTT`
+on, then *Change settings* (menu 4) to set at least `MQTT_HOST` (and
+`MQTT_USER`/`MQTT_PASS` if your broker needs auth), then apply. Or set the keys
+directly in `/usr/local/etc/macstudio.conf` and run `sudo bash setup.sh --apply`.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `INSTALL_MQTT` | `0` | Run the bridge |
+| `MQTT_HOST` | `mqtt.home.arpa` | Broker host/IP (empty = bridge idles) |
+| `MQTT_PORT` | `1883` | Broker port (plain TCP) |
+| `MQTT_USER` / `MQTT_PASS` | empty | Broker credentials (stored plaintext in the 644 conf — use a dedicated low-privilege broker user) |
+| `MQTT_TOPIC_PREFIX` | `macstudio` | Base topic |
+| `MQTT_DISCOVERY_PREFIX` | `homeassistant` | Must match HA's MQTT integration discovery prefix |
+| `MQTT_PUBLISH_INTERVAL_SEC` | `10` | Telemetry cadence (version/update checks run every 6 h) |
+
+With HA's **MQTT integration** enabled and pointed at the same broker, a device
+**"Mac Studio"** appears automatically (autodiscovery) with sensors, binary
+sensors and a **Main Model** select. No YAML required.
+
+### Topics
+
+| Topic | Dir | Retained | Payload |
+|-------|-----|----------|---------|
+| `macstudio/availability` | pub (LWT) | yes | `online` / `offline` |
+| `macstudio/silicon/availability` | pub | yes | health of the powermetrics scrape (gates the power sensors) |
+| `macstudio/state` | pub | yes | JSON snapshot: `package_power_w`, `cpu_power_w`, `gpu_power_w`, `ane_power_w`, `gpu_util_pct`, `thermal_pressure`, `memory_pressure`, `ram_free_mb`, `wired_limit_mb`, `disk_free_gb`, `boot_time`, `reboot_pending`, `active_model`, `text_engine`, `text_backend_running`, `litellm_up`, `glmocr_awake` |
+| `macstudio/updates` | pub | yes | JSON: `updates_available`, `macos_version`, `mlx_lm`/`mlx_vlm`/`litellm` (installed+latest), `brew_outdated`, `last_autoupdate_run` |
+| `macstudio/model/state` | pub | yes | catalog id of the active main model |
+| `macstudio/model/status` | pub | yes | `ready` / `loading <id>` / `error: <msg>` |
+| `macstudio/model/set` | **sub** | no | publish a catalog id here to switch the main model |
+
+`thermal_pressure`/`memory_pressure` are strings (`Nominal`/`Fair`/…,
+`Normal`/`Warn`/`Critical`). The power/GPU/thermal sensors have a second
+availability bound to `macstudio/silicon/availability`, so if the Prometheus
+exporters are off (`INSTALL_EXPORTERS=0`) those sensors show *unavailable* while
+everything else keeps working.
+
+### Switching the model from HA
+
+The **Main Model** select lists every downloaded, non-broken `role=text` model
+in the catalog. Picking one publishes the id to `macstudio/model/set`; the bridge
+runs `setup.sh --set-model main <id>` (same validation as the TUI), restarts the
+text backend (~30–60 s, no hot-swap), and reports progress on
+`macstudio/model/status` (`loading <id>` → `ready`). A second request during a
+switch is rejected. Switching is also available as a plain CLI:
+`sudo bash setup.sh --set-model main <id>`.
+
+### Smoke tests
+
+```bash
+# Watch everything the Mac publishes:
+mosquitto_sub -h mqtt.home.arpa -u <user> -P <pass> -t 'macstudio/#' -v
+
+# See the retained HA discovery messages:
+mosquitto_sub -h mqtt.home.arpa -u <user> -P <pass> -t 'homeassistant/+/macstudio/+/config' -v
+
+# Switch the main model (id from `llm-models`):
+mosquitto_pub -h mqtt.home.arpa -u <user> -P <pass> -t macstudio/model/set -m gemma4-12b
+```
+
+An ESP32 (e.g. ESPHome) can subscribe to the same `macstudio/state` topic to drive
+a local display — the JSON keys above are the contract.
+
+---
+
 ## Open WebUI
 
 **Settings → Connections → OpenAI API**:
