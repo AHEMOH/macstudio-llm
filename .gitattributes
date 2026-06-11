@@ -1,7 +1,12 @@
+# Default: every text file checks out with LF so files edited on Windows still
+# run on the Mac. The extensionless bin/* commands, *.py services, *.plist
+# templates, motd.txt and grafana/*.json are all macOS-side and need this.
+* text=auto eol=lf
+
 # Keep shell scripts Unix-compatible on macOS
 *.sh text eol=lf
 
-# Keep PowerShell scripts Windows-native
+# Keep PowerShell scripts Windows-native (overrides the LF default above)
 *.ps1 text eol=crlf
 
 # Markdown and YAML as LF

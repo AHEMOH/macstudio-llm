@@ -243,8 +243,9 @@ Per-model columns the catalog carries: `role`, `engine`, `quant`, `gb`,
 `gated`, `reasoning_parser`, `tool_parser`, `max_kv_size`, `max_num_seqs`,
 `rating`, `notes`, sampling defaults. The `reasoning_parser`/`tool_parser`
 columns are **informational** now — `mlx_lm.server` and `mlx-vlm` auto-detect
-them from the model. The `engine` column values `vllm`/`vllm-mllm` are
-**historical** (vllm-mlx is retired); all `role=text` rows run on `mlx_lm.server`.
+them from the model. The `engine` column is informational: `mlxvlm` = unified
+text+images main (`TEXT_ENGINE=mlx-vlm`), `mlxlm` = text-only (`TEXT_ENGINE=mlx-lm`).
+The old `vllm`/`vllm-mllm` values are **historical** (vllm-mlx is retired).
 
 **Per-model sampling** (temperature/top_p/…) defaults are injected into the
 LiteLLM `main` alias; clients can override per request. On `mlx_lm.server` the
@@ -473,7 +474,7 @@ installed or started. Turn it on in `setup.sh` menu 2 (or set
 <repo root>/
 ├── setup.sh            single TUI / --apply entry point
 ├── motd.txt            SSH-login banner template
-├── models/catalog.tsv  model catalog seed (schema v4)
+├── models/catalog.tsv  model catalog seed (schema v6)
 ├── wrappers/           scripts plists execute (start-mlx-lm, start-litellm, start-glmocr, start-vision, …)
 ├── bin/                user commands (llm-*)
 ├── daemons/            plist templates (@VAR@ substitution)

@@ -262,7 +262,7 @@ config_hint() {
     MLXLM_PROMPT_CACHE_MB)       echo "mlx-lm prompt-cache hard cap in MB (--prompt-cache-bytes). Bounds KV/prefix RAM (16-bit KV grows fast — no kv-quant); default 8192" ;;
     MLXLM_DECODE_CONCURRENCY)    echo "mlx-lm concurrent decode streams (--decode-concurrency). empty = reuse VLLM_MAX_NUM_SEQS" ;;
     MLXLM_PROMPT_CONCURRENCY)    echo "mlx-lm concurrent prompt prefills (--prompt-concurrency); default 1 on 32 GB (limits prefill RAM spikes)" ;;
-    MLXLM_MAX_TOKENS)            echo "mlx-lm server default --max-tokens = ceiling for main/-precise/-creative (unset would be only 512!). 16384 = effectively unrestricted for chat/long text; model stops at EOS. main-metadata overrides via PRESET_METADATA_MAXTOK" ;;
+    MLXLM_MAX_TOKENS)            echo "mlx-lm server default --max-tokens = ceiling for main (unset would be only 512!). 16384 = effectively unrestricted for chat/long text; model stops at EOS. main-metadata overrides via PRESET_METADATA_MAXTOK" ;;
     MLXLM_CHAT_TEMPLATE_ARGS)    echo "mlx-lm chat-template JSON (--chat-template-args), e.g. {\"enable_thinking\":false} to suppress reasoning output. empty = off" ;;
     MLXVLM_MAIN_KV_BITS)         echo "KV-cache quant bits for the mlx-vlm unified main: 8 (recommended), 4, or 3.5 with turboquant. empty=off. (Only when TEXT_ENGINE=mlx-vlm)" ;;
     MLXVLM_MAIN_KV_SCHEME)       echo "mlx-vlm main KV quant scheme: uniform | turboquant (fractional bits like 3.5)" ;;
@@ -733,7 +733,7 @@ CATALOG_FILE="$CATALOG_DIR/catalog.tsv"
 LITELLM_CONFIG_FILE=/usr/local/etc/litellm.config.yaml
 
 # catalog_field <id> <column-number> — print a single field from the live
-# catalog, skipping comment lines. Columns (schema v3):
+# catalog, skipping comment lines. Columns (schema v6):
 #   1 id  2 hf_repo  3 role  4 engine  5 quant  6 gb  7 gated
 #   8 reasoning_parser  9 tool_parser  10 max_kv_size  11 max_num_seqs
 #   12 rating  13 notes  14 temperature  15 top_p  16 frequency_penalty
@@ -900,7 +900,7 @@ render_litellm_config() {
   fi
   ocr_repo=$(catalog_repo "${ALIAS_OCR:-}")
 
-  # Per-model DEFAULT sampling (schema v3, cols 14-17) for the active main model.
+  # Per-model DEFAULT sampling (schema v6, cols 14-17) for the active main model.
   # We inject per-model default sampling into the LiteLLM alias; clients can
   # still override per request (drop_params drops anything the backend rejects).
   # Empty cell = omit (LiteLLM/backend default).
@@ -965,7 +965,7 @@ render_litellm_config() {
     echo "  drop_params: true"
     # Long docs/OCR generations can run minutes — raise the gateway timeout and
     # do NOT retry (re-running a 20-min generation 2x is wasteful, not helpful).
-    printf '  request_timeout: %s\n' "${LLM_REQUEST_TIMEOUT:-1200}"
+    printf '  request_timeout: %s\n' "${LLM_REQUEST_TIMEOUT:-3600}"
     echo "  num_retries: 0"
   } >"$tmp"
 
@@ -1446,7 +1446,7 @@ download_model() {
   [ -x "$cli" ] || { err "hf CLI missing — run 'sudo bash setup.sh --apply' first"; return 1; }
   log "downloading '$id' ($repo) into ${HF_CACHE_DIR:-~/.cache/huggingface} — can be many GB…"
   # tee so the user sees live progress AND we can classify failures afterwards.
-  local logf=/tmp/macstudio-hf-download.log
+  local logf; logf=$(/usr/bin/mktemp -t macstudio-hf-download)
   /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
         "$cli" download "$repo" 2>&1 | /usr/bin/tee "$logf"
   rc=${PIPESTATUS[0]}
@@ -1557,7 +1557,8 @@ delete_local_model() {
 }
 
 catalog_add_entry() {
-  # Columns v2: id|hf_repo|role|engine|quant|gb|gated|reasoning|tool|max_kv|max_seqs|rating|notes
+  # Columns (schema v6): id|hf_repo|role|engine|quant|gb|gated|reasoning|tool|
+  #   max_kv|max_seqs|rating|notes|temperature|top_p|frequency_penalty|presence_penalty
   local id repo role engine quant gb gated rp tp
   read -r -p "new id (short slug): " id;       [ -z "$id" ] && return 0
   if catalog_repo "$id" >/dev/null && [ -n "$(catalog_repo "$id")" ]; then
@@ -1570,7 +1571,9 @@ catalog_add_entry() {
   else
     local mm
     read -r -p "multimodal (vision/audio) text model? [y/N]: " mm
-    case "$mm" in y|Y|yes|YES) engine=vllm-mllm ;; *) engine=vllm ;; esac
+    # engine col is informational (auto-detected at runtime): mlxvlm = unified
+    # text+images main (TEXT_ENGINE=mlx-vlm); mlxlm = text-only (TEXT_ENGINE=mlx-lm).
+    case "$mm" in y|Y|yes|YES) engine=mlxvlm ;; *) engine=mlxlm ;; esac
   fi
   read -r -p "quant (e.g. 4bit): " quant;       quant=${quant:-?}
   read -r -p "approx GB: " gb;                  gb=${gb:-?}
@@ -1580,8 +1583,10 @@ catalog_add_entry() {
     read -r -p "reasoning_parser [qwen3/glm4/gemma4/gpt_oss/deepseek_r1/empty]: " rp
     read -r -p "tool_parser [hermes/qwen/qwen3_coder/glm47/gemma4/granite/gpt-oss/empty]: " tp
   fi
-  # reasoning(8) tool(9) max_kv(10) max_seqs(11) left for per-model override later; rating(12)=3
-  printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|||3|added via TUI\n' \
+  # reasoning(8) tool(9) max_kv(10) max_seqs(11) left for per-model override later;
+  # rating(12)=3; sampling cols temp(14) top_p(15) freq(16) pres(17) empty = global
+  # defaults. Trailing '||||' keeps the row at the full schema-v6 width (17 cols).
+  printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|||3|added via TUI||||\n' \
     "$id" "$repo" "$role" "$engine" "$quant" "$gb" "$gated" "$rp" "$tp" >> "$CATALOG_FILE"
   /bin/chmod 644 "$CATALOG_FILE"   # keep readable by the daemon user (mac)
   ok "added '$id' (role=$role) → $repo  (download it with 'd $id')"
@@ -1592,11 +1597,11 @@ catalog_edit_entry() {
   [ -z "${id:-}" ] && { err "usage: e <id>"; return 1; }
   line=$(/usr/bin/grep -E "^${id}\|" "$CATALOG_FILE" | /usr/bin/head -1)
   [ -z "$line" ] && { err "unknown id: $id"; return 0; }
-  local f_id f_repo f_role f_engine f_quant f_gb f_gated f_rp f_tp f_kv f_seqs f_rating f_notes
-  IFS='|' read -r f_id f_repo f_role f_engine f_quant f_gb f_gated f_rp f_tp f_kv f_seqs f_rating f_notes <<EOF
+  local f_id f_repo f_role f_engine f_quant f_gb f_gated f_rp f_tp f_kv f_seqs f_rating f_notes f_temp f_topp f_freq f_pres
+  IFS='|' read -r f_id f_repo f_role f_engine f_quant f_gb f_gated f_rp f_tp f_kv f_seqs f_rating f_notes f_temp f_topp f_freq f_pres <<EOF
 $line
 EOF
-  local n_repo n_gb n_gated n_rp n_tp n_kv n_seqs
+  local n_repo n_gb n_gated n_rp n_tp n_kv n_seqs n_temp n_topp n_freq n_pres
   read -r -p "HF repo [$f_repo]: " n_repo;     n_repo=${n_repo:-$f_repo}
   read -r -p "approx GB [$f_gb]: " n_gb;        n_gb=${n_gb:-$f_gb}
   read -r -p "gated [$f_gated]: " n_gated;      n_gated=${n_gated:-$f_gated}
@@ -1604,10 +1609,15 @@ EOF
   read -r -p "tool_parser [$f_tp]: " n_tp;      n_tp=${n_tp:-$f_tp}
   read -r -p "max_kv_size (empty=global) [$f_kv]: " n_kv;     n_kv=${n_kv:-$f_kv}
   read -r -p "max_num_seqs (empty=global) [$f_seqs]: " n_seqs; n_seqs=${n_seqs:-$f_seqs}
+  read -r -p "temperature (empty=model default) [$f_temp]: " n_temp;       n_temp=${n_temp:-$f_temp}
+  read -r -p "top_p (empty=model default) [$f_topp]: " n_topp;             n_topp=${n_topp:-$f_topp}
+  read -r -p "frequency_penalty (empty=off) [$f_freq]: " n_freq;           n_freq=${n_freq:-$f_freq}
+  read -r -p "presence_penalty (empty=off) [$f_pres]: " n_pres;            n_pres=${n_pres:-$f_pres}
   local tmp; tmp=$(/usr/bin/mktemp)
   /usr/bin/awk -F'|' -v OFS='|' -v id="$id" -v repo="$n_repo" -v gb="$n_gb" -v gated="$n_gated" \
       -v rp="$n_rp" -v tp="$n_tp" -v kv="$n_kv" -v seqs="$n_seqs" \
-    '!/^#/ && $1==id { $2=repo; $6=gb; $7=gated; $8=rp; $9=tp; $10=kv; $11=seqs } { print }' \
+      -v temp="$n_temp" -v topp="$n_topp" -v freq="$n_freq" -v pres="$n_pres" \
+    '!/^#/ && $1==id { $2=repo; $6=gb; $7=gated; $8=rp; $9=tp; $10=kv; $11=seqs; $14=temp; $15=topp; $16=freq; $17=pres } { print }' \
     "$CATALOG_FILE" >"$tmp" && /bin/mv -f "$tmp" "$CATALOG_FILE"
   /bin/chmod 644 "$CATALOG_FILE"   # mktemp+mv leaves 600 → restore daemon-readable mode
   ok "updated '$id' (restart vllm with 's $id' if it's the active main)"
@@ -1680,7 +1690,7 @@ menu_models() {
     printf "${C_BOLD}── Models & aliases ───────────────────────────${C_RST}\n"
     printf "Active:  main=%s  ocr=%s  vision=%s\n" \
       "${ALIAS_MAIN:-none}" "${ALIAS_OCR:-none}" "${ALIAS_VISION:-off}"
-    printf "${C_DIM}(ONE text model loads on mlx_lm.server; ocr + vision are on-demand mlx-vlm)${C_RST}\n\n"
+    printf "${C_DIM}(ONE text model loads on the active text engine; ocr + vision are on-demand mlx-vlm)${C_RST}\n\n"
     print_catalog_table
     printf "\nSTATUS ok = downloaded+verified (only ok is selectable).  FLAG: ${C_RED}BROKEN${C_RST}=not selectable  ${C_GRN}REC${C_RST}=recommended (rating 5).\n"
     printf "Roles: text -> 's' (alias main)   ocr -> 'o' (alias ocr)   vision -> 'v' (alias vision). Source: HuggingFace repo-ids.\n"
