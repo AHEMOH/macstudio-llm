@@ -61,6 +61,7 @@ VM_STAT = "/usr/bin/vm_stat"
 SW_VERS = "/usr/bin/sw_vers"
 SUDO = "/usr/bin/sudo"
 BREW = "/opt/homebrew/bin/brew"
+IOREG = "/usr/sbin/ioreg"
 
 KEEPALIVE = 60          # MQTT keepalive seconds
 SLOW_INTERVAL = 6 * 3600  # version/update poll cadence
@@ -393,6 +394,32 @@ def wired_limit_mb():
         return None
 
 
+def swap_used_mb():
+    # vm.swapusage: "total = 1024.00M  used = 90.56M  free = 933.44M  (encrypted)"
+    out = run_out([SYSCTL, "-n", "vm.swapusage"])
+    if not out:
+        return None
+    m = re.search(r"used\s*=\s*([0-9.]+)([KMGT]?)", out)
+    if not m:
+        return None
+    mult = {"K": 1 / 1024, "M": 1.0, "G": 1024.0, "T": 1024.0 * 1024}[m.group(2) or "M"]
+    return round(float(m.group(1)) * mult, 1)
+
+
+def gpu_mem_used_mb():
+    """MB the GPU allocator currently holds ('Alloc system memory' in the
+    IOAccelerator registry entry). MLX model weights + KV cache live here —
+    GPU-wired memory is accounted separately from vm_stat's wired pages, so
+    this is the number iogpu.wired_limit_mb actually caps."""
+    out = run_out([IOREG, "-r", "-d", "1", "-c", "IOAccelerator"])
+    if not out:
+        return None
+    m = re.search(r'"Alloc system memory"\s*=\s*(\d+)', out)
+    if not m:
+        return None
+    return int(m.group(1)) // (1024 * 1024)
+
+
 def disk_free_gb(path):
     try:
         if not os.path.exists(path):
@@ -543,6 +570,24 @@ class Bridge:
             "value_template": "{{ value_json.wired_limit_mb }}",
             "unit_of_measurement": "MB", "device_class": "data_size",
         }, am)
+        add("sensor", "gpu_mem_used", {
+            "name": "GPU Memory Used", "state_topic": st,
+            "value_template": "{{ value_json.gpu_mem_used_mb }}",
+            "unit_of_measurement": "MB", "device_class": "data_size",
+            "state_class": "measurement", "icon": "mdi:memory",
+        }, am)
+        add("sensor", "gpu_mem_free", {
+            "name": "GPU Memory Free", "state_topic": st,
+            "value_template": "{{ value_json.gpu_mem_free_mb }}",
+            "unit_of_measurement": "MB", "device_class": "data_size",
+            "state_class": "measurement", "icon": "mdi:gauge",
+        }, am)
+        add("sensor", "swap_used", {
+            "name": "Swap Used", "state_topic": st,
+            "value_template": "{{ value_json.swap_used_mb }}",
+            "unit_of_measurement": "MB", "device_class": "data_size",
+            "state_class": "measurement", "icon": "mdi:swap-horizontal",
+        }, am)
         add("sensor", "disk_free", {
             "name": "Model Cache Disk Free", "state_topic": st,
             "value_template": "{{ value_json.disk_free_gb }}",
@@ -656,6 +701,8 @@ class Bridge:
             "memory_pressure": MEM_LABEL.get(int(mem)) if mem is not None else None,
             "ram_free_mb": ram_free_mb(),
             "wired_limit_mb": wired_limit_mb(),
+            "swap_used_mb": swap_used_mb(),
+            "gpu_mem_used_mb": gpu_mem_used_mb(),
             "disk_free_gb": disk_free_gb(hf),
             "boot_time": boot_time_iso(),
             "reboot_pending": os.path.exists(REBOOT_PENDING_FILE),
@@ -665,6 +712,12 @@ class Bridge:
             "litellm_up": tcp_listening(litellm_port),
             "glmocr_awake": glm_running,
         }
+        # Headroom under the GPU wired-memory ceiling — what's left for a
+        # bigger model / longer context before hitting iogpu.wired_limit_mb.
+        if state["wired_limit_mb"] and state["gpu_mem_used_mb"] is not None:
+            state["gpu_mem_free_mb"] = max(0, state["wired_limit_mb"] - state["gpu_mem_used_mb"])
+        else:
+            state["gpu_mem_free_mb"] = None
         self.mqtt.publish(self.state_topic, json.dumps(state), retain=True)
         if not self.busy:
             self.mqtt.publish(self.model_state_topic, active, retain=True)
