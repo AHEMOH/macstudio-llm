@@ -119,7 +119,7 @@ sensors and a **Main Model** select. No YAML required.
 |-------|-----|----------|---------|
 | `macstudio/availability` | pub (LWT) | yes | `online` / `offline` |
 | `macstudio/silicon/availability` | pub | yes | health of the powermetrics scrape (gates the power sensors) |
-| `macstudio/state` | pub | yes | JSON snapshot: `total_power_w` (whole system, SMC), `package_power_w`, `cpu_power_w`, `gpu_power_w`, `ane_power_w`, `cpu_temp_c`, `gpu_temp_c`, `gpu_util_pct`, `thermal_pressure`, `memory_pressure`, `ram_free_mb`, `wired_limit_mb`, `disk_free_gb`, `boot_time`, `reboot_pending`, `active_model`, `text_engine`, `text_backend_running`, `litellm_up`, `glmocr_awake` |
+| `macstudio/state` | pub | yes | JSON snapshot: `total_power_w` (whole system, SMC), `package_power_w`, `cpu_power_w`, `gpu_power_w`, `ane_power_w`, `cpu_temp_c`, `gpu_temp_c`, `gpu_util_pct`, `thermal_pressure`, `memory_pressure`, `ram_free_mb`, `wired_limit_mb`, `gpu_mem_used_mb`, `gpu_mem_free_mb`, `swap_used_mb`, `disk_free_gb`, `boot_time`, `reboot_pending`, `active_model`, `text_engine`, `text_backend_running`, `litellm_up`, `glmocr_awake` |
 | `macstudio/updates` | pub | yes | JSON: `updates_available`, `macos_version`, `mlx_lm`/`mlx_vlm`/`litellm` (installed+latest), `brew_outdated`, `last_autoupdate_run` |
 | `macstudio/model/state` | pub | yes | catalog id of the active main model |
 | `macstudio/model/status` | pub | yes | `ready` / `loading <id>` / `error: <msg>` |
@@ -137,6 +137,13 @@ the CPU+GPU+ANE compute rails, and `gpu_util_pct` is real utilization. Values
 are averaged over `SILICON_SAMPLE_INTERVAL_MS` (default 10 s, matched to the
 publish cadence). Without macmon the exporter falls back to `powermetrics` —
 then `total_power_w`/`cpu_temp_c`/`gpu_temp_c` stay `null`.
+
+`gpu_mem_used_mb` is what the GPU allocator currently holds (IORegistry
+"Alloc system memory" — MLX model weights + KV cache; GPU-wired memory is
+accounted separately from normal wired pages), and `gpu_mem_free_mb` =
+`iogpu.wired_limit_mb` − used: the headroom left for a bigger model or longer
+context. `swap_used_mb` comes from `vm.swapusage`. All three are read locally
+by the bridge, so they work even with the exporters off.
 
 ### Switching the model from HA
 
