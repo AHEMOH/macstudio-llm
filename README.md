@@ -60,8 +60,10 @@ raise a couple of config keys.
   keeps the main model healthy) and an Ollama-only inference-stall killer
   (idle unless `INSTALL_OLLAMA=1`).
 - **Prometheus exporters** for Grafana are **opt-in** (`INSTALL_EXPORTERS=1`,
-  off by default): node_exporter (:9100), Apple-Silicon metrics (:9101),
-  on-demand stack state (:9103). Note: `mlx_lm.server` has no `/metrics` endpoint.
+  off by default): node_exporter (:9100), Apple-Silicon metrics (:9101, via
+  **macmon**: whole-system power from the SMC, CPU/GPU temperatures, real GPU
+  utilization; powermetrics fallback), on-demand stack state (:9103). Note:
+  `mlx_lm.server` has no `/metrics` endpoint.
 - **MQTT bridge → Home Assistant** is **opt-in** (`INSTALL_MQTT=1`, off by
   default): publishes power/GPU/thermal/RAM/disk/update telemetry with HA
   autodiscovery and exposes a **one-click main-model switch** as an HA `select`.

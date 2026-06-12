@@ -119,17 +119,24 @@ sensors and a **Main Model** select. No YAML required.
 |-------|-----|----------|---------|
 | `macstudio/availability` | pub (LWT) | yes | `online` / `offline` |
 | `macstudio/silicon/availability` | pub | yes | health of the powermetrics scrape (gates the power sensors) |
-| `macstudio/state` | pub | yes | JSON snapshot: `package_power_w`, `cpu_power_w`, `gpu_power_w`, `ane_power_w`, `gpu_util_pct`, `thermal_pressure`, `memory_pressure`, `ram_free_mb`, `wired_limit_mb`, `disk_free_gb`, `boot_time`, `reboot_pending`, `active_model`, `text_engine`, `text_backend_running`, `litellm_up`, `glmocr_awake` |
+| `macstudio/state` | pub | yes | JSON snapshot: `total_power_w` (whole system, SMC), `package_power_w`, `cpu_power_w`, `gpu_power_w`, `ane_power_w`, `cpu_temp_c`, `gpu_temp_c`, `gpu_util_pct`, `thermal_pressure`, `memory_pressure`, `ram_free_mb`, `wired_limit_mb`, `disk_free_gb`, `boot_time`, `reboot_pending`, `active_model`, `text_engine`, `text_backend_running`, `litellm_up`, `glmocr_awake` |
 | `macstudio/updates` | pub | yes | JSON: `updates_available`, `macos_version`, `mlx_lm`/`mlx_vlm`/`litellm` (installed+latest), `brew_outdated`, `last_autoupdate_run` |
 | `macstudio/model/state` | pub | yes | catalog id of the active main model |
 | `macstudio/model/status` | pub | yes | `ready` / `loading <id>` / `error: <msg>` |
 | `macstudio/model/set` | **sub** | no | publish a catalog id here to switch the main model |
 
 `thermal_pressure`/`memory_pressure` are strings (`Nominal`/`Fair`/…,
-`Normal`/`Warn`/`Critical`). The power/GPU/thermal sensors have a second
-availability bound to `macstudio/silicon/availability`, so if the Prometheus
-exporters are off (`INSTALL_EXPORTERS=0`) those sensors show *unavailable* while
-everything else keeps working.
+`Normal`/`Warn`/`Critical`). The power/temperature/GPU/thermal sensors have a
+second availability bound to `macstudio/silicon/availability`, so if the
+Prometheus exporters are off (`INSTALL_EXPORTERS=0`) those sensors show
+*unavailable* while everything else keeps working.
+
+The silicon numbers come from **macmon** (IOReport/SMC): `total_power_w` is the
+whole-system draw (what macmon's TUI shows as *Total*), `package_power_w` only
+the CPU+GPU+ANE compute rails, and `gpu_util_pct` is real utilization. Values
+are averaged over `SILICON_SAMPLE_INTERVAL_MS` (default 10 s, matched to the
+publish cadence). Without macmon the exporter falls back to `powermetrics` —
+then `total_power_w`/`cpu_temp_c`/`gpu_temp_c` stay `null`.
 
 ### Switching the model from HA
 

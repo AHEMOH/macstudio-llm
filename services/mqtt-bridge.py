@@ -497,7 +497,8 @@ class Bridge:
                 cfg["availability_mode"] = "all"
             ents.append((f"{self.disc_prefix}/{comp}/macstudio/{oid}/config", cfg))
 
-        for oid, name, key in [("package_power", "Package Power", "package_power_w"),
+        for oid, name, key in [("total_power", "Total Power", "total_power_w"),
+                               ("package_power", "Package Power", "package_power_w"),
                                ("cpu_power", "CPU Power", "cpu_power_w"),
                                ("gpu_power", "GPU Power", "gpu_power_w"),
                                ("ane_power", "ANE Power", "ane_power_w")]:
@@ -505,6 +506,14 @@ class Bridge:
                 "name": name, "state_topic": st,
                 "value_template": f"{{{{ value_json.{key} }}}}",
                 "unit_of_measurement": "W", "device_class": "power",
+                "state_class": "measurement",
+            }, asil)
+        for oid, name, key in [("cpu_temp", "CPU Temperature", "cpu_temp_c"),
+                               ("gpu_temp", "GPU Temperature", "gpu_temp_c")]:
+            add("sensor", oid, {
+                "name": name, "state_topic": st,
+                "value_template": f"{{{{ value_json.{key} }}}}",
+                "unit_of_measurement": "°C", "device_class": "temperature",
                 "state_class": "measurement",
             }, asil)
         add("sensor", "gpu_util", {
@@ -636,6 +645,9 @@ class Bridge:
         mem = _gv(sil, "apple_silicon_memory_pressure_level")
         state = {
             "package_power_w": _gv(sil, "apple_silicon_package_power_watts"),
+            "total_power_w": _gv(sil, "apple_silicon_sys_power_watts"),
+            "cpu_temp_c": _gv(sil, "apple_silicon_cpu_temp_celsius"),
+            "gpu_temp_c": _gv(sil, "apple_silicon_gpu_temp_celsius"),
             "cpu_power_w": _gv(sil, "apple_silicon_cpu_power_watts"),
             "gpu_power_w": _gv(sil, "apple_silicon_gpu_power_watts"),
             "ane_power_w": _gv(sil, "apple_silicon_ane_power_watts"),

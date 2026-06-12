@@ -236,7 +236,7 @@ config_default() {
     SILICON_EXPORTER_PORT)       echo 9101 ;;
     OLLAMA_EXPORTER_PORT)        echo 9102 ;;
     ONDEMAND_EXPORTER_PORT)      echo 9103 ;;
-    SILICON_SAMPLE_INTERVAL_MS)  echo 1000 ;;
+    SILICON_SAMPLE_INTERVAL_MS)  echo 10000 ;;
     INSTALL_IMMICH)              echo 1 ;;
     INSTALL_DOCLING)             echo 1 ;;
     INSTALL_EXPORTERS)           echo 0 ;;
@@ -316,6 +316,7 @@ config_hint() {
     INFERENCE_STALL_TIMEOUT_MIN) echo "Minutes of stuck inference (GPU active + no GIN 200 + open TCP) before kill" ;;
     INFERENCE_WATCHDOG_POLL_SEC) echo "How often the inference watchdog polls (seconds)" ;;
     INFERENCE_WATCHDOG_GPU_THRESHOLD) echo "gpu_active_ratio threshold (0..1) above which the GPU is considered busy" ;;
+    SILICON_SAMPLE_INTERVAL_MS)  echo "Silicon sampler cadence in ms (default 10000). macmon averages over the interval — match the MQTT/Prometheus cadence; longer = less load AND more representative values" ;;
     INSTALL_MQTT)                echo "1 = run the MQTT bridge (publishes runtime data + Home Assistant autodiscovery; lets HA switch the main model). Needs MQTT_HOST set" ;;
     MQTT_HOST)                   echo "MQTT broker host/IP for the bridge (e.g. mqtt.home.arpa). Empty = bridge idles" ;;
     MQTT_PORT)                   echo "MQTT broker port (default 1883, plain TCP — home network)" ;;
@@ -710,8 +711,10 @@ ensure_formulas() {
   # primary backend and runs from Python venvs, not a brew formula.
   [ "${INSTALL_OLLAMA:-0}" = 1 ] && ensure_formula ollama
   [ "${INSTALL_EXPORTERS:-1}" = 1 ] && ensure_formula node_exporter
-  if [ "${INSTALL_TUI:-1}" = 1 ]; then
-    ensure_formula mactop
+  [ "${INSTALL_TUI:-1}" = 1 ] && ensure_formula mactop
+  # macmon doubles as the silicon-exporter's sampler (sys power, temps, real
+  # GPU usage), so the exporters need it even when the TUI tools are off.
+  if [ "${INSTALL_TUI:-1}" = 1 ] || [ "${INSTALL_EXPORTERS:-1}" = 1 ]; then
     ensure_formula macmon
   fi
 }
@@ -1044,13 +1047,29 @@ render_wrappers() {
   [ "$changed" -eq 0 ] && ok "wrappers up to date"
 }
 
+# Daemon label a service .py belongs to, for the post-update hot-restart in
+# render_services. The ondemand-proxy.py proxies are deliberately ABSENT —
+# restarting them would drop in-flight LLM/OCR requests; they pick the new
+# code up on their next natural restart.
+service_py_label() {
+  case "$1" in
+    mqtt-bridge.py)        echo com.local.mqtt.bridge ;;
+    silicon-exporter.py)   echo com.local.silicon.exporter ;;
+    ondemand-exporter.py)  echo com.local.ondemand.exporter ;;
+    ollama-exporter.py)    echo com.local.ollama.exporter ;;
+    inference-watchdog.py) echo com.local.inference.watchdog ;;
+    *) echo "" ;;
+  esac
+}
+
 render_services() {
-  local changed=0 mqtt_changed=0
+  local changed=0 restart_labels=""
   for src in "$REPO_DIR"/services/*.py; do
     local name dst; name=$(basename "$src"); dst="$LIBEXEC_DIR/$name"
     if install_if_different "$src" "$dst" 755; then
       changed=$((changed+1)); ok "updated $dst"
-      [ "$name" = mqtt-bridge.py ] && mqtt_changed=1
+      local _lbl; _lbl=$(service_py_label "$name")
+      [ -n "$_lbl" ] && restart_labels="$restart_labels $_lbl"
     fi
   done
   if install_if_different "$REPO_DIR/services/llm-watchdog.sh" "$LIBEXEC_DIR/llm-watchdog.sh" 755; then
@@ -1059,13 +1078,15 @@ render_services() {
   if install_if_different "$REPO_DIR/services/weekly-autoupdate.sh" "$SBIN_DIR/weekly-autoupdate.sh" 755; then
     changed=$((changed+1)); ok "updated $SBIN_DIR/weekly-autoupdate.sh"
   fi
-  # A .py-only change doesn't touch the plist, so render_all_plists sees no diff
-  # and never restarts the daemon — it would keep running stale code. The bridge
-  # is the one always-on pure-Python daemon we hot-restart on a code update.
-  if [ "$mqtt_changed" = 1 ] && daemon_loaded com.local.mqtt.bridge; then
-    /bin/launchctl kickstart -k system/com.local.mqtt.bridge >/dev/null 2>&1 \
-      && ok "restarted mqtt-bridge with updated code"
-  fi
+  # A .py-only change doesn't touch the plist, so render_all_plists sees no
+  # diff and never restarts the daemon — it would keep running stale code.
+  local _lbl
+  for _lbl in $restart_labels; do
+    if daemon_loaded "$_lbl"; then
+      /bin/launchctl kickstart -k "system/$_lbl" >/dev/null 2>&1 \
+        && ok "restarted $_lbl with updated code"
+    fi
+  done
   [ "$changed" -eq 0 ] && ok "services up to date"
 }
 
