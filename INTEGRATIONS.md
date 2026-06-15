@@ -23,31 +23,27 @@ behind an alias can be swapped (`llm-models`) without the app noticing.
 
 | Alias  | What it is                       | Endpoint(s)                       | Backed by                     |
 |--------|----------------------------------|-----------------------------------|-------------------------------|
-| `main` | The big always-on model (chat)   | `/v1/chat/completions`, `/v1/completions`, `/v1/messages` | mlx_lm.server (always on)      |
-| `main-agents` | `main` tuned for **tool use / web / cron / email**: low temp, **no thinking**, mild anti-repetition + `max_tokens` backstop | same as `main` | **same loaded model**, agent sampling |
-| `main-metadata` | `main` for **paperless-ngx JSON**: deterministic + tight `max_tokens` cap, **no thinking** (title/date/tags JSON) | same as `main` | **same loaded model**, different default sampling |
-| `main-ocr` | `main` (gemma) for **document transcription**: anti-loop sampling (`frequency_penalty`), A4-page `max_tokens` cap, **no thinking** | same as `main` | **same loaded model**, OCR sampling |
+| `main` | The big always-on model (chat **+ images**), reasons by default | `/v1/chat/completions`, `/v1/completions`, `/v1/messages` | unified mlx-vlm main (always on) |
+| `main-fast` | Exactly `main` but **thinking OFF** — fast, non-reasoning chat / tool use / web / cron / email | same as `main` | **same loaded model**, thinking-off |
+| `main-metadata` | `main` for **paperless-ngx JSON**: deterministic (temp 0) + tight `max_tokens` cap, **no thinking** (title/date/tags JSON) | same as `main` | **same loaded model**, different default sampling |
 | `ocr`  | Dedicated OCR (document → text), best quality | `/v1/chat/completions` (image input) | GLM-OCR via mlx-vlm (on-demand) |
-| `vision` | General multimodal/vision (images → text) | `/v1/chat/completions` (`image_url` input) | mlx-vlm (on-demand; opt-in via `ALIAS_VISION`) |
 
-The `main-*` aliases all point at the **one** loaded text model — they only differ
-in DEFAULT sampling (temperature/top_p/penalties/max_tokens), so picking one does
-**not** load a second model. `main` itself uses the per-model sampling defaults from
-the catalog; clients may override any of these per request. Toggle the presets with
-`PRESET_ALIASES` and tune them via the `PRESET_*` keys in
-`/usr/local/etc/macstudio.conf` (set via `setup.sh` → settings).
+The gateway exposes **exactly these four aliases**. The `main*` aliases all point at
+the **one** loaded model — they only differ in DEFAULT sampling and thinking, so
+picking one does **not** load a second model. `main` and `main-fast` share Gemma's
+reference sampling (**temperature 1.0 / top_p 0.95 / top_k 64**); `main`/`main-fast`
+temp+top_p come from the catalog, `top_k` from `GEMMA_TOP_K` (via `extra_body`, since
+top_k is not a native OpenAI param). Clients may override any of these per request.
+Toggle the presets with `PRESET_ALIASES`.
 
 **Thinking/reasoning:** `main` reasons by default (a reasoning model thinks; clients
-can send `enable_thinking:false` to turn it off). **`main-agents`, `main-metadata`
-and `main-ocr` always run without thinking** (suppressed at the gateway) — so
-agent tool-calls stay tight, metadata returns clean JSON, and OCR transcribes
-without reasoning overhead.
+can send `enable_thinking:false` to turn it off). **`main-fast` and `main-metadata`
+always run without thinking** (suppressed at the gateway) — so `main-fast` is the
+fast/clean chat & tool path and metadata returns tidy JSON.
 
-`vision` only exists if `ALIAS_VISION` is set (a `role=vision` model) — via
-`setup.sh` → settings or `llm-models` → `v`. With the default `TEXT_ENGINE=mlx-lm`
-the text `main` is **text-only**; send images to `ocr` (documents) or `vision`
-(general). With **`TEXT_ENGINE=mlx-vlm`** the `main` is itself multimodal — send
-`image_url` straight to `main` (and `vision` becomes redundant; set `ALIAS_VISION=""`).
+**Images:** the unified mlx-vlm `main` is multimodal — send `image_url` straight to
+`main` (or `main-fast`). There is **no separate `vision` alias** (`ALIAS_VISION=""`);
+the dedicated `ocr` alias (GLM-OCR) is for best-quality document transcription.
 
 ### Authentication
 
@@ -60,7 +56,7 @@ put anything there.
 | Method & path                     | Use with model | Purpose                                  |
 |-----------------------------------|----------------|------------------------------------------|
 | `GET  /v1/models`                 | —              | List available aliases                   |
-| `POST /v1/chat/completions`       | `main`, `ocr`, `vision` | Chat (OpenAI). `stream: true`; image input for `ocr`/`vision` |
+| `POST /v1/chat/completions`       | `main`, `main-fast`, `ocr` | Chat (OpenAI). `stream: true`; `image_url` input for `main`/`main-fast`/`ocr` |
 | `POST /v1/completions`            | `main`         | Legacy text completion                   |
 | `POST /v1/messages`               | `main`         | **Anthropic** Messages API               |
 
@@ -75,12 +71,12 @@ curl -s http://mac.home.arpa:11434/v1/chat/completions \
   -H "Authorization: Bearer sk-local" -H "Content-Type: application/json" \
   -d '{"model":"main","messages":[{"role":"user","content":"Say hi"}]}'
 
-# vision / image Q&A (wakes the on-demand mlx-vlm backend; needs ALIAS_VISION set)
+# image Q&A — the unified main is multimodal (put the image BEFORE the text)
 curl -s http://mac.home.arpa:11434/v1/chat/completions \
   -H "Authorization: Bearer sk-local" -H "Content-Type: application/json" \
-  -d '{"model":"vision","messages":[{"role":"user","content":[
-        {"type":"text","text":"What is in this image?"},
-        {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}]}]}'
+  -d '{"model":"main","messages":[{"role":"user","content":[
+        {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}},
+        {"type":"text","text":"What is in this image?"}]}]}'
 ```
 
 ---
@@ -180,11 +176,11 @@ a local display — the JSON keys above are the contract.
 - **API Base URL:** `http://mac.home.arpa:11434/v1`
 - **API Key:** `sk-local`
 
-The models `main` (plus the `main-agents`/`main-metadata`/`main-ocr` presets) and
-`ocr` (and `vision` if enabled) appear in the model picker. For chat use `main`,
-which may emit reasoning that Open WebUI renders as a foldable "thinking" block;
-`main-agents`, `main-metadata` and `main-ocr` are thinking-off, so they return clean
-output with no thinking block. (Embeddings/STT are not served by this stack.)
+The models `main`, `main-fast`, `main-metadata` and `ocr` appear in the model picker.
+For chat use `main`, which may emit reasoning that Open WebUI renders as a foldable
+"thinking" block; `main-fast` and `main-metadata` are thinking-off, so they return
+clean output with no thinking block (`main-fast` is the fast non-reasoning chat path).
+(Embeddings/STT are not served by this stack.)
 
 ---
 
@@ -222,16 +218,38 @@ r = client.chat.completions.create(
 )
 print(r.choices[0].message.content)
 
-# vision / image Q&A (needs ALIAS_VISION set; wakes the on-demand mlx-vlm backend)
+# image Q&A — the unified main is multimodal (no separate vision alias).
+# Put the image BEFORE the text (Gemma multimodal recommendation).
 v = client.chat.completions.create(
-    model="vision",
+    model="main",
     messages=[{"role": "user", "content": [
-        {"type": "text", "text": "Was steht auf diesem Bild?"},
         {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
+        {"type": "text", "text": "Was steht auf diesem Bild?"},
     ]}],
 )
 print(v.choices[0].message.content)
+
+# override sampling per request (e.g. Gemma's top_k via extra_body):
+r = client.chat.completions.create(
+    model="main-fast",
+    messages=[{"role": "user", "content": "..."}],
+    temperature=1.0, top_p=0.95,
+    extra_body={"top_k": 64},
+)
 ```
+
+### Gemma multimodal tips
+
+- **Put image (and audio) content *before* the text** in the `content` array — Gemma's
+  recommended modality order.
+- **Sampling:** `main`/`main-fast` already default to Gemma's reference
+  (temp 1.0 / top_p 0.95 / top_k 64). `top_k` is not a native OpenAI field, so pass it
+  via `extra_body` when overriding per request.
+- **Image detail / resolution:** Gemma's per-image *visual token budget*
+  (`max_soft_tokens`, 70–1120 — higher for dense OCR, lower for captioning) is **not
+  exposed by mlx-vlm 0.6.2** — there is no per-request image-resolution knob in this
+  stack. For best document transcription use the dedicated `ocr` alias (GLM-OCR); the
+  unified `main` handles general image Q&A.
 
 ---
 

@@ -33,15 +33,16 @@ raise a couple of config keys.
   its own field). 16-bit KV cache (no KV quantization yet — mlx-lm issue #1308);
   RAM bounded via `MLXLM_PROMPT_CACHE_MB`. Stable and simple.
 - **LiteLLM gateway** on the public port (:11434): apps talk OpenAI `/v1` (and
-  Anthropic `/v1/messages`) to **stable aliases** — `main` (text), `ocr`, and
-  `vision`. The underlying model is swappable without the app noticing.
+  Anthropic `/v1/messages`) to **four stable aliases** — `main` (text + images),
+  `main-fast` (same, thinking-off), `main-metadata` (deterministic JSON) and `ocr`.
+  The underlying model is swappable without the app noticing.
 - **GLM-OCR** (0.9 B, ~2 GB) on-demand on :5002 via `mlx-vlm` — document OCR,
   #1 on OmniDocBench. The only vision model small enough to co-reside with the
   big text main.
-- **On-demand `vision`** on :5003 via `mlx-vlm` (opt-in, `ALIAS_VISION`): a
-  general image model (e.g. gemma-4, incl. the `gemma4_unified` 12B the text
-  engine can't load). mlx-vlm **does** KV quantization (`VISION_KV_BITS`,
-  TurboQuant) and a context cap. Wakes on the first image request, sleeps when idle.
+- **Dormant vision path:** a separate on-demand `vision` model/alias (`ALIAS_VISION`,
+  :5003) existed for the text-only `mlx-lm` mode. Under the default unified `mlx-vlm`
+  main (which does images itself) the **`vision` gateway alias is not exposed**; the
+  wrapper/daemon stay in the repo but unused (`ALIAS_VISION=""`).
 - **Model catalog + `llm-models` TUI**: download pre-converted MLX models from
   HuggingFace, pick the active text / ocr / vision model, manage your HF token.
   Only fully-downloaded models become selectable.
@@ -76,8 +77,8 @@ raise a couple of config keys.
 
 ```
 Public (apps point here):
-  com.local.litellm.proxy          :11434   LiteLLM gateway — aliases main / ocr / vision
-                                             (OpenAI /v1 + Anthropic /v1/messages)
+  com.local.litellm.proxy          :11434   LiteLLM gateway — aliases main / main-fast /
+                                             main-metadata / ocr (OpenAI /v1 + Anthropic /v1/messages)
 Always on (internal / support):
   com.local.mlxlm.serve            :18000   mlx_lm.server — the ONE text model
   com.local.glmocr.proxy           :5002    on-demand proxy for GLM-OCR
@@ -231,9 +232,10 @@ The catalog (`models/catalog.tsv`, seeded once to
 on HuggingFace** — there is **no local conversion**. Source is always
 HuggingFace; entries are repo-ids (`org/name`), not URLs.
 
-Three roles are selectable: **`text`** (served by `mlx_lm.server` as alias
-`main`), **`ocr`** and **`vision`** (both served by `mlx-vlm`, on-demand, as
-aliases `ocr` / `vision`).
+Three roles are selectable: **`text`** (alias `main`, plus the `main-fast` /
+`main-metadata` presets on the same model), **`ocr`** (alias `ocr`, on-demand) and
+**`vision`** (mlx-vlm machinery still in the repo but **not exposed as a gateway alias**
+under the unified mlx-vlm main).
 
 `llm-models` actions:
 
@@ -257,11 +259,11 @@ text+images main (`TEXT_ENGINE=mlx-vlm`), `mlxlm` = text-only (`TEXT_ENGINE=mlx-
 The old `vllm`/`vllm-mllm` values are **historical** (vllm-mlx is retired).
 
 **Per-model sampling** (temperature/top_p/…) defaults are injected into the
-LiteLLM `main` alias; clients can override per request. On `mlx_lm.server` the
-generation ceiling for `main` is `MLXLM_MAX_TOKENS` (default 16384 ≈ unrestricted
-for chat); the preset aliases `main-metadata`/`main-ocr`/`main-agents` are capped
-by `PRESET_METADATA_MAXTOK`/`PRESET_OCR_MAXTOK`/`PRESET_AGENTS_MAXTOK` for short,
-loop-safe output.
+LiteLLM `main` alias; clients can override per request. `main`/`main-fast` use
+Gemma's reference sampling (temp 1.0 / top_p 0.95 from the catalog + `top_k`=`GEMMA_TOP_K`
+via `extra_body`). On `mlx_lm.server` the generation ceiling for `main` is
+`MLXLM_MAX_TOKENS` (default 16384 ≈ unrestricted for chat); the `main-metadata` preset
+is capped by `PRESET_METADATA_MAXTOK` for short, loop-safe JSON.
 
 **HuggingFace token:** set it via `llm-models` → `t`. It is stored in the user's
 HF cache (`$HF_CACHE_DIR/.../token`, mode 600) — **never** in `macstudio.conf`
@@ -362,7 +364,7 @@ use the menu) to change a live box.
 | `HF_CACHE_DIR` | `/Users/mac/.cache/huggingface` | HF model cache (`HF_HOME`) + token store |
 | `ALIAS_MAIN` | `gemma4-26b` | Catalog id of the active text model (a VLM like gemma-4 under `mlx-vlm`; any text arch under `mlx-lm`) |
 | `ALIAS_OCR` | `glm-ocr` | Catalog id of the on-demand OCR model |
-| `ALIAS_VISION` | _(empty)_ | Catalog id of the on-demand vision model → alias `vision`; empty = vision off |
+| `ALIAS_VISION` | _(empty)_ | (Dormant) catalog id of an on-demand vision model. The `vision` **gateway alias is no longer emitted** under the unified mlx-vlm main — send images to `main` instead. Leave empty |
 | `MODEL_PIN_MAIN` | `1` | Keep the main model permanently warm |
 | `LITELLM_PORT` | `11434` | Public gateway port (apps use this) |
 | `VLLM_BACKEND_PORT` | `18000` | Internal text-engine port (legacy `VLLM_` name; mlx_lm.server binds it) |
@@ -377,13 +379,10 @@ use the menu) to change a live box.
 | `MLXLM_CHAT_TEMPLATE_ARGS` | _(empty)_ | mlx-lm `--chat-template-args` JSON, e.g. `{"enable_thinking":false}` |
 | `MLXVLM_MAIN_KV_BITS` / `_KV_SCHEME` | `8` / `uniform` | KV-quant for the **mlx-vlm** unified main (`turboquant` for fractional bits) |
 | `MLXVLM_MAIN_MAX_KV_SIZE` | _(empty)_ | mlx-vlm main context cap; raise to exploit KV-quant for big context |
-| `MLXVLM_MAIN_ENABLE_THINKING` | `1` | mlx-vlm main thinks by default (so `main` reasons). `main-agents` + `main-metadata` + `main-ocr` are forced thinking-off at the proxy; clients can override per request |
-| `PRESET_ALIASES` | `1` | Expose `main-agents` / `-metadata` / `-ocr` sampling presets (same loaded model) |
-| `PRESET_AGENTS_TEMP` / `_TOPP` | `0.3` / `0.9` | `main-agents` sampling — low temp for reliable tool calls (thinking-off + tool-tuned) |
-| `PRESET_AGENTS_FREQ` / `_MAXTOK` | `0.2` / `4096` | `main-agents` mild anti-repetition + runaway backstop (set FREQ 0 if tool JSON degrades) |
+| `MLXVLM_MAIN_ENABLE_THINKING` | `1` | mlx-vlm main thinks by default (so `main` reasons). `main-fast` + `main-metadata` are forced thinking-off at the proxy; clients can override per request |
+| `GEMMA_TOP_K` | `64` | Gemma reference top_k for `main`/`main-fast` (via `extra_body`; top_k is not a native OpenAI param). `0`/empty = off; inert at temperature 0 |
+| `PRESET_ALIASES` | `1` | Expose the preset aliases `main-fast` / `main-metadata` (same loaded model) |
 | `PRESET_METADATA_TEMP` / `_MAXTOK` | `0.0` / `2048` | `main-metadata` = paperless-ngx JSON: deterministic + tight cap (thinking-off) |
-| `PRESET_OCR_TEMP` / `_TOPP` | `0.2` / `0.9` | `main-ocr` (gemma document OCR) sampling — faithful but non-greedy (0.0 loops) |
-| `PRESET_OCR_FREQ` / `_MAXTOK` | `0.3` / `4096` | `main-ocr` anti-repetition (mlx-vlm has no repetition_penalty) + A4-page cap |
 | `GLMOCR_PUBLIC_PORT` | `5002` | Public GLM-OCR port (proxy) |
 | `GLMOCR_BACKEND_PORT` | `15002` | Internal GLM-OCR backend port |
 | `IDLE_TIMEOUT_GLMOCR` | `60` | Seconds before GLM-OCR sleeps; **`-1` = never sleep** |
@@ -520,7 +519,7 @@ On the Mac after `--apply`:
 | `hf auth login` / `hf download` fail with help text | huggingface_hub ≥ 1.0 renamed the CLI to `hf`. `git pull && --apply`. |
 | `main` flapping in `mlxlm.log` | No model downloaded yet, or `ALIAS_MAIN` points at a model that isn't `ok`. Run `llm-models` → `d` then `s`. |
 | Short answer comes back empty from a reasoning model | The model spent the token budget thinking. Raise `MLXLM_MAX_TOKENS` / `PRESET_METADATA_MAXTOK`, or set `MLXLM_CHAT_TEMPLATE_ARGS='{"enable_thinking":false}'`. |
-| Need image/vision input | The text `main` is text-only. Set a `vision` model (`llm-models` → `v`) and send `image_url` to model `vision`; or use `ocr` for documents. |
+| Need image/vision input | The unified mlx-vlm `main` is multimodal — send `image_url` straight to `main` (or `main-fast`), image **before** the text. For best document transcription use `ocr` (GLM-OCR). |
 | Download is slow / rate-limited | Set your HF token: `llm-models` → `t`. |
 | `memory_pressure` reports `Warn` with a model loaded | Use a smaller model, lower `MLXLM_PROMPT_CACHE_MB`, or `IOGPU_WIRED_LIMIT_MB` by 1024, via `setup.sh` menu 4. |
 | Mac doesn't come back after reboot / power loss | **FileVault is ON** and no console operator. Use `sudo fdesetup authrestart` for planned reboots; never plain `sudo reboot` on a headless FileVault Mac. |

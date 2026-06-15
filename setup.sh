@@ -87,17 +87,10 @@ CONFIG_KEYS=(
   MLXVLM_MAIN_KV_SCHEME
   MLXVLM_MAIN_MAX_KV_SIZE
   MLXVLM_MAIN_ENABLE_THINKING
+  GEMMA_TOP_K
   PRESET_ALIASES
   PRESET_METADATA_TEMP
   PRESET_METADATA_MAXTOK
-  PRESET_AGENTS_TEMP
-  PRESET_AGENTS_TOPP
-  PRESET_AGENTS_FREQ
-  PRESET_AGENTS_MAXTOK
-  PRESET_OCR_TEMP
-  PRESET_OCR_TOPP
-  PRESET_OCR_FREQ
-  PRESET_OCR_MAXTOK
   LITELLM_PORT
   GLMOCR_PUBLIC_PORT
   GLMOCR_BACKEND_PORT
@@ -188,17 +181,10 @@ config_default() {
     MLXVLM_MAIN_KV_SCHEME)       echo uniform ;;
     MLXVLM_MAIN_MAX_KV_SIZE)     echo "" ;;
     MLXVLM_MAIN_ENABLE_THINKING) echo 1 ;;
+    GEMMA_TOP_K)                 echo 64 ;;
     PRESET_ALIASES)              echo 1 ;;
     PRESET_METADATA_TEMP)        echo 0.0 ;;
     PRESET_METADATA_MAXTOK)      echo 2048 ;;
-    PRESET_AGENTS_TEMP)          echo 0.3 ;;
-    PRESET_AGENTS_TOPP)          echo 0.9 ;;
-    PRESET_AGENTS_FREQ)          echo 0.2 ;;
-    PRESET_AGENTS_MAXTOK)        echo 4096 ;;
-    PRESET_OCR_TEMP)             echo 0.2 ;;
-    PRESET_OCR_TOPP)             echo 0.9 ;;
-    PRESET_OCR_FREQ)             echo 0.3 ;;
-    PRESET_OCR_MAXTOK)           echo 4096 ;;
     LITELLM_PORT)                echo 11434 ;;
     GLMOCR_PUBLIC_PORT)          echo 5002 ;;
     GLMOCR_BACKEND_PORT)         echo 15002 ;;
@@ -284,18 +270,11 @@ config_hint() {
     MLXVLM_MAIN_KV_BITS)         echo "KV-cache quant bits for the mlx-vlm unified main: 8 (recommended), 4, or 3.5 with turboquant. empty=off. (Only when TEXT_ENGINE=mlx-vlm)" ;;
     MLXVLM_MAIN_KV_SCHEME)       echo "mlx-vlm main KV quant scheme: uniform | turboquant (fractional bits like 3.5)" ;;
     MLXVLM_MAIN_MAX_KV_SIZE)     echo "mlx-vlm main context cap (--max-kv-size); empty = model default. Raise to exploit KV-quant for big context on 32 GB" ;;
-    MLXVLM_MAIN_ENABLE_THINKING) echo "mlx-vlm main: 1 = think by default (default — so 'main' reasons; OpenWebUI shows it), 0 = off. main-agents + main-metadata + main-ocr are forced thinking-off at the proxy regardless; clients can override per request" ;;
-    PRESET_ALIASES)              echo "1 = also expose sampling-preset aliases (main-agents/-metadata/-ocr) — same loaded model, different default sampling" ;;
+    MLXVLM_MAIN_ENABLE_THINKING) echo "mlx-vlm main: 1 = think by default (default — so 'main' reasons; OpenWebUI shows it), 0 = off. main-fast + main-metadata are forced thinking-off at the proxy regardless; clients can override per request" ;;
+    GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off; inert at temperature 0 (so not applied to main-metadata)" ;;
+    PRESET_ALIASES)              echo "1 = also expose the preset aliases (main-fast/-metadata) — same loaded model, different default behaviour (main-fast = thinking-off, main-metadata = deterministic capped JSON)" ;;
     PRESET_METADATA_TEMP)        echo "alias 'main-metadata' temperature (paperless-ngx JSON output, deterministic; default 0.0 — safe because output is capped)" ;;
     PRESET_METADATA_MAXTOK)      echo "alias 'main-metadata' max_tokens cap (paperless JSON). 2048 — output is short JSON (<400 tok); the low ceiling also aborts a repetition loop sooner. metadata is thinking-OFF; capped (main uses MLXLM_MAX_TOKENS)" ;;
-    PRESET_AGENTS_TEMP)          echo "alias 'main-agents' temperature — low for reliable tool-call formatting, slight headroom for analysis/email (default 0.3). main-agents is thinking-OFF + tool-tuned" ;;
-    PRESET_AGENTS_TOPP)          echo "alias 'main-agents' top_p (default 0.9)" ;;
-    PRESET_AGENTS_FREQ)          echo "alias 'main-agents' frequency_penalty (mild anti-repetition; default 0.2). Set 0 if tool-call JSON formatting degrades" ;;
-    PRESET_AGENTS_MAXTOK)        echo "alias 'main-agents' max_tokens cap as a runaway backstop (default 4096 — long enough for an email/web analysis, bounds a loop)" ;;
-    PRESET_OCR_TEMP)             echo "alias 'main-ocr' temperature (gemma document transcription; default 0.2 — faithful but NOT greedy, since 0.0 is the most loop-prone)" ;;
-    PRESET_OCR_TOPP)             echo "alias 'main-ocr' top_p (default 0.9 — nucleus sampling helps escape repetition loops)" ;;
-    PRESET_OCR_FREQ)             echo "alias 'main-ocr' frequency_penalty — primary anti-repetition lever (default 0.3; mlx-vlm has no repetition_penalty)" ;;
-    PRESET_OCR_MAXTOK)           echo "alias 'main-ocr' max_tokens cap (default 4096 — covers a dense A4 page + bounds a runaway loop). main-ocr is thinking-OFF" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
     IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend sleeps (default 60); -1 = never sleep (stay warm)" ;;
     GLMOCR_MAX_TOKENS)           echo "Max output tokens for GLM-OCR (mlx-vlm default is only 2048 — a dense full page can exceed it and get truncated). Default 8192" ;;
@@ -781,7 +760,7 @@ CATALOG_FILE="$CATALOG_DIR/catalog.tsv"
 LITELLM_CONFIG_FILE=/usr/local/etc/litellm.config.yaml
 
 # catalog_field <id> <column-number> — print a single field from the live
-# catalog, skipping comment lines. Columns (schema v6):
+# catalog, skipping comment lines. Columns (schema v7):
 #   1 id  2 hf_repo  3 role  4 engine  5 quant  6 gb  7 gated
 #   8 reasoning_parser  9 tool_parser  10 max_kv_size  11 max_num_seqs
 #   12 rating  13 notes  14 temperature  15 top_p  16 frequency_penalty
@@ -948,7 +927,7 @@ render_litellm_config() {
   fi
   ocr_repo=$(catalog_repo "${ALIAS_OCR:-}")
 
-  # Per-model DEFAULT sampling (schema v6, cols 14-17) for the active main model.
+  # Per-model DEFAULT sampling (schema v7, cols 14-17) for the active main model.
   # We inject per-model default sampling into the LiteLLM alias; clients can
   # still override per request (drop_params drops anything the backend rejects).
   # Empty cell = omit (LiteLLM/backend default).
@@ -958,13 +937,18 @@ render_litellm_config() {
   m_freq=$(catalog_field "${ALIAS_MAIN:-}" 16)
   m_pres=$(catalog_field "${ALIAS_MAIN:-}" 17)
 
-  # emit_model <alias> <repo> <port> [temp] [top_p] [freq_pen] [pres_pen] [max_tok] [nothink]
+  # emit_model <alias> <repo> <port> [temp] [top_p] [freq_pen] [pres_pen] [max_tok] [nothink] [top_k]
   # One LiteLLM model_list entry; optional sampling lines only when non-empty.
-  # nothink (arg 9) non-empty -> inject extra_body to suppress the model's reasoning at
-  # the proxy (so clients like OpenWebUI never see a thinking block, and short-output
-  # tasks like paperless extraction aren't eaten by hidden think tokens). The wire form
-  # is ENGINE-SPECIFIC: mlx_vlm.server reads a TOP-LEVEL `enable_thinking`; mlx_lm.server
-  # reads it inside `chat_template_kwargs`. LiteLLM forwards extra_body verbatim.
+  # extra_body carries up to two things, merged into ONE object:
+  #   nothink (arg 9) non-empty -> suppress the model's reasoning at the proxy (so clients
+  #     like OpenWebUI never see a thinking block, and short-output tasks like paperless
+  #     extraction aren't eaten by hidden think tokens). The wire form is ENGINE-SPECIFIC:
+  #     mlx_vlm.server reads a TOP-LEVEL `enable_thinking`; mlx_lm.server reads it inside
+  #     `chat_template_kwargs`.
+  #   top_k (arg 10) non-empty -> Gemma's reference sampling. top_k is NOT a native OpenAI
+  #     param, so it MUST ride in extra_body (catalog has no top_k column). At temperature 0
+  #     it is inert, so we don't bother passing it to deterministic aliases.
+  # LiteLLM forwards extra_body verbatim (drop_params leaves it untouched).
   local _nothink_body='{"enable_thinking": false}'
   [ "${TEXT_ENGINE:-mlx-vlm}" = mlx-lm ] && _nothink_body='{"chat_template_kwargs": {"enable_thinking": false}}'
   emit_model() {
@@ -974,7 +958,19 @@ render_litellm_config() {
     [ -n "${6:-}" ] && printf '      frequency_penalty: %s\n' "$6"
     [ -n "${7:-}" ] && printf '      presence_penalty: %s\n' "$7"
     [ -n "${8:-}" ] && printf '      max_tokens: %s\n' "$8"
-    [ -n "${9:-}" ] && printf '      extra_body: %s\n' "$_nothink_body"
+    local _eb=""
+    if [ -n "${9:-}" ] && [ -n "${10:-}" ]; then
+      if [ "${TEXT_ENGINE:-mlx-vlm}" = mlx-lm ]; then
+        _eb=$(printf '{"chat_template_kwargs": {"enable_thinking": false}, "top_k": %s}' "${10}")
+      else
+        _eb=$(printf '{"enable_thinking": false, "top_k": %s}' "${10}")
+      fi
+    elif [ -n "${9:-}" ]; then
+      _eb="$_nothink_body"
+    elif [ -n "${10:-}" ]; then
+      _eb=$(printf '{"top_k": %s}' "${10}")
+    fi
+    [ -n "$_eb" ] && printf '      extra_body: %s\n' "$_eb"
     return 0
   }
   tmp=$(/usr/bin/mktemp -t macstudio-litellm)
@@ -982,33 +978,29 @@ render_litellm_config() {
     echo "# Managed by setup.sh -> render_litellm_config(). Do not edit by hand;"
     echo "# change aliases via 'llm-models'. Apps see only model_name aliases."
     echo "model_list:"
-    # main: thinking is left to the model/client (a reasoning model thinks by
-    # default; a client can pass enable_thinking per request).
-    # main-agents / -metadata / -ocr: thinking ALWAYS off at the proxy (emit_model arg 9).
-    emit_model main "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres"
-    # Sampling-preset aliases: SAME loaded gemma model, different DEFAULT sampling
+    # main: Gemma reference sampling (temp/top_p from catalog, top_k via extra_body);
+    # thinking is left to the model/client (a reasoning model thinks by default; a client
+    # can pass enable_thinking per request).
+    # main-fast / -metadata: thinking ALWAYS off at the proxy (emit_model arg 9).
+    emit_model main "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" "" "${GEMMA_TOP_K:-64}"
+    # Sampling-preset aliases: SAME loaded gemma model, different DEFAULT behaviour
     # (all share :18000 -> only ONE model stays resident). Apps pick the alias per
     # workload. mlx-vlm has NO repetition_penalty -> anti-loop = non-greedy temp +
     # frequency_penalty + a max_tokens backstop. Aliases:
-    #   main-agents   tool use / web / cron / email (low temp, no think, freq+cap backstop)
-    #   main-metadata paperless-ngx JSON (deterministic, no think, tight cap)
-    #   main-ocr      gemma document transcription (anti-loop sampling, A4-sized cap, no think)
+    #   main-fast     = exactly 'main' (Gemma reference sampling) but thinking OFF (fast,
+    #                   non-reasoning chat / tools / web / cron / email).
+    #   main-metadata = paperless-ngx JSON (deterministic temp 0 -> top_k inert, no think, tight cap).
     if [ "${PRESET_ALIASES:-1}" = 1 ]; then
-      emit_model main-agents   "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_AGENTS_TEMP:-0.3}"   "${PRESET_AGENTS_TOPP:-0.9}" "${PRESET_AGENTS_FREQ:-0.2}" "" "${PRESET_AGENTS_MAXTOK:-4096}" 1
+      emit_model main-fast     "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" 1 "${GEMMA_TOP_K:-64}"
       emit_model main-metadata "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_METADATA_TEMP:-0.0}" "" "" "" "${PRESET_METADATA_MAXTOK:-2048}" 1
-      emit_model main-ocr      "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_OCR_TEMP:-0.2}"      "${PRESET_OCR_TOPP:-0.9}"   "${PRESET_OCR_FREQ:-0.3}"    "" "${PRESET_OCR_MAXTOK:-4096}"    1
     fi
     if [ -n "$ocr_repo" ]; then
       printf '  - model_name: ocr\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
         "$ocr_repo" "${GLMOCR_PUBLIC_PORT:-5002}"
     fi
-    # On-demand vision (mlx-vlm): images via the 'vision' alias -> mlx_vlm.server
-    # (same on-demand proxy pattern as ocr; gemma4/gemma4_unified + KV-quant).
-    if [ -n "${ALIAS_VISION:-}" ]; then
-      local vision_repo; vision_repo=$(catalog_repo "${ALIAS_VISION}")
-      [ -n "$vision_repo" ] && printf '  - model_name: vision\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
-        "$vision_repo" "${VISION_PUBLIC_PORT:-5003}"
-    fi
+    # No 'vision' gateway alias: the unified mlx-vlm 'main' already does images, and the
+    # exposed set is intentionally main / main-fast / main-metadata / ocr only. The vision
+    # wrapper/daemon/role stay in the repo but dormant (ALIAS_VISION="").
     echo "litellm_settings:"
     echo "  drop_params: true"
     # Long docs/OCR generations can run minutes — raise the gateway timeout and
@@ -1669,7 +1661,7 @@ delete_local_model() {
 }
 
 catalog_add_entry() {
-  # Columns (schema v6): id|hf_repo|role|engine|quant|gb|gated|reasoning|tool|
+  # Columns (schema v7): id|hf_repo|role|engine|quant|gb|gated|reasoning|tool|
   #   max_kv|max_seqs|rating|notes|temperature|top_p|frequency_penalty|presence_penalty
   local id repo role engine quant gb gated rp tp
   read -r -p "new id (short slug): " id;       [ -z "$id" ] && return 0
@@ -1697,7 +1689,7 @@ catalog_add_entry() {
   fi
   # reasoning(8) tool(9) max_kv(10) max_seqs(11) left for per-model override later;
   # rating(12)=3; sampling cols temp(14) top_p(15) freq(16) pres(17) empty = global
-  # defaults. Trailing '||||' keeps the row at the full schema-v6 width (17 cols).
+  # defaults. Trailing '||||' keeps the row at the full schema-v7 width (17 cols).
   printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|||3|added via TUI||||\n' \
     "$id" "$repo" "$role" "$engine" "$quant" "$gb" "$gated" "$rp" "$tp" >> "$CATALOG_FILE"
   /bin/chmod 644 "$CATALOG_FILE"   # keep readable by the daemon user (mac)
