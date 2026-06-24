@@ -53,17 +53,21 @@ if [ "${#ARGS[@]}" -eq 0 ]; then
   exit 78
 fi
 
-echo "[start-infinity] serving embed='${EMBED_ID:-none}' rerank='${RERANK_ID:-none}' on 127.0.0.1:${INFINITY_BACKEND_PORT:-15004} (device=${INFINITY_DEVICE:-mps}, batch=${INFINITY_BATCH_SIZE:-16})"
+echo "[start-infinity] serving embed='${EMBED_ID:-none}' rerank='${RERANK_ID:-none}' on 127.0.0.1:${INFINITY_BACKEND_PORT:-15004} (device=${INFINITY_DEVICE:-mps}, dtype=${INFINITY_DTYPE:-float16}, batch=${INFINITY_BATCH_SIZE:-4})"
 
 # --no-bettertransformer: BetterTransformer needs `optimum`, which we deliberately
 # do NOT install (optimum 2.x dropped the `bettertransformer` submodule and is
 # incompatible with this infinity-emb build). It's a CUDA varlen path anyway —
 # irrelevant on Torch-MPS — so disable it to use the plain sentence-transformers
 # loader.
+# --dtype float16: load the BGE weights at half precision (~half the resident RAM
+# of float32). Single-user accuracy is unaffected; matters because this backend
+# co-resides with the big main model on 32 GB (keeps it out of swap).
 exec "$VENV_DIR/infinity/bin/infinity_emb" v2 \
   "${ARGS[@]}" \
   --host 127.0.0.1 \
   --port "${INFINITY_BACKEND_PORT:-15004}" \
   --device "${INFINITY_DEVICE:-mps}" \
-  --batch-size "${INFINITY_BATCH_SIZE:-16}" \
+  --dtype "${INFINITY_DTYPE:-float16}" \
+  --batch-size "${INFINITY_BATCH_SIZE:-4}" \
   --no-bettertransformer

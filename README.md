@@ -410,7 +410,8 @@ use the menu) to change a live box.
 | `IDLE_TIMEOUT_INFINITY` | `900` | Seconds before the embed/rerank backend sleeps; **`-1` = never** |
 | `STARTUP_TIMEOUT_INFINITY` | `180` | Infinity wake-up deadline (Torch/MPS load) |
 | `INFINITY_DEVICE` | `mps` | Infinity compute device (`mps` Apple GPU \| `cpu`) |
-| `INFINITY_BATCH_SIZE` | `16` | Infinity max batch size |
+| `INFINITY_DTYPE` | `float16` | Infinity model precision (`float16` ~half the RAM \| `float32`) |
+| `INFINITY_BATCH_SIZE` | `4` | Infinity max batch size (single-user default; raise for parallel load) |
 | `VISION_PUBLIC_PORT` / `VISION_BACKEND_PORT` | `5003` / `15003` | Public / internal vision (mlx-vlm) ports |
 | `IDLE_TIMEOUT_VISION` / `STARTUP_TIMEOUT_VISION` | `60` / `180` | Vision idle-to-sleep / wake deadline (VLM loads are slow) |
 | `VISION_KV_BITS` / `VISION_KV_SCHEME` | `8` / `uniform` | mlx-vlm KV quantization (`uniform` or `turboquant` for fractional bits) |

@@ -116,6 +116,7 @@ CONFIG_KEYS=(
   STARTUP_TIMEOUT_INFINITY
   INFINITY_DEVICE
   INFINITY_BATCH_SIZE
+  INFINITY_DTYPE
   OLLAMA_PORT
   OLLAMA_MODELS
   OLLAMA_MAX_LOADED_MODELS
@@ -218,7 +219,8 @@ config_default() {
     IDLE_TIMEOUT_INFINITY)       echo 900 ;;
     STARTUP_TIMEOUT_INFINITY)    echo 180 ;;
     INFINITY_DEVICE)             echo mps ;;
-    INFINITY_BATCH_SIZE)         echo 16 ;;
+    INFINITY_BATCH_SIZE)         echo 4 ;;
+    INFINITY_DTYPE)              echo float16 ;;
     OLLAMA_PORT)                 echo 11434 ;;
     OLLAMA_MODELS)               echo /Users/mac/.ollama/models ;;
     OLLAMA_MAX_LOADED_MODELS)    echo 2 ;;
@@ -308,7 +310,8 @@ config_hint() {
     ALIAS_RERANK)                echo "Catalog id of the reranker (role=rerank, engine infinity) -> LiteLLM alias 'rerank'. empty = rerank off" ;;
     IDLE_TIMEOUT_INFINITY)       echo "Seconds before the Infinity (embed+rerank) backend sleeps (default 900); -1 = never sleep" ;;
     INFINITY_DEVICE)             echo "Torch device for Infinity: mps (Apple GPU, default), cpu, or auto" ;;
-    INFINITY_BATCH_SIZE)         echo "Infinity max batch size per forward pass (default 16; lower if MPS memory is tight)" ;;
+    INFINITY_BATCH_SIZE)         echo "Infinity max batch size per forward pass (default 4 — plenty for a single user; raise for heavy parallel load, lower still if MPS memory is tight)" ;;
+    INFINITY_DTYPE)              echo "Infinity model weight precision: float16 (default — ~half the RAM of float32, ample for BGE) or float32" ;;
     OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: 10m (default), 1h, 24h, -1=forever" ;;
     OLLAMA_MAX_LOADED_MODELS)    echo "Max models in VRAM at once: 2 (default; e.g. text + OCR), 1 = single-model mode" ;;
     OLLAMA_KV_CACHE_TYPE)        echo "KV cache precision: q8_0 (recommended), q4_0 (aggressive), fp16 (default)" ;;
