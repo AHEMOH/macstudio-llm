@@ -34,6 +34,7 @@ ALWAYS_ON_LABELS=(
   com.local.litellm.proxy
   com.local.glmocr.proxy
   com.local.vision.proxy
+  com.local.infinity.proxy
   com.local.ollama.headless
   com.local.immich.proxy
   com.local.docling.proxy
@@ -52,6 +53,7 @@ ALWAYS_ON_LABELS=(
 ONDEMAND_LABELS=(
   com.local.glmocr.serve
   com.local.vision.serve
+  com.local.infinity.serve
   com.local.immich.ml
   com.local.docling.serve
 )
@@ -105,6 +107,15 @@ CONFIG_KEYS=(
   VISION_KV_SCHEME
   VISION_MAX_KV_SIZE
   VISION_ENABLE_THINKING
+  INSTALL_EMBED
+  ALIAS_EMBED
+  ALIAS_RERANK
+  INFINITY_PUBLIC_PORT
+  INFINITY_BACKEND_PORT
+  IDLE_TIMEOUT_INFINITY
+  STARTUP_TIMEOUT_INFINITY
+  INFINITY_DEVICE
+  INFINITY_BATCH_SIZE
   OLLAMA_PORT
   OLLAMA_MODELS
   OLLAMA_MAX_LOADED_MODELS
@@ -199,6 +210,15 @@ config_default() {
     VISION_KV_SCHEME)            echo uniform ;;
     VISION_MAX_KV_SIZE)          echo "" ;;
     VISION_ENABLE_THINKING)      echo 0 ;;
+    INSTALL_EMBED)               echo 1 ;;
+    ALIAS_EMBED)                 echo bge-m3 ;;
+    ALIAS_RERANK)                echo bge-reranker-v2-m3 ;;
+    INFINITY_PUBLIC_PORT)        echo 5004 ;;
+    INFINITY_BACKEND_PORT)       echo 15004 ;;
+    IDLE_TIMEOUT_INFINITY)       echo 900 ;;
+    STARTUP_TIMEOUT_INFINITY)    echo 180 ;;
+    INFINITY_DEVICE)             echo mps ;;
+    INFINITY_BATCH_SIZE)         echo 16 ;;
     OLLAMA_PORT)                 echo 11434 ;;
     OLLAMA_MODELS)               echo /Users/mac/.ollama/models ;;
     OLLAMA_MAX_LOADED_MODELS)    echo 2 ;;
@@ -283,6 +303,12 @@ config_hint() {
     VISION_KV_SCHEME)            echo "mlx-vlm KV quant scheme: uniform | turboquant (TurboQuant allows fractional bits like 3.5)" ;;
     VISION_MAX_KV_SIZE)          echo "mlx-vlm context cap (--max-kv-size) for the vision model; empty = model default" ;;
     VISION_ENABLE_THINKING)      echo "1 = enable the vision model's reasoning by default; 0 = off (faster captions)" ;;
+    INSTALL_EMBED)               echo "1 = run the on-demand Infinity backend serving the BGE embedder + reranker (LiteLLM aliases 'embed' + 'rerank'). Needs INSTALL_MLX=1 for the LiteLLM gateway" ;;
+    ALIAS_EMBED)                 echo "Catalog id of the embedding model (role=embed, engine infinity) -> LiteLLM alias 'embed'. empty = embeddings off" ;;
+    ALIAS_RERANK)                echo "Catalog id of the reranker (role=rerank, engine infinity) -> LiteLLM alias 'rerank'. empty = rerank off" ;;
+    IDLE_TIMEOUT_INFINITY)       echo "Seconds before the Infinity (embed+rerank) backend sleeps (default 900); -1 = never sleep" ;;
+    INFINITY_DEVICE)             echo "Torch device for Infinity: mps (Apple GPU, default), cpu, or auto" ;;
+    INFINITY_BATCH_SIZE)         echo "Infinity max batch size per forward pass (default 16; lower if MPS memory is tight)" ;;
     OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: 10m (default), 1h, 24h, -1=forever" ;;
     OLLAMA_MAX_LOADED_MODELS)    echo "Max models in VRAM at once: 2 (default; e.g. text + OCR), 1 = single-model mode" ;;
     OLLAMA_KV_CACHE_TYPE)        echo "KV cache precision: q8_0 (recommended), q4_0 (aggressive), fp16 (default)" ;;
@@ -481,6 +507,8 @@ load_config() {
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = mlx-vlm ]; } || continue ;;
       com.local.litellm.*|com.local.glmocr.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || continue ;;
+      com.local.infinity.*)
+        [ "${INSTALL_EMBED:-1}" = 1 ] || continue ;;
       com.local.vision.*)
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ -n "${ALIAS_VISION:-}" ]; } || continue ;;
       com.local.ollama.headless)
@@ -530,6 +558,8 @@ label_log() {
     com.local.litellm.proxy)     echo "$LOG_DIR/litellm.log" ;;
     com.local.glmocr.proxy)      echo "$LOG_DIR/glmocr-proxy.log" ;;
     com.local.glmocr.serve)      echo "$LOG_DIR/glmocr-serve.log" ;;
+    com.local.infinity.proxy)    echo "$LOG_DIR/infinity-proxy.log" ;;
+    com.local.infinity.serve)    echo "$LOG_DIR/infinity-serve.log" ;;
     com.local.vision.proxy)      echo "$LOG_DIR/vision-proxy.log" ;;
     com.local.vision.serve)      echo "$LOG_DIR/vision-serve.log" ;;
     com.local.ollama.headless)   echo "$LOG_DIR/ollama.log" ;;
@@ -860,6 +890,13 @@ ensure_python_venvs() {
   [ -n "${MLXLM_VERSION:-}" ] && mlxlm_spec="mlx-lm==${MLXLM_VERSION}"
   _ensure_venv mlxlm   bin:mlx_lm.server  "$mlxlm_spec" 'huggingface_hub[cli]'
 
+  # Embeddings + reranker: BGE pair served by Infinity (infinity-emb) on MPS,
+  # on-demand. Independent of the text engine; pulls torch, so only built when
+  # INSTALL_EMBED=1. The wrapper execs the 'infinity_emb' console script.
+  if [ "${INSTALL_EMBED:-1}" = 1 ]; then
+    _ensure_venv infinity bin:infinity_emb 'infinity-emb[all]' 'huggingface_hub[cli]'
+  fi
+
   # Version-sync: set MLXLM_VERSION + `--apply` to up/downgrade the text engine.
   if [ -n "${MLXLM_VERSION:-}" ] && [ -x "$vdir/mlxlm/bin/python" ]; then
     local cur_m
@@ -918,7 +955,7 @@ ensure_model_catalog() {
 # and `vision` (on-demand mlx-vlm proxies). Only rewrites + reloads on a real change.
 render_litellm_config() {
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
-  local main_repo ocr_repo tmp
+  local main_repo ocr_repo embed_repo rerank_repo tmp
   main_repo=$(catalog_repo "${ALIAS_MAIN:-}")
   if [ -z "$main_repo" ]; then
     warn "ALIAS_MAIN='${ALIAS_MAIN:-}' has no catalog repo — LiteLLM config not (re)written"
@@ -926,6 +963,9 @@ render_litellm_config() {
     return 0
   fi
   ocr_repo=$(catalog_repo "${ALIAS_OCR:-}")
+  # Embeddings + reranking (BGE pair) served by the on-demand Infinity backend.
+  embed_repo=$(catalog_repo "${ALIAS_EMBED:-}")
+  rerank_repo=$(catalog_repo "${ALIAS_RERANK:-}")
 
   # Per-model DEFAULT sampling (schema v7, cols 14-17) for the active main model.
   # We inject per-model default sampling into the LiteLLM alias; clients can
@@ -998,9 +1038,24 @@ render_litellm_config() {
       printf '  - model_name: ocr\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
         "$ocr_repo" "${GLMOCR_PUBLIC_PORT:-5002}"
     fi
-    # No 'vision' gateway alias: the unified mlx-vlm 'main' already does images, and the
-    # exposed set is intentionally main / main-fast / main-metadata / ocr only. The vision
-    # wrapper/daemon/role stay in the repo but dormant (ALIAS_VISION="").
+    # Embeddings + reranking via the on-demand Infinity backend (BGE pair on MPS).
+    # LiteLLM's 'infinity/<served-name>' provider posts to <api_base>/embeddings and
+    # <api_base>/rerank (api_base = the on-demand PROXY port — the FIRST call wakes the
+    # backend). The served-name after 'infinity/' MUST equal start-infinity.sh's
+    # --served-model-name (i.e. the catalog id). model_info.mode lets LiteLLM route and
+    # list them correctly. Emitted only when the catalog id resolves (download first).
+    if [ "${INSTALL_EMBED:-1}" = 1 ] && [ -n "$embed_repo" ]; then
+      printf '  - model_name: embed\n    litellm_params:\n      model: infinity/%s\n      api_base: http://127.0.0.1:%s\n      api_key: dummy\n    model_info:\n      mode: embedding\n' \
+        "${ALIAS_EMBED}" "${INFINITY_PUBLIC_PORT:-5004}"
+    fi
+    if [ "${INSTALL_EMBED:-1}" = 1 ] && [ -n "$rerank_repo" ]; then
+      printf '  - model_name: rerank\n    litellm_params:\n      model: infinity/%s\n      api_base: http://127.0.0.1:%s\n      api_key: dummy\n    model_info:\n      mode: rerank\n' \
+        "${ALIAS_RERANK}" "${INFINITY_PUBLIC_PORT:-5004}"
+    fi
+    # No 'vision' gateway alias: the unified mlx-vlm 'main' already does images, so the
+    # chat set is intentionally main / main-fast / main-metadata / ocr (plus the
+    # embed / rerank utility aliases above). The vision wrapper/daemon/role stay in the
+    # repo but dormant (ALIAS_VISION="").
     echo "litellm_settings:"
     echo "  drop_params: true"
     # Long docs/OCR generations can run minutes — raise the gateway timeout and
@@ -1016,7 +1071,7 @@ render_litellm_config() {
   fi
   /usr/bin/install -m 644 "$tmp" "$LITELLM_CONFIG_FILE"
   /bin/rm -f "$tmp"
-  ok "litellm config written → $LITELLM_CONFIG_FILE (main=${ALIAS_MAIN}, ocr=${ALIAS_OCR:-none})"
+  ok "litellm config written → $LITELLM_CONFIG_FILE (main=${ALIAS_MAIN}, ocr=${ALIAS_OCR:-none}, embed=${ALIAS_EMBED:-none}, rerank=${ALIAS_RERANK:-none})"
   if daemon_loaded com.local.litellm.proxy; then
     /bin/launchctl kickstart -k system/com.local.litellm.proxy >/dev/null 2>&1 \
       && ok "restarted litellm to pick up new routing"
@@ -1111,6 +1166,10 @@ render_all_plists() {
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = mlx-vlm ]; } || { remove_plist "$label"; continue; } ;;
       com.local.litellm.*|com.local.glmocr.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
+      com.local.infinity.*)
+        # On-demand BGE embedder + reranker (Infinity, MPS). Independent of the
+        # text engine, but only reachable through the LiteLLM gateway.
+        [ "${INSTALL_EMBED:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.vision.*)
         # On-demand vision (mlx-vlm) — only when a model is assigned (redundant under mlx-vlm main).
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ -n "${ALIAS_VISION:-}" ]; } || { remove_plist "$label"; continue; } ;;
@@ -1537,7 +1596,7 @@ download_model() {
   rc=${PIPESTATUS[0]}
   out=$(/usr/bin/tail -40 "$logf" 2>/dev/null)
   if [ "$rc" -eq 0 ] && [ "$(model_status "$repo")" = ok ]; then
-    ok "downloaded + verified '$id' — selectable now ('s $id' for main, 'o $id' for ocr)"
+    ok "downloaded + verified '$id' — selectable now ('s'/'o'/'v'/'m'/'k' $id for main/ocr/vision/embed/rerank)"
     return 0
   fi
   # Classify the failure so a dead list-item explains itself.
@@ -1567,9 +1626,12 @@ set_model_alias() {
     main)   key=ALIAS_MAIN;   want_role=text ;;
     ocr)    key=ALIAS_OCR;    want_role=ocr  ;;
     vision) key=ALIAS_VISION; want_role=vision ;;
+    embed)  key=ALIAS_EMBED;  want_role=embed ;;
+    rerank) key=ALIAS_RERANK; want_role=rerank ;;
     *) err "bad slot: $slot"; return 1 ;;
   esac
-  # Roles: text -> 'main' (mlx_lm.server), ocr -> 'ocr' + vision -> 'vision' (both mlx-vlm).
+  # Roles: text -> 'main' (mlx_lm.server), ocr -> 'ocr' + vision -> 'vision' (both mlx-vlm),
+  # embed -> 'embed' + rerank -> 'rerank' (both the Infinity backend).
   role=$(catalog_role "$id"); role=${role:-text}
   if [ "$role" != "$want_role" ]; then
     err "'$id' has role '$role' but slot '$slot' needs role '$want_role' — wrong list"
@@ -1583,8 +1645,9 @@ set_model_alias() {
   # main runs on TEXT_ENGINE; ocr/vision always run on mlx-vlm.
   local _notes _broken=0 _check_engine
   case "$slot" in
-    main) _check_engine="${TEXT_ENGINE:-mlx-vlm}" ;;
-    *)    _check_engine="mlx-vlm" ;;
+    main)         _check_engine="${TEXT_ENGINE:-mlx-vlm}" ;;
+    embed|rerank) _check_engine="infinity" ;;
+    *)            _check_engine="mlx-vlm" ;;
   esac
   _notes=$(catalog_field "$id" 13)
   if printf '%s' "$_notes" | /usr/bin/grep -qiE 'BROKEN([^[]|$)'; then
@@ -1620,6 +1683,11 @@ set_model_alias() {
       /bin/launchctl stop com.local.vision.serve >/dev/null 2>&1 || true
       ok "stopped vision backend; next image request wakes it with the new model"
     fi
+  elif [ "$slot" = embed ] || [ "$slot" = rerank ]; then
+    if daemon_running com.local.infinity.serve; then
+      /bin/launchctl stop com.local.infinity.serve >/dev/null 2>&1 || true
+      ok "stopped Infinity backend; next embed/rerank request wakes it with the new model"
+    fi
   fi
 }
 
@@ -1629,7 +1697,7 @@ cli_set_model() {
   # (downloaded, role match, BROKEN refusal). Usage: --set-model <slot> <id>.
   INTERACTIVE=0
   load_config
-  [ "$#" -eq 2 ] || { err "usage: --set-model <main|ocr|vision> <id>"; exit 2; }
+  [ "$#" -eq 2 ] || { err "usage: --set-model <main|ocr|vision|embed|rerank> <id>"; exit 2; }
   set_model_alias "$1" "$2" || exit 1
 }
 
@@ -1792,14 +1860,14 @@ menu_models() {
   while true; do
     clear 2>/dev/null || true
     printf "${C_BOLD}── Models & aliases ───────────────────────────${C_RST}\n"
-    printf "Active:  main=%s  ocr=%s  vision=%s\n" \
-      "${ALIAS_MAIN:-none}" "${ALIAS_OCR:-none}" "${ALIAS_VISION:-off}"
-    printf "${C_DIM}(ONE text model loads on the active text engine; ocr + vision are on-demand mlx-vlm)${C_RST}\n\n"
+    printf "Active:  main=%s  ocr=%s  vision=%s  embed=%s  rerank=%s\n" \
+      "${ALIAS_MAIN:-none}" "${ALIAS_OCR:-none}" "${ALIAS_VISION:-off}" "${ALIAS_EMBED:-off}" "${ALIAS_RERANK:-off}"
+    printf "${C_DIM}(ONE text model loads on the active text engine; ocr + vision + embed/rerank are on-demand)${C_RST}\n\n"
     print_catalog_table
     printf "\nSTATUS ok = downloaded+verified (only ok is selectable).  FLAG: ${C_RED}BROKEN${C_RST}=not selectable  ${C_GRN}REC${C_RST}=recommended (rating 5).\n"
-    printf "Roles: text -> 's' (alias main)   ocr -> 'o' (alias ocr)   vision -> 'v' (alias vision). Source: HuggingFace repo-ids.\n"
+    printf "Roles: text -> 's' (main)   ocr -> 'o'   vision -> 'v'   embed -> 'm'   rerank -> 'k'. Source: HuggingFace repo-ids.\n"
     printf "Actions:  i <id> info   d <id> download   s <id> set TEXT/main   o <id> set OCR   v <id> set VISION\n"
-    printf "          a add   e <id> edit   x <id> remove   r <id> delete-local   t HF token   q back\n"
+    printf "          m <id> set EMBED   k <id> set RERANK   a add   e <id> edit   x <id> remove   r <id> delete-local   t HF token   q back\n"
     read -r -p "models> " line || return 0
     local cmd arg
     cmd=$(printf '%s' "$line" | /usr/bin/awk '{print $1}')
@@ -1810,6 +1878,8 @@ menu_models() {
       s) set_model_alias main "$arg";   pause_enter ;;
       o) set_model_alias ocr "$arg";    pause_enter ;;
       v) set_model_alias vision "$arg"; pause_enter ;;
+      m) set_model_alias embed "$arg";  pause_enter ;;
+      k) set_model_alias rerank "$arg"; pause_enter ;;
       a) catalog_add_entry;            pause_enter ;;
       e) catalog_edit_entry "$arg";    pause_enter ;;
       x) catalog_remove_entry "$arg";  pause_enter ;;
@@ -2061,7 +2131,7 @@ MacStudio LLM Server — setup.sh v${SCRIPT_VERSION}
   sudo bash setup.sh             Interactive TUI (recommended)
   sudo bash setup.sh --apply     Non-interactive install/update (no prompts)
   sudo bash setup.sh --status    Print live status and exit
-  sudo bash setup.sh --set-model <main|ocr|vision> <id>
+  sudo bash setup.sh --set-model <main|ocr|vision|embed|rerank> <id>
                                  Switch a model slot non-interactively (same
                                  validation as the TUI; used by the MQTT bridge)
   sudo bash setup.sh --help      Show this help

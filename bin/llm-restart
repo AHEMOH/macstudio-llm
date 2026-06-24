@@ -22,6 +22,8 @@ label_for() {
     immich)          echo com.local.immich.ml ;;
     docling-proxy)   echo com.local.docling.proxy ;;
     docling)         echo com.local.docling.serve ;;
+    infinity-proxy)  echo com.local.infinity.proxy ;;
+    infinity)        echo com.local.infinity.serve ;;
     node)            echo com.local.node.exporter ;;
     silicon)         echo com.local.silicon.exporter ;;
     ollama-exporter) echo com.local.ollama.exporter ;;
@@ -32,8 +34,9 @@ label_for() {
 }
 
 ALL_SHORT_NAMES=(ollama immich-proxy immich docling-proxy docling \
+                 infinity-proxy infinity \
                  node silicon ollama-exporter watchdog preventsleep)
-ALL_ALWAYS_ON=(ollama immich-proxy docling-proxy node silicon ollama-exporter watchdog preventsleep)
+ALL_ALWAYS_ON=(ollama immich-proxy docling-proxy infinity-proxy node silicon ollama-exporter watchdog preventsleep)
 
 if [ $# -eq 0 ] || [ "${1:-}" = all ]; then
   set -- "${ALL_ALWAYS_ON[@]}"

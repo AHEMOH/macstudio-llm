@@ -3,8 +3,9 @@
 Headless Apple Silicon Mac as an **MLX inference server**: **one unified
 multimodal model permanently warm** — by default **gemma-4-26b on `mlx_vlm.server`**,
 which handles **text *and* images in the same chat** plus tool calling, with KV-cache
-quantization — a **LiteLLM gateway** that gives apps stable aliases, and an on-demand
-**GLM-OCR** model for document OCR. Plus optional companion services (image AI,
+quantization — a **LiteLLM gateway** that gives apps stable aliases, an on-demand
+**GLM-OCR** model for document OCR, and an on-demand **BGE embeddings + reranker**
+pair (for RAG). Plus optional companion services (image AI,
 document conversion) that sleep when idle and wake on first request. Runs fully
 unattended: no GUI, no login, auto-restart on power loss, weekly self-update.
 
@@ -18,7 +19,8 @@ raise a couple of config keys.
 > Flip to **`mlx-lm`** (Apple `mlx_lm.server`) for a text-only main that **batches**
 > parallel requests and supports broad archs (granite/glm) — but no images, no KV-quant.
 > One text daemon runs at a time; `--apply` to switch or roll back. Either way only
-> **one big model** is in memory (GLM-OCR is the lone on-demand extra).
+> **one big model** is in memory (GLM-OCR and the small BGE embed/rerank pair are the
+> only on-demand extras).
 
 > **Why not Ollama?** Ollama bakes context length into the model load (every
 > `num_ctx` change = a 30–60 s reload). `mlx_lm.server` keeps one model warm and
@@ -33,19 +35,25 @@ raise a couple of config keys.
   its own field). 16-bit KV cache (no KV quantization yet — mlx-lm issue #1308);
   RAM bounded via `MLXLM_PROMPT_CACHE_MB`. Stable and simple.
 - **LiteLLM gateway** on the public port (:11434): apps talk OpenAI `/v1` (and
-  Anthropic `/v1/messages`) to **four stable aliases** — `main` (text + images),
-  `main-fast` (same, thinking-off), `main-metadata` (deterministic JSON) and `ocr`.
+  Anthropic `/v1/messages`) to **six stable aliases** — `main` (text + images),
+  `main-fast` (same, thinking-off), `main-metadata` (deterministic JSON), `ocr`,
+  `embed` (BGE-M3 embeddings) and `rerank` (BGE reranker).
   The underlying model is swappable without the app noticing.
 - **GLM-OCR** (0.9 B, ~2 GB) on-demand on :5002 via `mlx-vlm` — document OCR,
   #1 on OmniDocBench. The only vision model small enough to co-reside with the
   big text main.
+- **Embeddings + rerank** (opt-in `INSTALL_EMBED=1`, on by default): **BAAI/bge-m3**
+  (1024-dim multilingual dense embeddings, `embed` alias) + **BAAI/bge-reranker-v2-m3**
+  (cross-encoder, `rerank` alias) served together by **Infinity** in one Torch-MPS
+  process, on-demand on :5004. Both small (~2 GB each) — they co-reside with the
+  big main like GLM-OCR. Reachable via LiteLLM `/v1/embeddings` and `/v1/rerank`.
 - **Dormant vision path:** a separate on-demand `vision` model/alias (`ALIAS_VISION`,
   :5003) existed for the text-only `mlx-lm` mode. Under the default unified `mlx-vlm`
   main (which does images itself) the **`vision` gateway alias is not exposed**; the
   wrapper/daemon stay in the repo but unused (`ALIAS_VISION=""`).
 - **Model catalog + `llm-models` TUI**: download pre-converted MLX models from
-  HuggingFace, pick the active text / ocr / vision model, manage your HF token.
-  Only fully-downloaded models become selectable.
+  HuggingFace, pick the active text / ocr / vision / embed / rerank model, manage
+  your HF token. Only fully-downloaded models become selectable.
 - **30 GB GPU wired memory limit** (on a 32 GB box) + OS trim → nearly the whole
   machine is available to the model.
 - **On-demand companions** on :3003 (immich-ml) and :5001 (docling-serve),
@@ -78,10 +86,12 @@ raise a couple of config keys.
 ```
 Public (apps point here):
   com.local.litellm.proxy          :11434   LiteLLM gateway — aliases main / main-fast /
-                                             main-metadata / ocr (OpenAI /v1 + Anthropic /v1/messages)
+                                             main-metadata / ocr / embed / rerank
+                                             (OpenAI /v1 + Anthropic /v1/messages)
 Always on (internal / support):
   com.local.mlxlm.serve            :18000   mlx_lm.server — the ONE text model
   com.local.glmocr.proxy           :5002    on-demand proxy for GLM-OCR
+  com.local.infinity.proxy         :5004    on-demand proxy for embed + rerank (Infinity)
   com.local.vision.proxy           :5003    on-demand proxy for the vision model (if ALIAS_VISION set)
   com.local.immich.proxy           :3003    on-demand proxy (optional)
   com.local.docling.proxy          :5001    on-demand proxy (optional)
@@ -91,6 +101,7 @@ Always on (internal / support):
 
 Registered but sleeping until requested:
   com.local.glmocr.serve           :15002   GLM-OCR backend (mlx-vlm)
+  com.local.infinity.serve         :15004   Infinity embed + rerank backend (Torch MPS)
   com.local.vision.serve           :15003   vision backend (mlx-vlm)
   com.local.immich.ml              :13003   immich-ml backend (optional)
   com.local.docling.serve          :15001   docling-serve backend (optional)
@@ -188,6 +199,10 @@ llm-models                    # opens the model & alias manager
 #   s gemma4-26b              → set it as the active 'main' (text+images under mlx-vlm)
 #   d glm-ocr                 → download GLM-OCR (~2 GB)
 #   o glm-ocr                 → set it as the active 'ocr' model
+#   d bge-m3                  → download the embedder (~2 GB, ungated)
+#   m bge-m3                  → set it as the active 'embed' model
+#   d bge-reranker-v2-m3      → download the matching reranker (~2 GB, ungated)
+#   k bge-reranker-v2-m3      → set it as the active 'rerank' model
 #   q                         → back
 # (Prefer a text-only main that batches? Set TEXT_ENGINE=mlx-lm and pick e.g. granite41-30b.)
 ```
@@ -287,10 +302,11 @@ present):
 |---|---|---|
 | **Xcode Command Line Tools** | `softwareupdate -i` (headless) | unless present |
 | **Homebrew** | official installer, `NONINTERACTIVE=1`, as `TARGET_USER` | if absent |
-| **python@3.12** | `brew install python@3.12` (MLX/docling wheels need ≥3.10) | if `INSTALL_MLX=1` or `INSTALL_DOCLING=1` |
+| **python@3.12** | `brew install python@3.12` (MLX/docling wheels need ≥3.10) | if `INSTALL_MLX=1`, `INSTALL_EMBED=1` or `INSTALL_DOCLING=1` |
 | **mlxlm venv** | `pip install mlx-lm==$MLXLM_VERSION huggingface_hub[cli]` in `$VENV_DIR/mlxlm` | if `INSTALL_MLX=1` |
 | **litellm venv** | `pip install 'litellm[proxy]'` in `$VENV_DIR/litellm` | if `INSTALL_MLX=1` |
 | **mlxvlm venv** | `pip install mlx-vlm huggingface_hub[cli]` in `$VENV_DIR/mlxvlm` | if `INSTALL_MLX=1` |
+| **infinity venv** | `pip install 'infinity-emb[all]' huggingface_hub[cli]` in `$VENV_DIR/infinity` | if `INSTALL_EMBED=1` |
 | **node_exporter** | `brew install node_exporter` | if `INSTALL_EXPORTERS=1` (off by default) |
 | **mactop + macmon** | `brew install mactop macmon` | if `INSTALL_TUI=1` |
 | **docling-serve venv** | `pip install 'docling[…]' 'docling-serve[ui]'` | if `INSTALL_DOCLING=1` |
@@ -334,7 +350,7 @@ TUI main menu:
 ```
 1) Install / update everything
 2) Select services to install…   (MLX / Ollama / immich / docling / exporters / watchdog)
-3) Models & aliases…             (download MLX models, pick main / ocr / vision)
+3) Models & aliases…             (download MLX models, pick main / ocr / vision / embed / rerank)
 4) Change settings…
 5) Service control…
 6) Run weekly autoupdate now
@@ -364,6 +380,8 @@ use the menu) to change a live box.
 | `HF_CACHE_DIR` | `/Users/mac/.cache/huggingface` | HF model cache (`HF_HOME`) + token store |
 | `ALIAS_MAIN` | `gemma4-26b` | Catalog id of the active text model (a VLM like gemma-4 under `mlx-vlm`; any text arch under `mlx-lm`) |
 | `ALIAS_OCR` | `glm-ocr` | Catalog id of the on-demand OCR model |
+| `ALIAS_EMBED` | `bge-m3` | Catalog id of the on-demand embedder (Infinity, alias `embed`). Empty = no embed alias |
+| `ALIAS_RERANK` | `bge-reranker-v2-m3` | Catalog id of the on-demand reranker (Infinity, alias `rerank`). Empty = no rerank alias |
 | `ALIAS_VISION` | _(empty)_ | (Dormant) catalog id of an on-demand vision model. The `vision` **gateway alias is no longer emitted** under the unified mlx-vlm main — send images to `main` instead. Leave empty |
 | `MODEL_PIN_MAIN` | `1` | Keep the main model permanently warm |
 | `LITELLM_PORT` | `11434` | Public gateway port (apps use this) |
@@ -387,6 +405,12 @@ use the menu) to change a live box.
 | `GLMOCR_BACKEND_PORT` | `15002` | Internal GLM-OCR backend port |
 | `IDLE_TIMEOUT_GLMOCR` | `60` | Seconds before GLM-OCR sleeps; **`-1` = never sleep** |
 | `STARTUP_TIMEOUT_GLMOCR` | `120` | GLM-OCR wake-up deadline |
+| `INFINITY_PUBLIC_PORT` | `5004` | Public embed/rerank port (proxy) |
+| `INFINITY_BACKEND_PORT` | `15004` | Internal Infinity backend port |
+| `IDLE_TIMEOUT_INFINITY` | `900` | Seconds before the embed/rerank backend sleeps; **`-1` = never** |
+| `STARTUP_TIMEOUT_INFINITY` | `180` | Infinity wake-up deadline (Torch/MPS load) |
+| `INFINITY_DEVICE` | `mps` | Infinity compute device (`mps` Apple GPU \| `cpu`) |
+| `INFINITY_BATCH_SIZE` | `16` | Infinity max batch size |
 | `VISION_PUBLIC_PORT` / `VISION_BACKEND_PORT` | `5003` / `15003` | Public / internal vision (mlx-vlm) ports |
 | `IDLE_TIMEOUT_VISION` / `STARTUP_TIMEOUT_VISION` | `60` / `180` | Vision idle-to-sleep / wake deadline (VLM loads are slow) |
 | `VISION_KV_BITS` / `VISION_KV_SCHEME` | `8` / `uniform` | mlx-vlm KV quantization (`uniform` or `turboquant` for fractional bits) |
@@ -399,6 +423,7 @@ use the menu) to change a live box.
 | `OLLAMA_*` | — | Only used when `INSTALL_OLLAMA=1` |
 | `INSTALL_IMMICH` / `INSTALL_DOCLING` / `INSTALL_TUI` / `INSTALL_WATCHDOG` | `1` | Toggle optional pieces |
 | `INSTALL_EXPORTERS` | `0` | Prometheus exporters — **off by default** |
+| `INSTALL_EMBED` | `1` | BGE embeddings + reranker via Infinity (`embed`/`rerank` aliases) — on by default |
 | `INSTALL_MQTT` | `0` | MQTT bridge → Home Assistant — **off by default** |
 | `MQTT_HOST` / `MQTT_PORT` | `mqtt.home.arpa` / `1883` | Broker (empty host = bridge idles) |
 | `MQTT_USER` / `MQTT_PASS` | _(empty)_ | Broker auth (plaintext in the 644 conf) |

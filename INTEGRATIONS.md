@@ -27,8 +27,10 @@ behind an alias can be swapped (`llm-models`) without the app noticing.
 | `main-fast` | Exactly `main` but **thinking OFF** — fast, non-reasoning chat / tool use / web / cron / email | same as `main` | **same loaded model**, thinking-off |
 | `main-metadata` | `main` for **paperless-ngx JSON**: deterministic (temp 0) + tight `max_tokens` cap, **no thinking** (title/date/tags JSON) | same as `main` | **same loaded model**, different default sampling |
 | `ocr`  | Dedicated OCR (document → text), best quality | `/v1/chat/completions` (image input) | GLM-OCR via mlx-vlm (on-demand) |
+| `embed` | Dense text **embeddings** for RAG (1024-dim, multilingual) | `/v1/embeddings` | BAAI/bge-m3 via Infinity (on-demand) |
+| `rerank` | Cross-encoder **reranker** (scores docs against a query) | `/v1/rerank`, `/rerank` | BAAI/bge-reranker-v2-m3 via Infinity (on-demand) |
 
-The gateway exposes **exactly these four aliases**. The `main*` aliases all point at
+The gateway exposes **exactly these six aliases**. The `main*` aliases all point at
 the **one** loaded model — they only differ in DEFAULT sampling and thinking, so
 picking one does **not** load a second model. `main` and `main-fast` share Gemma's
 reference sampling (**temperature 1.0 / top_p 0.95 / top_k 64**); `main`/`main-fast`
@@ -59,6 +61,8 @@ put anything there.
 | `POST /v1/chat/completions`       | `main`, `main-fast`, `ocr` | Chat (OpenAI). `stream: true`; `image_url` input for `main`/`main-fast`/`ocr` |
 | `POST /v1/completions`            | `main`         | Legacy text completion                   |
 | `POST /v1/messages`               | `main`         | **Anthropic** Messages API               |
+| `POST /v1/embeddings`             | `embed`        | Dense embeddings (OpenAI embeddings API) |
+| `POST /v1/rerank` (or `/rerank`)  | `rerank`       | Rerank documents against a query         |
 
 ### Quick smoke tests
 
@@ -77,6 +81,18 @@ curl -s http://mac.home.arpa:11434/v1/chat/completions \
   -d '{"model":"main","messages":[{"role":"user","content":[
         {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}},
         {"type":"text","text":"What is in this image?"}]}]}'
+
+# embeddings — BGE-M3 dense vectors (1024-dim) for RAG (first call wakes Infinity)
+curl -s http://mac.home.arpa:11434/v1/embeddings \
+  -H "Authorization: Bearer sk-local" -H "Content-Type: application/json" \
+  -d '{"model":"embed","input":["hallo welt","the quick brown fox"]}'
+
+# rerank — score documents against a query, return the top matches
+curl -s http://mac.home.arpa:11434/v1/rerank \
+  -H "Authorization: Bearer sk-local" -H "Content-Type: application/json" \
+  -d '{"model":"rerank","query":"Wie ist das Wetter?",
+       "documents":["Es regnet heute.","Die Katze schläft.","Morgen wird es sonnig."],
+       "top_n":2}'
 ```
 
 ---
