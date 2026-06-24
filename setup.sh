@@ -893,8 +893,15 @@ ensure_python_venvs() {
   # Embeddings + reranker: BGE pair served by Infinity (infinity-emb) on MPS,
   # on-demand. Independent of the text engine; pulls torch, so only built when
   # INSTALL_EMBED=1. The wrapper execs the 'infinity_emb' console script.
+  #   - extras [torch,server] (NOT [all]): the torch/MPS backend + the v2 HTTP
+  #     server, WITHOUT 'optimum'. optimum 2.x dropped the `bettertransformer`
+  #     submodule that this infinity-emb build imports, so [all] yields a backend
+  #     that crashes on startup. We don't use BetterTransformer (CUDA-only varlen)
+  #     — the wrapper also passes --no-bettertransformer.
+  #   - click<8.2: typer 0.12.x is incompatible with click >= 8.2 ("Secondary
+  #     flag is not valid for non-boolean flag"); pin keeps the CLI parseable.
   if [ "${INSTALL_EMBED:-1}" = 1 ]; then
-    _ensure_venv infinity bin:infinity_emb 'infinity-emb[all]' 'huggingface_hub[cli]'
+    _ensure_venv infinity bin:infinity_emb 'infinity-emb[torch,server]' 'click<8.2' 'huggingface_hub[cli]'
   fi
 
   # Version-sync: set MLXLM_VERSION + `--apply` to up/downgrade the text engine.

@@ -55,9 +55,15 @@ fi
 
 echo "[start-infinity] serving embed='${EMBED_ID:-none}' rerank='${RERANK_ID:-none}' on 127.0.0.1:${INFINITY_BACKEND_PORT:-15004} (device=${INFINITY_DEVICE:-mps}, batch=${INFINITY_BATCH_SIZE:-16})"
 
+# --no-bettertransformer: BetterTransformer needs `optimum`, which we deliberately
+# do NOT install (optimum 2.x dropped the `bettertransformer` submodule and is
+# incompatible with this infinity-emb build). It's a CUDA varlen path anyway —
+# irrelevant on Torch-MPS — so disable it to use the plain sentence-transformers
+# loader.
 exec "$VENV_DIR/infinity/bin/infinity_emb" v2 \
   "${ARGS[@]}" \
   --host 127.0.0.1 \
   --port "${INFINITY_BACKEND_PORT:-15004}" \
   --device "${INFINITY_DEVICE:-mps}" \
-  --batch-size "${INFINITY_BATCH_SIZE:-16}"
+  --batch-size "${INFINITY_BATCH_SIZE:-16}" \
+  --no-bettertransformer
