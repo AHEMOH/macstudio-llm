@@ -93,6 +93,7 @@ CONFIG_KEYS=(
   OPTIQ_KV_BITS
   OPTIQ_KV_GROUP_SIZE
   OPTIQ_MAX_TOKENS
+  OPTIQ_PROMPT_CACHE_MB
   OPTIQ_DRAFTER
   GEMMA_TOP_K
   PRESET_ALIASES
@@ -201,6 +202,7 @@ config_default() {
     OPTIQ_KV_BITS)               echo 8 ;;
     OPTIQ_KV_GROUP_SIZE)         echo "" ;;
     OPTIQ_MAX_TOKENS)            echo 16384 ;;
+    OPTIQ_PROMPT_CACHE_MB)       echo 8192 ;;
     OPTIQ_DRAFTER)               echo "" ;;
     GEMMA_TOP_K)                 echo 64 ;;
     PRESET_ALIASES)              echo 1 ;;
@@ -305,6 +307,7 @@ config_hint() {
     OPTIQ_KV_BITS)               echo "optiq serve KV-cache quant bits: 4 or 8 (--kv-bits). empty = off. (Only when TEXT_ENGINE=optiq)" ;;
     OPTIQ_KV_GROUP_SIZE)         echo "optiq serve KV quant group size (--kv-group-size); empty = optiq default (64). Only with OPTIQ_KV_BITS set" ;;
     OPTIQ_MAX_TOKENS)            echo "optiq serve default --max-tokens ceiling for main (default 16384). (Only when TEXT_ENGINE=optiq)" ;;
+    OPTIQ_PROMPT_CACHE_MB)       echo "optiq serve prompt-cache cap in MB (--prompt-cache-bytes); bounds the reusable KV/prefix cache → enables a LARGE context window. Default 8192 (8 GB; model streams experts from SSD so plenty of headroom on 32 GB). Raise for huge contexts" ;;
     OPTIQ_DRAFTER)               echo "optiq serve speculative-decoding drafter repo (--drafter), e.g. google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant. empty = OFF (drafter costs extra RAM — leave off on 32 GB unless verified)" ;;
     GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off; inert at temperature 0 (so not applied to main-metadata)" ;;
     PRESET_ALIASES)              echo "1 = also expose the preset aliases (main-fast/-metadata) — same loaded model, different default behaviour (main-fast = thinking-off, main-metadata = deterministic capped JSON)" ;;

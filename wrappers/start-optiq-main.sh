@@ -73,6 +73,8 @@ ARGS=( serve
 [ -n "${OPTIQ_KV_BITS:-}" ]       && ARGS+=( --kv-bits "$OPTIQ_KV_BITS" )
 [ -n "${OPTIQ_KV_GROUP_SIZE:-}" ] && ARGS+=( --kv-group-size "$OPTIQ_KV_GROUP_SIZE" )
 [ -n "${OPTIQ_MAX_TOKENS:-}" ]    && ARGS+=( --max-tokens "$OPTIQ_MAX_TOKENS" )
+# --prompt-cache-bytes takes BYTES; OPTIQ_PROMPT_CACHE_MB is in MB → enables a large context window.
+[ -n "${OPTIQ_PROMPT_CACHE_MB:-}" ] && ARGS+=( --prompt-cache-bytes "$(( OPTIQ_PROMPT_CACHE_MB * 1048576 ))" )
 [ -n "${OPTIQ_DRAFTER:-}" ]       && ARGS+=( --drafter "$OPTIQ_DRAFTER" )
 
 echo "[start-optiq-main] serving UNIFIED main='$MODEL_ID' repo='$REPO' (text+image, mlx-optiq BETA) on 127.0.0.1:${VLLM_BACKEND_PORT:-18000}"
