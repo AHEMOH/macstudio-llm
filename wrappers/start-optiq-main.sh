@@ -51,12 +51,15 @@ fi
 
 # `optiq serve` wraps mlx_lm.server: --model/--host/--port/--max-tokens pass through;
 # --kv-bits/--kv-group-size/--drafter are OptiQ-specific. --no-anthropic: LiteLLM
-# fronts the OpenAI side, the Anthropic endpoint is unused here.
+# fronts the OpenAI side, the Anthropic endpoint is unused here. --no-auth: this is
+# an internal localhost backend behind LiteLLM (which sends api_key 'dummy'); without
+# it optiq rejects any non-`sk-optiq-*` Bearer with 401. LiteLLM is the auth boundary.
 ARGS=( serve
   --model "$REPO"
   --host 127.0.0.1
   --port "${VLLM_BACKEND_PORT:-18000}"
-  --no-anthropic )
+  --no-anthropic
+  --no-auth )
 [ -n "${OPTIQ_KV_BITS:-}" ]       && ARGS+=( --kv-bits "$OPTIQ_KV_BITS" )
 [ -n "${OPTIQ_KV_GROUP_SIZE:-}" ] && ARGS+=( --kv-group-size "$OPTIQ_KV_GROUP_SIZE" )
 [ -n "${OPTIQ_MAX_TOKENS:-}" ]    && ARGS+=( --max-tokens "$OPTIQ_MAX_TOKENS" )

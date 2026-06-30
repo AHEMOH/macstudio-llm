@@ -913,8 +913,11 @@ ensure_python_venvs() {
   # main (the QAT OptiQ MoE/unified Gemma-4 towers aren't in the PyPI release).
   # Its OWN venv so the pinned 'mlxlm' venv above is never disturbed. The wrapper
   # execs the 'optiq' console script; it serves text+image on the same internal port.
+  # pillow: mlx-optiq does NOT depend on PIL, but `optiq serve` needs it to decode
+  # image_url input — without it the server logs "vision serving not installed: No
+  # module named 'PIL'" and silently runs text-only. Required for the multimodal main.
   if [ "${TEXT_ENGINE:-mlx-vlm}" = optiq ]; then
-    _ensure_venv optiq bin:optiq 'mlx-optiq' 'mlx-lm @ git+https://github.com/ml-explore/mlx-lm.git' 'huggingface_hub[cli]'
+    _ensure_venv optiq bin:optiq 'mlx-optiq' 'mlx-lm @ git+https://github.com/ml-explore/mlx-lm.git' 'pillow' 'huggingface_hub[cli]'
   fi
 
   # Embeddings + reranker: BGE pair served by Infinity (infinity-emb) on MPS,
