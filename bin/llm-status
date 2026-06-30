@@ -20,6 +20,7 @@ fi
 LABELS=(
   "com.local.mlxlm.serve"
   "com.local.mlxvlm.main"
+  "com.local.optiq.main"
   "com.local.litellm.proxy"
   "com.local.glmocr.proxy"
   "com.local.glmocr.serve"

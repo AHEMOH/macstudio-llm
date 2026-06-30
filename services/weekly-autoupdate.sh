@@ -87,6 +87,8 @@ if [ "${INSTALL_MLX:-1}" = "1" ]; then
   # Restart whichever text engine TEXT_ENGINE selects (only one is loaded).
   if [ "${TEXT_ENGINE:-mlx-lm}" = "mlx-vlm" ]; then
     /bin/launchctl kickstart -k system/com.local.mlxvlm.main  2>/dev/null || true
+  elif [ "${TEXT_ENGINE:-mlx-lm}" = "optiq" ]; then
+    /bin/launchctl kickstart -k system/com.local.optiq.main   2>/dev/null || true
   else
     /bin/launchctl kickstart -k system/com.local.mlxlm.serve  2>/dev/null || true
   fi
