@@ -375,6 +375,15 @@ def text_model_options(hf_cache, engine):
     return opts
 
 
+def text_daemon_label(engine):
+    """launchd label of the text daemon TEXT_ENGINE selects (one runs at a time)."""
+    if engine == "mlx-vlm":
+        return "com.local.mlxvlm.main"
+    if engine == "optiq":
+        return "com.local.optiq.main"
+    return "com.local.mlxlm.serve"
+
+
 def ram_free_mb():
     try:
         ps = int(run_out([SYSCTL, "-n", "hw.pagesize"]) or "0")
@@ -678,7 +687,7 @@ class Bridge:
         self.mqtt.publish(self.sil_avail_topic, "online" if sil else "offline", retain=True)
 
         engine = conf.get("TEXT_ENGINE", "mlx-vlm")
-        text_label = "com.local.mlxvlm.main" if engine == "mlx-vlm" else "com.local.mlxlm.serve"
+        text_label = text_daemon_label(engine)
         text_running, _ = launchctl_state(text_label)
         litellm_port = int(conf.get("LITELLM_PORT", "11434") or 11434)
         glm_running, _ = launchctl_state("com.local.glmocr.serve")
@@ -865,7 +874,7 @@ class Bridge:
     def init_model_status(self):
         conf = parse_conf()
         engine = conf.get("TEXT_ENGINE", "mlx-vlm")
-        label = "com.local.mlxvlm.main" if engine == "mlx-vlm" else "com.local.mlxlm.serve"
+        label = text_daemon_label(engine)
         running, _ = launchctl_state(label)
         self.mqtt.publish(self.model_state_topic, conf.get("ALIAS_MAIN", ""), retain=True)
         self.mqtt.publish(self.model_status_topic, "ready" if running else "backend down", retain=True)

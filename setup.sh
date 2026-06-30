@@ -31,6 +31,7 @@ MOTD_BACKUP=/etc/motd.macstudio.bak
 ALWAYS_ON_LABELS=(
   com.local.mlxlm.serve
   com.local.mlxvlm.main
+  com.local.optiq.main
   com.local.litellm.proxy
   com.local.glmocr.proxy
   com.local.vision.proxy
@@ -89,6 +90,10 @@ CONFIG_KEYS=(
   MLXVLM_MAIN_KV_SCHEME
   MLXVLM_MAIN_MAX_KV_SIZE
   MLXVLM_MAIN_ENABLE_THINKING
+  OPTIQ_KV_BITS
+  OPTIQ_KV_GROUP_SIZE
+  OPTIQ_MAX_TOKENS
+  OPTIQ_DRAFTER
   GEMMA_TOP_K
   PRESET_ALIASES
   PRESET_METADATA_TEMP
@@ -193,6 +198,10 @@ config_default() {
     MLXVLM_MAIN_KV_SCHEME)       echo uniform ;;
     MLXVLM_MAIN_MAX_KV_SIZE)     echo "" ;;
     MLXVLM_MAIN_ENABLE_THINKING) echo 1 ;;
+    OPTIQ_KV_BITS)               echo 8 ;;
+    OPTIQ_KV_GROUP_SIZE)         echo "" ;;
+    OPTIQ_MAX_TOKENS)            echo 16384 ;;
+    OPTIQ_DRAFTER)               echo "" ;;
     GEMMA_TOP_K)                 echo 64 ;;
     PRESET_ALIASES)              echo 1 ;;
     PRESET_METADATA_TEMP)        echo 0.0 ;;
@@ -282,7 +291,7 @@ config_hint() {
     VLLM_BACKEND_PORT)           echo "Internal port the text engine (mlx_lm.server) binds; LiteLLM fronts it. (Legacy VLLM_ name kept to avoid config churn.)" ;;
     VLLM_MAX_NUM_SEQS)           echo "Fallback for MLXLM_DECODE_CONCURRENCY (concurrent decode streams). (Legacy VLLM_ name.)" ;;
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
-    TEXT_ENGINE)                 echo "Which engine serves 'main': mlx-lm (Apple mlx_lm.server — text-only, batches, broad models incl. granite/glm) | mlx-vlm (mlx_vlm.server — UNIFIED text+images in one model, KV-quant, single-stream; needs a VLM main like gemma-4). Flip + --apply to switch/rollback; one runs at a time" ;;
+    TEXT_ENGINE)                 echo "Which engine serves 'main': mlx-lm (Apple mlx_lm.server — text-only, batches, broad models incl. granite/glm) | mlx-vlm (mlx_vlm.server — UNIFIED text+images, KV-quant, single-stream; needs a VLM main like gemma-4) | optiq (mlx-optiq 'optiq serve', BETA — QAT OptiQ Gemma-4 mains, multimodal text+image + KV-quant, mlx-lm-from-git venv). Flip + --apply to switch/rollback; one runs at a time" ;;
     MLXLM_VERSION)               echo "Pinned mlx-lm for the 'mlxlm' venv (the text engine). Bump deliberately + --apply" ;;
     MLXLM_PROMPT_CACHE_MB)       echo "mlx-lm prompt-cache hard cap in MB (--prompt-cache-bytes). Bounds KV/prefix RAM (16-bit KV grows fast — no kv-quant); default 8192" ;;
     MLXLM_DECODE_CONCURRENCY)    echo "mlx-lm concurrent decode streams (--decode-concurrency). empty = reuse VLLM_MAX_NUM_SEQS" ;;
@@ -293,6 +302,10 @@ config_hint() {
     MLXVLM_MAIN_KV_SCHEME)       echo "mlx-vlm main KV quant scheme: uniform | turboquant (fractional bits like 3.5)" ;;
     MLXVLM_MAIN_MAX_KV_SIZE)     echo "mlx-vlm main context cap (--max-kv-size); empty = model default. Raise to exploit KV-quant for big context on 32 GB" ;;
     MLXVLM_MAIN_ENABLE_THINKING) echo "mlx-vlm main: 1 = think by default (default — so 'main' reasons; OpenWebUI shows it), 0 = off. main-fast + main-metadata are forced thinking-off at the proxy regardless; clients can override per request" ;;
+    OPTIQ_KV_BITS)               echo "optiq serve KV-cache quant bits: 4 or 8 (--kv-bits). empty = off. (Only when TEXT_ENGINE=optiq)" ;;
+    OPTIQ_KV_GROUP_SIZE)         echo "optiq serve KV quant group size (--kv-group-size); empty = optiq default (64). Only with OPTIQ_KV_BITS set" ;;
+    OPTIQ_MAX_TOKENS)            echo "optiq serve default --max-tokens ceiling for main (default 16384). (Only when TEXT_ENGINE=optiq)" ;;
+    OPTIQ_DRAFTER)               echo "optiq serve speculative-decoding drafter repo (--drafter), e.g. google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant. empty = OFF (drafter costs extra RAM — leave off on 32 GB unless verified)" ;;
     GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off; inert at temperature 0 (so not applied to main-metadata)" ;;
     PRESET_ALIASES)              echo "1 = also expose the preset aliases (main-fast/-metadata) — same loaded model, different default behaviour (main-fast = thinking-off, main-metadata = deterministic capped JSON)" ;;
     PRESET_METADATA_TEMP)        echo "alias 'main-metadata' temperature (paperless-ngx JSON output, deterministic; default 0.0 — safe because output is capped)" ;;
@@ -508,6 +521,8 @@ load_config() {
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = mlx-lm ]; }  || continue ;;
       com.local.mlxvlm.main)
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = mlx-vlm ]; } || continue ;;
+      com.local.optiq.main)
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = optiq ]; } || continue ;;
       com.local.litellm.*|com.local.glmocr.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || continue ;;
       com.local.infinity.*)
@@ -558,6 +573,7 @@ label_log() {
   case "$1" in
     com.local.mlxlm.serve)       echo "$LOG_DIR/mlxlm.log" ;;
     com.local.mlxvlm.main)       echo "$LOG_DIR/mlxvlm-main.log" ;;
+    com.local.optiq.main)        echo "$LOG_DIR/optiq-main.log" ;;
     com.local.litellm.proxy)     echo "$LOG_DIR/litellm.log" ;;
     com.local.glmocr.proxy)      echo "$LOG_DIR/glmocr-proxy.log" ;;
     com.local.glmocr.serve)      echo "$LOG_DIR/glmocr-serve.log" ;;
@@ -893,6 +909,14 @@ ensure_python_venvs() {
   [ -n "${MLXLM_VERSION:-}" ] && mlxlm_spec="mlx-lm==${MLXLM_VERSION}"
   _ensure_venv mlxlm   bin:mlx_lm.server  "$mlxlm_spec" 'huggingface_hub[cli]'
 
+  # OptiQ engine (BETA): only built when selected, since it pulls mlx-lm from git
+  # main (the QAT OptiQ MoE/unified Gemma-4 towers aren't in the PyPI release).
+  # Its OWN venv so the pinned 'mlxlm' venv above is never disturbed. The wrapper
+  # execs the 'optiq' console script; it serves text+image on the same internal port.
+  if [ "${TEXT_ENGINE:-mlx-vlm}" = optiq ]; then
+    _ensure_venv optiq bin:optiq 'mlx-optiq' 'mlx-lm @ git+https://github.com/ml-explore/mlx-lm.git' 'huggingface_hub[cli]'
+  fi
+
   # Embeddings + reranker: BGE pair served by Infinity (infinity-emb) on MPS,
   # on-demand. Independent of the text engine; pulls torch, so only built when
   # INSTALL_EMBED=1. The wrapper execs the 'infinity_emb' console script.
@@ -999,8 +1023,12 @@ render_litellm_config() {
   #     param, so it MUST ride in extra_body (catalog has no top_k column). At temperature 0
   #     it is inert, so we don't bother passing it to deterministic aliases.
   # LiteLLM forwards extra_body verbatim (drop_params leaves it untouched).
+  # optiq serve wraps mlx_lm.server, so it uses mlx-lm's nested chat_template_kwargs
+  # form for enable_thinking (NOT mlx-vlm's top-level form). Verify on the Mac.
   local _nothink_body='{"enable_thinking": false}'
-  [ "${TEXT_ENGINE:-mlx-vlm}" = mlx-lm ] && _nothink_body='{"chat_template_kwargs": {"enable_thinking": false}}'
+  case "${TEXT_ENGINE:-mlx-vlm}" in
+    mlx-lm|optiq) _nothink_body='{"chat_template_kwargs": {"enable_thinking": false}}' ;;
+  esac
   emit_model() {
     printf '  - model_name: %s\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' "$1" "$2" "$3"
     [ -n "${4:-}" ] && printf '      temperature: %s\n' "$4"
@@ -1010,7 +1038,7 @@ render_litellm_config() {
     [ -n "${8:-}" ] && printf '      max_tokens: %s\n' "$8"
     local _eb=""
     if [ -n "${9:-}" ] && [ -n "${10:-}" ]; then
-      if [ "${TEXT_ENGINE:-mlx-vlm}" = mlx-lm ]; then
+      if [ "${TEXT_ENGINE:-mlx-vlm}" = mlx-lm ] || [ "${TEXT_ENGINE:-mlx-vlm}" = optiq ]; then
         _eb=$(printf '{"chat_template_kwargs": {"enable_thinking": false}, "top_k": %s}' "${10}")
       else
         _eb=$(printf '{"enable_thinking": false, "top_k": %s}' "${10}")
@@ -1174,6 +1202,9 @@ render_all_plists() {
       com.local.mlxvlm.main)
         # Text engine: mlx_vlm.server (unified text+vision). One text daemon at a time.
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = mlx-vlm ]; } || { remove_plist "$label"; continue; } ;;
+      com.local.optiq.main)
+        # Text engine: mlx-optiq 'optiq serve' (unified text+image, BETA). One text daemon at a time.
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = optiq ]; } || { remove_plist "$label"; continue; } ;;
       com.local.litellm.*|com.local.glmocr.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.infinity.*)
@@ -1679,6 +1710,7 @@ set_model_alias() {
     ram_guard_warn
     local _text_label=com.local.mlxlm.serve
     [ "${TEXT_ENGINE:-mlx-lm}" = mlx-vlm ] && _text_label=com.local.mlxvlm.main
+    [ "${TEXT_ENGINE:-mlx-lm}" = optiq ]   && _text_label=com.local.optiq.main
     if daemon_loaded "$_text_label"; then
       /bin/launchctl kickstart -k "system/$_text_label" >/dev/null 2>&1 \
         && ok "restarting $_text_label with new main model (load ~30–60 s, no hot-swap)"

@@ -18,6 +18,10 @@ raise a couple of config keys.
 > **gemma-4** (the default `gemma4-26b`) and is single-stream (fine for one user).
 > Flip to **`mlx-lm`** (Apple `mlx_lm.server`) for a text-only main that **batches**
 > parallel requests and supports broad archs (granite/glm) — but no images, no KV-quant.
+> Or flip to **`optiq`** (`mlx-optiq`'s `optiq serve`, **BETA**) to run the **QAT
+> OptiQ Gemma-4** mains (`gemma4-26b-optiq` & co.): Mixed-Precision quantization,
+> still **multimodal text+images** + KV-quant + tool calling, served over OpenAI `/v1`.
+> It builds its own venv (`mlx-optiq` + `mlx-lm` from git) and has **no audio**.
 > One text daemon runs at a time; `--apply` to switch or roll back. Either way only
 > **one big model** is in memory (GLM-OCR and the small BGE embed/rerank pair are the
 > only on-demand extras).
@@ -270,8 +274,12 @@ Per-model columns the catalog carries: `role`, `engine`, `quant`, `gb`,
 `rating`, `notes`, sampling defaults. The `reasoning_parser`/`tool_parser`
 columns are **informational** now — `mlx_lm.server` and `mlx-vlm` auto-detect
 them from the model. The `engine` column is informational: `mlxvlm` = unified
-text+images main (`TEXT_ENGINE=mlx-vlm`), `mlxlm` = text-only (`TEXT_ENGINE=mlx-lm`).
-The old `vllm`/`vllm-mllm` values are **historical** (vllm-mlx is retired).
+text+images main (`TEXT_ENGINE=mlx-vlm`), `mlxlm` = text-only (`TEXT_ENGINE=mlx-lm`),
+`optiq` = QAT OptiQ multimodal main (`TEXT_ENGINE=optiq`, BETA). The old
+`vllm`/`vllm-mllm` values are **historical** (vllm-mlx is retired). A model is
+refused for a slot when its `notes` carry a `BROKEN[<engine>]` flag for the engine
+that slot runs (the OptiQ rows carry `BROKEN[mlx-vlm]`+`BROKEN[mlx-lm]`, so they are
+selectable **only** under `TEXT_ENGINE=optiq`).
 
 **Per-model sampling** (temperature/top_p/…) defaults are injected into the
 LiteLLM `main` alias; clients can override per request. `main`/`main-fast` use
@@ -292,6 +300,13 @@ Seeded models — intentionally **lean** (a gemma-4 unified main + GLM-OCR). Add
 | `gemma4-26b` | text | 16 | **default main** — unified text+images+tools on `mlx-vlm` (~24 tok/s, KV-quant), German MoE (**gated**) |
 | `gemma4-12b` | text | 8 | lighter unified main (mlx-vlm only — `gemma4_unified`), smaller/faster, German (**gated**) |
 | `glm-ocr` | ocr | 2 | **default ocr**, on-demand, #1 OmniDocBench (full page via `GLMOCR_MAX_TOKENS`) |
+| `gemma4-26b-optiq` | text | 16 | **OptiQ engine** (`TEXT_ENGINE=optiq`, BETA) — QAT 26B-A4B MoE, multimodal text+images+tools, KV-quant; **gated**. Primary OptiQ main |
+| `gemma4-31b-optiq` | text | 24 | OptiQ (BETA) — QAT 31B dense, multimodal; **RAM-risky ~23.5 GB** on 32 GB; **gated** |
+| `gemma4-12b-optiq` | text | 8 | OptiQ (BETA) — QAT 12B `gemma4_unified`, multimodal, lighter; **gated** |
+| `gemma4-e4b-optiq` / `-e2b-optiq` | text | 8 / 6 | OptiQ (BETA) — QAT edge variants, multimodal, fast/small; **gated** |
+
+The `*-optiq` rows are selectable only under `TEXT_ENGINE=optiq` (BETA `mlx-optiq`,
+own venv). All are multimodal text+images — **none support audio**.
 
 ## Prerequisites installed automatically
 
@@ -388,7 +403,7 @@ use the menu) to change a live box.
 | `VLLM_BACKEND_PORT` | `18000` | Internal text-engine port (legacy `VLLM_` name; mlx_lm.server binds it) |
 | `VLLM_MAX_NUM_SEQS` | `4` | Fallback for `MLXLM_DECODE_CONCURRENCY` (legacy `VLLM_` name) |
 | `LLM_REQUEST_TIMEOUT` | `3600` | Per-request timeout (s) for the text engine **and** LiteLLM; long docs/OCR |
-| `TEXT_ENGINE` | `mlx-vlm` | Engine for `main`: **`mlx-vlm`** (default — **unified text+images** in one model, KV-quant, single-stream; needs a VLM main like gemma-4) \| `mlx-lm` (text-only, batches parallel requests, broad archs incl. granite/glm). Flip + `--apply` to switch/rollback |
+| `TEXT_ENGINE` | `mlx-vlm` | Engine for `main`: **`mlx-vlm`** (default — **unified text+images** in one model, KV-quant, single-stream; needs a VLM main like gemma-4) \| `mlx-lm` (text-only, batches parallel requests, broad archs incl. granite/glm) \| `optiq` (**BETA** `mlx-optiq` — QAT OptiQ Gemma-4 mains, multimodal text+images + KV-quant, own `mlx-lm`-from-git venv, no audio). Flip + `--apply` to switch/rollback |
 | `MLXLM_VERSION` | `0.31.3` | Pinned mlx-lm for the `mlxlm` venv (the text engine) |
 | `MLXLM_PROMPT_CACHE_MB` | `8192` | mlx-lm prompt-cache RAM cap (`--prompt-cache-bytes`); bounds 16-bit KV |
 | `MLXLM_DECODE_CONCURRENCY` | _(empty)_ | mlx-lm `--decode-concurrency`; empty = reuse `VLLM_MAX_NUM_SEQS` |
@@ -398,6 +413,9 @@ use the menu) to change a live box.
 | `MLXVLM_MAIN_KV_BITS` / `_KV_SCHEME` | `8` / `uniform` | KV-quant for the **mlx-vlm** unified main (`turboquant` for fractional bits) |
 | `MLXVLM_MAIN_MAX_KV_SIZE` | _(empty)_ | mlx-vlm main context cap; raise to exploit KV-quant for big context |
 | `MLXVLM_MAIN_ENABLE_THINKING` | `1` | mlx-vlm main thinks by default (so `main` reasons). `main-fast` + `main-metadata` are forced thinking-off at the proxy; clients can override per request |
+| `OPTIQ_KV_BITS` / `OPTIQ_KV_GROUP_SIZE` | `8` / _(empty)_ | `optiq serve` KV-cache quant (`--kv-bits` 4\|8, `--kv-group-size`); only when `TEXT_ENGINE=optiq` |
+| `OPTIQ_MAX_TOKENS` | `16384` | `optiq serve` default `--max-tokens` ceiling for `main` (only when `TEXT_ENGINE=optiq`) |
+| `OPTIQ_DRAFTER` | _(empty)_ | `optiq serve` speculative-decoding drafter repo (`--drafter`); empty = **off** (drafter costs extra RAM — leave off on 32 GB unless verified) |
 | `GEMMA_TOP_K` | `64` | Gemma reference top_k for `main`/`main-fast` (via `extra_body`; top_k is not a native OpenAI param). `0`/empty = off; inert at temperature 0 |
 | `PRESET_ALIASES` | `1` | Expose the preset aliases `main-fast` / `main-metadata` (same loaded model) |
 | `PRESET_METADATA_TEMP` / `_MAXTOK` | `0.0` / `2048` | `main-metadata` = paperless-ngx JSON: deterministic + tight cap (thinking-off) |
