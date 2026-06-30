@@ -48,6 +48,16 @@ if ! /usr/bin/find "$HUB/snapshots" -name '*.safetensors' 2>/dev/null | /usr/bin
   echo "[start-optiq-main] model '$REPO' (id '$MODEL_ID') is NOT downloaded — run: llm-models -> d $MODEL_ID" >&2
   exit 78   # EX_CONFIG
 fi
+# Resolve the LOCAL snapshot dir (the one holding config.json) and pass THAT to
+# --model. optiq's vision/MTP engine does load_config(model_path) and looks for
+# config.json *relative to the --model string* — a bare HF repo-id makes it fail
+# with "Missing config.json in <repo-id>" the first time an image request hits.
+# A local path makes both the text and image paths resolve config.json correctly.
+MODEL_PATH=$(/usr/bin/find "$HUB/snapshots" -maxdepth 2 -name config.json -exec dirname {} \; 2>/dev/null | /usr/bin/head -1)
+if [ -z "${MODEL_PATH:-}" ]; then
+  echo "[start-optiq-main] no config.json under $HUB/snapshots — model dir incomplete; run: llm-models -> d $MODEL_ID" >&2
+  exit 78   # EX_CONFIG
+fi
 
 # `optiq serve` wraps mlx_lm.server: --model/--host/--port/--max-tokens pass through;
 # --kv-bits/--kv-group-size/--drafter are OptiQ-specific. --no-anthropic: LiteLLM
@@ -55,7 +65,7 @@ fi
 # an internal localhost backend behind LiteLLM (which sends api_key 'dummy'); without
 # it optiq rejects any non-`sk-optiq-*` Bearer with 401. LiteLLM is the auth boundary.
 ARGS=( serve
-  --model "$REPO"
+  --model "$MODEL_PATH"
   --host 127.0.0.1
   --port "${VLLM_BACKEND_PORT:-18000}"
   --no-anthropic
