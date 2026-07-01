@@ -37,6 +37,7 @@ ALWAYS_ON_LABELS=(
   com.local.vision.proxy
   com.local.infinity.proxy
   com.local.ollama.headless
+  com.local.ollama.agent
   com.local.immich.proxy
   com.local.docling.proxy
   com.local.node.exporter
@@ -131,6 +132,12 @@ CONFIG_KEYS=(
   OLLAMA_KV_CACHE_TYPE
   OLLAMA_KEEP_ALIVE
   OLLAMA_LOAD_TIMEOUT
+  OLLAMA_VERSION
+  INSTALL_AGENT
+  AGENT_MODEL
+  AGENT_BACKEND_PORT
+  AGENT_CONTEXT_LENGTH
+  AGENT_ENABLE_THINKING
   ML_PUBLIC_PORT
   ML_BACKEND_PORT
   DOCLING_PUBLIC_PORT
@@ -240,6 +247,12 @@ config_default() {
     OLLAMA_KV_CACHE_TYPE)        echo q8_0 ;;
     OLLAMA_KEEP_ALIVE)           echo 10m ;;
     OLLAMA_LOAD_TIMEOUT)         echo 15m ;;
+    OLLAMA_VERSION)              echo 0.31.1 ;;
+    INSTALL_AGENT)               echo 0 ;;
+    AGENT_MODEL)                 echo gemma4:e2b-mlx ;;
+    AGENT_BACKEND_PORT)          echo 18001 ;;
+    AGENT_CONTEXT_LENGTH)        echo 32768 ;;
+    AGENT_ENABLE_THINKING)       echo 0 ;;
     ML_PUBLIC_PORT)              echo 3003 ;;
     ML_BACKEND_PORT)             echo 13003 ;;
     DOCLING_PUBLIC_PORT)         echo 5001 ;;
@@ -331,6 +344,12 @@ config_hint() {
     OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: 10m (default), 1h, 24h, -1=forever" ;;
     OLLAMA_MAX_LOADED_MODELS)    echo "Max models in VRAM at once: 2 (default; e.g. text + OCR), 1 = single-model mode" ;;
     OLLAMA_KV_CACHE_TYPE)        echo "KV cache precision: q8_0 (recommended), q4_0 (aggressive), fp16 (default)" ;;
+    OLLAMA_VERSION)              echo "Pinned Ollama version fetched as ollama-darwin.tgz from GitHub into \$VENV_DIR/ollama-dist (the -mlx gemma-4 tags need >=0.31.0; the brew formula lags). Used by the 'agent' service + the INSTALL_OLLAMA fallback. Bump deliberately + --apply" ;;
+    INSTALL_AGENT)               echo "1 = run a small, fast, co-resident Ollama text/agentic model (MLX runner + MTP) ALONGSIDE the big unified main, exposed as LiteLLM alias 'agent'. Needs INSTALL_MLX=1 (for the LiteLLM gateway). ~6 GB always-warm; verified co-resident with the optiq 26b main" ;;
+    AGENT_MODEL)                 echo "Ollama tag for the 'agent' model (raw ollama pull tag, NOT a HF catalog id). Default gemma4:e2b-mlx (~6 GB, ~78 tok/s, tools). e.g. gemma4:e4b-mlx for more quality" ;;
+    AGENT_BACKEND_PORT)          echo "Internal port the 'agent' Ollama daemon binds (default 18001); LiteLLM fronts it. Distinct from VLLM_BACKEND_PORT (:18000 main) and the Ollama fallback OLLAMA_PORT (:11434)" ;;
+    AGENT_CONTEXT_LENGTH)        echo "Fixed context window for the agent (OLLAMA_CONTEXT_LENGTH, default 32768). Set ONCE so the warm model never reloads (all requests arrive via LiteLLM /v1 which omits per-request num_ctx). e2b supports up to 131072" ;;
+    AGENT_ENABLE_THINKING)       echo "1 = let the agent model reason; 0 = thinking off at the proxy (default — the agent is the FAST path). Wired as extra_body think:false; verify Ollama /v1 honors it" ;;
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
     AUTOUPDATE_WEEKDAY)          echo "launchd weekday: 0=Sun 1=Mon … 6=Sat" ;;
@@ -534,6 +553,8 @@ load_config() {
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ -n "${ALIAS_VISION:-}" ]; } || continue ;;
       com.local.ollama.headless)
         [ "${INSTALL_OLLAMA:-0}" = 1 ] || continue ;;
+      com.local.ollama.agent)
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${INSTALL_AGENT:-0}" = 1 ]; } || continue ;;
       com.local.ollama.exporter)
         { [ "${INSTALL_OLLAMA:-0}" = 1 ] && [ "${INSTALL_EXPORTERS:-1}" = 1 ]; } || continue ;;
       com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || continue ;;
@@ -585,6 +606,7 @@ label_log() {
     com.local.vision.proxy)      echo "$LOG_DIR/vision-proxy.log" ;;
     com.local.vision.serve)      echo "$LOG_DIR/vision-serve.log" ;;
     com.local.ollama.headless)   echo "$LOG_DIR/ollama.log" ;;
+    com.local.ollama.agent)      echo "$LOG_DIR/ollama-agent.log" ;;
     com.local.immich.proxy)      echo "$LOG_DIR/immich-proxy.log" ;;
     com.local.immich.ml)         echo "$LOG_DIR/immich-ml.log" ;;
     com.local.docling.proxy)     echo "$LOG_DIR/docling-proxy.log" ;;
@@ -1078,6 +1100,23 @@ render_litellm_config() {
       emit_model main-fast     "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" 1 "${GEMMA_TOP_K:-64}"
       emit_model main-metadata "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_METADATA_TEMP:-0.0}" "" "" "" "${PRESET_METADATA_MAXTOK:-2048}" 1
     fi
+    # 'agent' — a small, fast, CO-RESIDENT Ollama text/agentic model (MLX runner + MTP)
+    # on its OWN internal port (AGENT_BACKEND_PORT), running ALONGSIDE the big unified
+    # main. It is NOT the main and NOT a TEXT_ENGINE — it's a self-contained extra like
+    # ocr/embed (driven purely by INSTALL_AGENT + AGENT_* config, not the catalog).
+    # Ollama's /v1 is OpenAI-compatible (openai/ provider). Thinking is OFF by default
+    # (fast path) via extra_body {"think": false} — Ollama's own toggle; Gemma top_k
+    # rides along. Ollama serves gemma-4 TEXT+tools here (NOT images — image input isn't
+    # wired on Ollama's MLX runner; those go to the unified 'main').
+    if [ "${INSTALL_AGENT:-0}" = 1 ] && [ -n "${AGENT_MODEL:-}" ]; then
+      printf '  - model_name: agent\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n      temperature: 1.0\n      top_p: 0.95\n' \
+        "${AGENT_MODEL}" "${AGENT_BACKEND_PORT:-18001}"
+      if [ "${AGENT_ENABLE_THINKING:-0}" = 1 ]; then
+        printf '      extra_body: {"top_k": %s}\n' "${GEMMA_TOP_K:-64}"
+      else
+        printf '      extra_body: {"think": false, "top_k": %s}\n' "${GEMMA_TOP_K:-64}"
+      fi
+    fi
     if [ -n "$ocr_repo" ]; then
       printf '  - model_name: ocr\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
         "$ocr_repo" "${GLMOCR_PUBLIC_PORT:-5002}"
@@ -1222,6 +1261,10 @@ render_all_plists() {
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ -n "${ALIAS_VISION:-}" ]; } || { remove_plist "$label"; continue; } ;;
       com.local.ollama.headless)
         [ "${INSTALL_OLLAMA:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
+      com.local.ollama.agent)
+        # Small fast co-resident Ollama text/agentic model (alias 'agent'), alongside
+        # the big unified main. Independent of TEXT_ENGINE; needs the LiteLLM gateway.
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${INSTALL_AGENT:-0}" = 1 ]; } || { remove_plist "$label"; continue; } ;;
       com.local.ollama.exporter)
         { [ "${INSTALL_OLLAMA:-0}" = 1 ] && [ "${INSTALL_EXPORTERS:-1}" = 1 ]; } || { remove_plist "$label"; continue; } ;;
       com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || { remove_plist "$label"; continue; } ;;
@@ -1270,6 +1313,69 @@ render_motd() {
   if [ -f /etc/ssh/sshd_config ] \
      && /usr/bin/grep -qiE '^\s*PrintMotd\s+no' /etc/ssh/sshd_config; then
     warn "/etc/ssh/sshd_config has 'PrintMotd no' — banner will not show on SSH login"
+  fi
+}
+
+ensure_ollama_dist() {
+  # Version-pinned Ollama distribution (GitHub ollama-darwin.tgz) → $VENV_DIR/ollama-dist.
+  # The -mlx gemma-4 tags require Ollama >= 0.31.0, which the brew formula lags behind;
+  # the tgz is self-contained (ollama + llama-server + mlx_metal runners). Needed for
+  # the 'agent' service (and the INSTALL_OLLAMA fallback, which now prefers this dist).
+  # Idempotent: re-fetch only when the installed binary's version != OLLAMA_VERSION.
+  { [ "${INSTALL_AGENT:-0}" = 1 ] || [ "${INSTALL_OLLAMA:-0}" = 1 ]; } || return 0
+  local ver="${OLLAMA_VERSION:-0.31.1}"
+  local dist="${VENV_DIR:-/Users/mac/.macstudio-venvs}/ollama-dist"
+  local bin="$dist/ollama" have=""
+  [ -x "$bin" ] && have=$(/usr/bin/sudo -u "$TARGET_USER" -H "$bin" --version 2>/dev/null | /usr/bin/awk '/version is/{print $NF; exit}')
+  if [ "$have" = "$ver" ]; then
+    ok "ollama dist present ($dist, $ver)"
+    return 0
+  fi
+  local url="https://github.com/ollama/ollama/releases/download/v${ver}/ollama-darwin.tgz"
+  log "fetching pinned Ollama $ver (ollama-darwin.tgz) → $dist (self-contained: ollama + mlx runner)"
+  /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$dist"
+  local tgz="$dist/.ollama-darwin.tgz"
+  if ! /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/curl -fsSL -m 600 -o "$tgz" "$url"; then
+    warn "failed to download $url — 'agent' falls back to brew ollama (may be too old for -mlx tags)"
+    return 0
+  fi
+  if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/tar xzf "$tgz" -C "$dist"; then
+    /usr/bin/sudo -u "$TARGET_USER" -H /bin/rm -f "$tgz"
+    ok "ollama dist installed ($ver) at $dist"
+  else
+    warn "tar extract failed for $tgz"
+  fi
+}
+
+ensure_agent_model() {
+  # Pull the 'agent' Ollama model (raw tag, e.g. gemma4:e2b-mlx) if missing. Talks to
+  # the agent daemon on AGENT_BACKEND_PORT (render_all_plists just started it); models
+  # live in OLLAMA_MODELS, shared across serve instances. Idempotent (skip if present).
+  [ "${INSTALL_AGENT:-0}" = 1 ] || return 0
+  local tag="${AGENT_MODEL:-gemma4:e2b-mlx}"
+  local port="${AGENT_BACKEND_PORT:-18001}"
+  local dist="${VENV_DIR:-/Users/mac/.macstudio-venvs}/ollama-dist"
+  local bin=/opt/homebrew/opt/ollama/bin/ollama
+  [ -x "$dist/ollama" ] && bin="$dist/ollama"
+  local up=0 i
+  for i in $(seq 1 15); do
+    /usr/bin/curl -fsS -m 3 "http://127.0.0.1:${port}/api/tags" >/dev/null 2>&1 && { up=1; break; }
+    sleep 2
+  done
+  if [ "$up" != 1 ]; then
+    warn "agent ollama not reachable on :${port} — skipping model pull (re-run --apply once it's up)"
+    return 0
+  fi
+  if /usr/bin/curl -fsS -m 5 "http://127.0.0.1:${port}/api/tags" 2>/dev/null | /usr/bin/grep -q "\"${tag}\""; then
+    ok "agent model present ($tag)"
+    return 0
+  fi
+  log "pulling agent model '$tag' via Ollama (first time ~6 GB)…"
+  if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env OLLAMA_HOST="127.0.0.1:${port}" OLLAMA_LIBRARY_PATH="$dist" \
+        "$bin" pull "$tag"; then
+    ok "agent model pulled: $tag"
+  else
+    warn "ollama pull '$tag' failed (network/gated/too-old ollama?) — 'agent' alias will 404 until fixed"
   fi
 }
 
@@ -1405,6 +1511,7 @@ apply_everything() {
   dbg "step: ensure_immich_venv";      ensure_immich_venv
   dbg "step: ensure_docling_venv";     ensure_docling_venv
   dbg "step: ensure_python_venvs";     ensure_python_venvs || true
+  dbg "step: ensure_ollama_dist";      ensure_ollama_dist || true
   dbg "step: ensure_model_catalog";    ensure_model_catalog
   dbg "step: render_wrappers";        render_wrappers
   dbg "step: render_services";        render_services
@@ -1415,6 +1522,7 @@ apply_everything() {
   dbg "step: render_motd";            render_motd
   dbg "step: apply_iogpu_wired_limit"; apply_iogpu_wired_limit
   dbg "step: ensure_ollama_models";    ensure_ollama_models
+  dbg "step: ensure_agent_model";      ensure_agent_model
   dbg "step: apply_pmset";            apply_pmset
   dbg "step: apply_os_trim";          apply_os_trim
   echo
