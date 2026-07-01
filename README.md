@@ -12,16 +12,15 @@ unattended: no GUI, no login, auto-restart on power loss, weekly self-update.
 Designed for a 32 GB M1 Max but scales unchanged to bigger Apple Silicon — just
 raise a couple of config keys.
 
-> **Text engine — one switch (`TEXT_ENGINE`).** Default **`mlx-vlm`** (`mlx_vlm.server`):
-> the `main` is **one unified model that handles text *and* images in the same chat**,
-> with KV-cache quantization (bigger context on 32 GB) — needs a VLM main like
-> **gemma-4** (the default `gemma4-26b`) and is single-stream (fine for one user).
-> Flip to **`mlx-lm`** (Apple `mlx_lm.server`) for a text-only main that **batches**
-> parallel requests and supports broad archs (granite/glm) — but no images, no KV-quant.
-> Or flip to **`optiq`** (`mlx-optiq`'s `optiq serve`, **BETA**) to run the **QAT
-> OptiQ Gemma-4** mains (`gemma4-26b-optiq` & co.): Mixed-Precision quantization,
-> still **multimodal text+images** + KV-quant + tool calling, served over OpenAI `/v1`.
+> **Text engine — one switch (`TEXT_ENGINE`).** Default **`optiq`** (`mlx-optiq`'s
+> `optiq serve`, **BETA**): the `main` is one of the **QAT OptiQ Gemma-4** mains
+> (default `gemma4-26b-optiq`) — Mixed-Precision quantization, **one unified model that
+> handles text *and* images in the same chat**, KV-cache quantization (bigger context on
+> 32 GB) + tool calling, served over OpenAI `/v1`, single-stream (fine for one user).
 > It builds its own venv (`mlx-optiq` + `mlx-lm` from git) and has **no audio**.
+> Flip to **`mlx-vlm`** (`mlx_vlm.server`) to run stock (non-OptiQ) VLM mains, or to
+> **`mlx-lm`** (Apple `mlx_lm.server`) for a text-only main that **batches** parallel
+> requests and supports broad archs (granite/glm) — but no images, no KV-quant.
 > One text daemon runs at a time; `--apply` to switch or roll back. Either way only
 > **one big model** is in memory (GLM-OCR and the small BGE embed/rerank pair are the
 > only on-demand extras).
@@ -52,8 +51,8 @@ raise a couple of config keys.
   process, on-demand on :5004. Both small (~2 GB each) — they co-reside with the
   big main like GLM-OCR. Reachable via LiteLLM `/v1/embeddings` and `/v1/rerank`.
 - **Dormant vision path:** a separate on-demand `vision` model/alias (`ALIAS_VISION`,
-  :5003) existed for the text-only `mlx-lm` mode. Under the default unified `mlx-vlm`
-  main (which does images itself) the **`vision` gateway alias is not exposed**; the
+  :5003) existed for the text-only `mlx-lm` mode. Under the default unified main
+  (`optiq`/`mlx-vlm`, which does images itself) the **`vision` gateway alias is not exposed**; the
   wrapper/daemon stay in the repo but unused (`ALIAS_VISION=""`).
 - **Model catalog + `llm-models` TUI**: download pre-converted MLX models from
   HuggingFace, pick the active text / ocr / vision / embed / rerank model, manage
@@ -199,8 +198,8 @@ The first `--apply` builds the venvs (several minutes of pip wheels). It does
 ```bash
 llm-models                    # opens the model & alias manager
 #   t                         → paste your HuggingFace token (gemma is gated — required)
-#   d gemma4-26b              → download the default unified main (~16 GB, live progress)
-#   s gemma4-26b              → set it as the active 'main' (text+images under mlx-vlm)
+#   d gemma4-26b-optiq       → download the default unified main (~16 GB, live progress)
+#   s gemma4-26b-optiq       → set it as the active 'main' (text+images under optiq)
 #   d glm-ocr                 → download GLM-OCR (~2 GB)
 #   o glm-ocr                 → set it as the active 'ocr' model
 #   d bge-m3                  → download the embedder (~2 GB, ungated)
@@ -297,13 +296,9 @@ Seeded models — intentionally **lean** (a gemma-4 unified main + GLM-OCR). Add
 
 | id | role | ~GB | notes |
 |---|---|---|---|
-| `gemma4-26b` | text | 16 | **default main** — unified text+images+tools on `mlx-vlm` (~24 tok/s, KV-quant), German MoE (**gated**) |
-| `gemma4-12b` | text | 8 | lighter unified main (mlx-vlm only — `gemma4_unified`), smaller/faster, German (**gated**) |
+| `gemma4-26b-optiq` | text | 16 | **default main** — OptiQ engine (`TEXT_ENGINE=optiq`, BETA), QAT 26B-A4B MoE, unified text+images+tools, KV-quant (~44 tok/s thinking-off); German (**gated**) |
+| `gemma4-e4b-optiq` / `-e2b-optiq` | text | 8 / 6 | OptiQ (BETA) — QAT edge variants, multimodal, faster/smaller (raw ~56 / ~91 tok/s); **gated** |
 | `glm-ocr` | ocr | 2 | **default ocr**, on-demand, #1 OmniDocBench (full page via `GLMOCR_MAX_TOKENS`) |
-| `gemma4-26b-optiq` | text | 16 | **OptiQ engine** (`TEXT_ENGINE=optiq`, BETA) — QAT 26B-A4B MoE, multimodal text+images+tools, KV-quant; **gated**. Primary OptiQ main |
-| `gemma4-31b-optiq` | text | 24 | OptiQ (BETA) — QAT 31B dense, multimodal; **RAM-risky ~23.5 GB** on 32 GB; **gated** |
-| `gemma4-12b-optiq` | text | 8 | OptiQ (BETA) — QAT 12B `gemma4_unified`, multimodal, lighter; **gated** |
-| `gemma4-e4b-optiq` / `-e2b-optiq` | text | 8 / 6 | OptiQ (BETA) — QAT edge variants, multimodal, fast/small; **gated** |
 
 The `*-optiq` rows are selectable only under `TEXT_ENGINE=optiq` (BETA `mlx-optiq`,
 own venv). All are multimodal text+images — **none support audio**.
@@ -393,7 +388,7 @@ use the menu) to change a live box.
 | `INSTALL_OLLAMA` | `0` | Opt-in Ollama fallback (kept in repo, off by default) |
 | `VENV_DIR` | `/Users/mac/.macstudio-venvs` | Where the mlxlm/litellm/mlxvlm venvs live |
 | `HF_CACHE_DIR` | `/Users/mac/.cache/huggingface` | HF model cache (`HF_HOME`) + token store |
-| `ALIAS_MAIN` | `gemma4-26b` | Catalog id of the active text model (a VLM like gemma-4 under `mlx-vlm`; any text arch under `mlx-lm`) |
+| `ALIAS_MAIN` | `gemma4-26b-optiq` | Catalog id of the active text model (an OptiQ Gemma-4 main under `optiq`; a VLM like gemma-4 under `mlx-vlm`; any text arch under `mlx-lm`) |
 | `ALIAS_OCR` | `glm-ocr` | Catalog id of the on-demand OCR model |
 | `ALIAS_EMBED` | `bge-m3` | Catalog id of the on-demand embedder (Infinity, alias `embed`). Empty = no embed alias |
 | `ALIAS_RERANK` | `bge-reranker-v2-m3` | Catalog id of the on-demand reranker (Infinity, alias `rerank`). Empty = no rerank alias |
@@ -403,7 +398,7 @@ use the menu) to change a live box.
 | `VLLM_BACKEND_PORT` | `18000` | Internal text-engine port (legacy `VLLM_` name; mlx_lm.server binds it) |
 | `VLLM_MAX_NUM_SEQS` | `4` | Fallback for `MLXLM_DECODE_CONCURRENCY` (legacy `VLLM_` name) |
 | `LLM_REQUEST_TIMEOUT` | `3600` | Per-request timeout (s) for the text engine **and** LiteLLM; long docs/OCR |
-| `TEXT_ENGINE` | `mlx-vlm` | Engine for `main`: **`mlx-vlm`** (default — **unified text+images** in one model, KV-quant, single-stream; needs a VLM main like gemma-4) \| `mlx-lm` (text-only, batches parallel requests, broad archs incl. granite/glm) \| `optiq` (**BETA** `mlx-optiq` — QAT OptiQ Gemma-4 mains, multimodal text+images + KV-quant, own `mlx-lm`-from-git venv, no audio). Flip + `--apply` to switch/rollback |
+| `TEXT_ENGINE` | `optiq` | Engine for `main`: **`optiq`** (default — **BETA** `mlx-optiq`, QAT OptiQ Gemma-4 mains, **unified text+images** + KV-quant + tools, single-stream, own `mlx-lm`-from-git venv, no audio) \| `mlx-vlm` (stock VLM mains, unified text+images, KV-quant) \| `mlx-lm` (text-only, batches parallel requests, broad archs incl. granite/glm). Flip + `--apply` to switch/rollback |
 | `MLXLM_VERSION` | `0.31.3` | Pinned mlx-lm for the `mlxlm` venv (the text engine) |
 | `MLXLM_PROMPT_CACHE_MB` | `8192` | mlx-lm prompt-cache RAM cap (`--prompt-cache-bytes`); bounds 16-bit KV |
 | `MLXLM_DECODE_CONCURRENCY` | _(empty)_ | mlx-lm `--decode-concurrency`; empty = reuse `VLLM_MAX_NUM_SEQS` |
