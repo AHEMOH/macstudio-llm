@@ -37,7 +37,7 @@ ALWAYS_ON_LABELS=(
   com.local.vision.proxy
   com.local.infinity.proxy
   com.local.ollama.headless
-  com.local.ollama.agent
+  com.local.optiq.agent
   com.local.immich.proxy
   com.local.docling.proxy
   com.local.node.exporter
@@ -94,12 +94,11 @@ CONFIG_KEYS=(
   OPTIQ_KV_BITS
   OPTIQ_KV_GROUP_SIZE
   OPTIQ_MAX_TOKENS
+  OPTIQ_MAX_KV_SIZE
   OPTIQ_PROMPT_CACHE_MB
   OPTIQ_DRAFTER
   GEMMA_TOP_K
   PRESET_ALIASES
-  PRESET_METADATA_TEMP
-  PRESET_METADATA_MAXTOK
   LITELLM_PORT
   GLMOCR_PUBLIC_PORT
   GLMOCR_BACKEND_PORT
@@ -136,9 +135,9 @@ CONFIG_KEYS=(
   INSTALL_AGENT
   AGENT_MODEL
   AGENT_BACKEND_PORT
-  AGENT_CONTEXT_LENGTH
+  AGENT_KV_BITS
+  AGENT_MAX_KV_SIZE
   AGENT_MAX_TOKENS
-  AGENT_ENABLE_THINKING
   ML_PUBLIC_PORT
   ML_BACKEND_PORT
   DOCLING_PUBLIC_PORT
@@ -210,12 +209,11 @@ config_default() {
     OPTIQ_KV_BITS)               echo 8 ;;
     OPTIQ_KV_GROUP_SIZE)         echo "" ;;
     OPTIQ_MAX_TOKENS)            echo 16384 ;;
+    OPTIQ_MAX_KV_SIZE)           echo "" ;;
     OPTIQ_PROMPT_CACHE_MB)       echo 8192 ;;
     OPTIQ_DRAFTER)               echo "" ;;
     GEMMA_TOP_K)                 echo 64 ;;
     PRESET_ALIASES)              echo 1 ;;
-    PRESET_METADATA_TEMP)        echo 0.0 ;;
-    PRESET_METADATA_MAXTOK)      echo 2048 ;;
     LITELLM_PORT)                echo 11434 ;;
     GLMOCR_PUBLIC_PORT)          echo 5002 ;;
     GLMOCR_BACKEND_PORT)         echo 15002 ;;
@@ -250,11 +248,11 @@ config_default() {
     OLLAMA_LOAD_TIMEOUT)         echo 15m ;;
     OLLAMA_VERSION)              echo 0.31.1 ;;
     INSTALL_AGENT)               echo 0 ;;
-    AGENT_MODEL)                 echo gemma4:e2b-mlx ;;
-    AGENT_BACKEND_PORT)          echo 18001 ;;
-    AGENT_CONTEXT_LENGTH)        echo 32768 ;;
-    AGENT_MAX_TOKENS)            echo 16384 ;;
-    AGENT_ENABLE_THINKING)       echo 0 ;;
+    AGENT_MODEL)                 echo gemma4-e2b-optiq ;;
+    AGENT_BACKEND_PORT)          echo 18002 ;;
+    AGENT_KV_BITS)               echo 4 ;;
+    AGENT_MAX_KV_SIZE)           echo 131072 ;;
+    AGENT_MAX_TOKENS)            echo 8192 ;;
     ML_PUBLIC_PORT)              echo 3003 ;;
     ML_BACKEND_PORT)             echo 13003 ;;
     DOCLING_PUBLIC_PORT)         echo 5001 ;;
@@ -313,21 +311,20 @@ config_hint() {
     MLXLM_PROMPT_CACHE_MB)       echo "mlx-lm prompt-cache hard cap in MB (--prompt-cache-bytes). Bounds KV/prefix RAM (16-bit KV grows fast — no kv-quant); default 8192" ;;
     MLXLM_DECODE_CONCURRENCY)    echo "mlx-lm concurrent decode streams (--decode-concurrency). empty = reuse VLLM_MAX_NUM_SEQS" ;;
     MLXLM_PROMPT_CONCURRENCY)    echo "mlx-lm concurrent prompt prefills (--prompt-concurrency); default 1 on 32 GB (limits prefill RAM spikes)" ;;
-    MLXLM_MAX_TOKENS)            echo "mlx-lm server default --max-tokens = ceiling for main (unset would be only 512!). 16384 = effectively unrestricted for chat/long text; model stops at EOS. main-metadata overrides via PRESET_METADATA_MAXTOK" ;;
+    MLXLM_MAX_TOKENS)            echo "mlx-lm server default --max-tokens = ceiling for main (unset would be only 512!). 16384 = effectively unrestricted for chat/long text; model stops at EOS" ;;
     MLXLM_CHAT_TEMPLATE_ARGS)    echo "mlx-lm chat-template JSON (--chat-template-args), e.g. {\"enable_thinking\":false} to suppress reasoning output. empty = off" ;;
     MLXVLM_MAIN_KV_BITS)         echo "KV-cache quant bits for the mlx-vlm unified main: 8 (recommended), 4, or 3.5 with turboquant. empty=off. (Only when TEXT_ENGINE=mlx-vlm)" ;;
     MLXVLM_MAIN_KV_SCHEME)       echo "mlx-vlm main KV quant scheme: uniform | turboquant (fractional bits like 3.5)" ;;
     MLXVLM_MAIN_MAX_KV_SIZE)     echo "mlx-vlm main context cap (--max-kv-size); empty = model default. Raise to exploit KV-quant for big context on 32 GB" ;;
-    MLXVLM_MAIN_ENABLE_THINKING) echo "mlx-vlm main: 1 = think by default (default — so 'main' reasons; OpenWebUI shows it), 0 = off. main-fast + main-metadata are forced thinking-off at the proxy regardless; clients can override per request" ;;
+    MLXVLM_MAIN_ENABLE_THINKING) echo "mlx-vlm main: 1 = think by default (default — so 'main' reasons; OpenWebUI shows it), 0 = off. main-fast is forced thinking-off at the proxy regardless; clients can override per request" ;;
     OPTIQ_KV_BITS)               echo "optiq serve KV-cache quant bits: 4 or 8 (--kv-bits). empty = off. (Only when TEXT_ENGINE=optiq)" ;;
     OPTIQ_KV_GROUP_SIZE)         echo "optiq serve KV quant group size (--kv-group-size); empty = optiq default (64). Only with OPTIQ_KV_BITS set" ;;
     OPTIQ_MAX_TOKENS)            echo "optiq serve default --max-tokens ceiling for main (default 16384). (Only when TEXT_ENGINE=optiq)" ;;
+    OPTIQ_MAX_KV_SIZE)           echo "main context cap (--max-kv-size, rotating window). Bounds the prefill working set so an over-long prompt degrades gracefully instead of OOM-crashing the daemon. 16384 (~20 A4 pages) is the recommended small-main cap; long-context work goes to the co-resident 'agent'. empty = uncapped (model max, OOM risk on 32 GB above ~110K). (Only when TEXT_ENGINE=optiq)" ;;
     OPTIQ_PROMPT_CACHE_MB)       echo "optiq serve prompt-cache cap in MB (--prompt-cache-bytes); bounds the reusable KV/prefix cache → enables a LARGE context window. Default 8192 (8 GB; model streams experts from SSD so plenty of headroom on 32 GB). Raise for huge contexts" ;;
     OPTIQ_DRAFTER)               echo "optiq serve speculative-decoding drafter repo (--drafter), e.g. google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant. empty = OFF (drafter costs extra RAM — leave off on 32 GB unless verified)" ;;
-    GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off; inert at temperature 0 (so not applied to main-metadata)" ;;
-    PRESET_ALIASES)              echo "1 = also expose the preset aliases (main-fast/-metadata) — same loaded model, different default behaviour (main-fast = thinking-off, main-metadata = deterministic capped JSON)" ;;
-    PRESET_METADATA_TEMP)        echo "alias 'main-metadata' temperature (paperless-ngx JSON output, deterministic; default 0.0 — safe because output is capped)" ;;
-    PRESET_METADATA_MAXTOK)      echo "alias 'main-metadata' max_tokens cap (paperless JSON). 2048 — output is short JSON (<400 tok); the low ceiling also aborts a repetition loop sooner. metadata is thinking-OFF; capped (main uses MLXLM_MAX_TOKENS)" ;;
+    GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast/agent (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off" ;;
+    PRESET_ALIASES)              echo "1 = also expose the 'main-fast' preset alias (same loaded model as 'main' but thinking-OFF at the proxy — fast non-reasoning chat / tools / web / cron / email)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
     IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend sleeps (default 60); -1 = never sleep (stay warm)" ;;
     GLMOCR_MAX_TOKENS)           echo "Max output tokens for GLM-OCR (mlx-vlm default is only 2048 — a dense full page can exceed it and get truncated). Default 8192" ;;
@@ -346,13 +343,13 @@ config_hint() {
     OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: 10m (default), 1h, 24h, -1=forever" ;;
     OLLAMA_MAX_LOADED_MODELS)    echo "Max models in VRAM at once: 2 (default; e.g. text + OCR), 1 = single-model mode" ;;
     OLLAMA_KV_CACHE_TYPE)        echo "KV cache precision: q8_0 (recommended), q4_0 (aggressive), fp16 (default)" ;;
-    OLLAMA_VERSION)              echo "Pinned Ollama version fetched as ollama-darwin.tgz from GitHub into \$VENV_DIR/ollama-dist (the -mlx gemma-4 tags need >=0.31.0; the brew formula lags). Used by the 'agent' service + the INSTALL_OLLAMA fallback. Bump deliberately + --apply" ;;
-    INSTALL_AGENT)               echo "1 = run a small, fast, co-resident Ollama text/agentic model (MLX runner + MTP) ALONGSIDE the big unified main, exposed as LiteLLM alias 'agent'. Needs INSTALL_MLX=1 (for the LiteLLM gateway). ~6 GB always-warm; verified co-resident with the optiq 26b main" ;;
-    AGENT_MODEL)                 echo "Ollama tag for the 'agent' model (raw ollama pull tag, NOT a HF catalog id). Default gemma4:e2b-mlx (~6 GB, ~78 tok/s, tools). e.g. gemma4:e4b-mlx for more quality" ;;
-    AGENT_BACKEND_PORT)          echo "Internal port the 'agent' Ollama daemon binds (default 18001); LiteLLM fronts it. Distinct from VLLM_BACKEND_PORT (:18000 main) and the Ollama fallback OLLAMA_PORT (:11434)" ;;
-    AGENT_CONTEXT_LENGTH)        echo "Fixed context window for the agent (OLLAMA_CONTEXT_LENGTH, default 32768). Set ONCE so the warm model never reloads (all requests arrive via LiteLLM which omits per-request num_ctx). e2b supports up to 131072" ;;
-    AGENT_MAX_TOKENS)            echo "Default output-token ceiling for the agent/agent-thinking aliases (Ollama has NO built-in cap → unbounded until EOS/context; this prevents a runaway/looping generation). Default 16384 (matches OPTIQ_MAX_TOKENS); must be < AGENT_CONTEXT_LENGTH. Clients can override per request" ;;
-    AGENT_ENABLE_THINKING)       echo "Default behaviour of the bare 'agent' alias: 0 = thinking off (default — the FAST path), 1 = reason. A separate 'agent-thinking' alias (same model, reasoning ON) is ALWAYS exposed too, so clients can pick per request. Wired as Ollama's extra_body think bool" ;;
+    OLLAMA_VERSION)              echo "Pinned Ollama version fetched as ollama-darwin.tgz from GitHub into \$VENV_DIR/ollama-dist (the -mlx gemma-4 tags need >=0.31.0; the brew formula lags). Used only by the INSTALL_OLLAMA fallback (the 'agent' is optiq now). Bump deliberately + --apply" ;;
+    INSTALL_AGENT)               echo "1 = run a small, fast, co-resident OptiQ Gemma-4 model (a 2nd 'optiq serve') ALONGSIDE the big unified main, exposed as LiteLLM alias 'agent'. Does text+tools+IMAGES (vision) and a huge context (128K) at tiny KV — swap-free co-resident with the 26B (verified). Needs INSTALL_MLX=1 + the optiq venv (auto-built). thinking-OFF by default" ;;
+    AGENT_MODEL)                 echo "HF CATALOG id of the 'agent' model (an OptiQ Gemma-4 build). Default gemma4-e2b-optiq (~5 GB, ~76 tok/s, tools+vision, 128K). e.g. gemma4-e4b-optiq for more quality (NOTE: e4b co-resident swaps on 32 GB — verified; stick with e2b unless the main is smaller)" ;;
+    AGENT_BACKEND_PORT)          echo "Internal port the 'agent' optiq daemon binds (default 18002); LiteLLM fronts it. Distinct from VLLM_BACKEND_PORT (:18000 main) and OLLAMA_PORT (:11434)" ;;
+    AGENT_KV_BITS)               echo "agent optiq serve KV-cache quant bits: 4 (recommended — keeps 128K KV tiny) or 8. empty = fp16" ;;
+    AGENT_MAX_KV_SIZE)           echo "agent context cap (--max-kv-size, rotating). Default 131072 (e2b/e4b max is 128K; the 12B unified goes to 256K). Bounds prefill so an over-long prompt can't OOM the box" ;;
+    AGENT_MAX_TOKENS)            echo "agent default output-token ceiling (optiq --max-tokens). Default 8192; clients can override per request" ;;
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
     AUTOUPDATE_WEEKDAY)          echo "launchd weekday: 0=Sun 1=Mon … 6=Sat" ;;
@@ -556,7 +553,7 @@ load_config() {
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ -n "${ALIAS_VISION:-}" ]; } || continue ;;
       com.local.ollama.headless)
         [ "${INSTALL_OLLAMA:-0}" = 1 ] || continue ;;
-      com.local.ollama.agent)
+      com.local.optiq.agent)
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${INSTALL_AGENT:-0}" = 1 ]; } || continue ;;
       com.local.ollama.exporter)
         { [ "${INSTALL_OLLAMA:-0}" = 1 ] && [ "${INSTALL_EXPORTERS:-1}" = 1 ]; } || continue ;;
@@ -609,7 +606,7 @@ label_log() {
     com.local.vision.proxy)      echo "$LOG_DIR/vision-proxy.log" ;;
     com.local.vision.serve)      echo "$LOG_DIR/vision-serve.log" ;;
     com.local.ollama.headless)   echo "$LOG_DIR/ollama.log" ;;
-    com.local.ollama.agent)      echo "$LOG_DIR/ollama-agent.log" ;;
+    com.local.optiq.agent)       echo "$LOG_DIR/optiq-agent.log" ;;
     com.local.immich.proxy)      echo "$LOG_DIR/immich-proxy.log" ;;
     com.local.immich.ml)         echo "$LOG_DIR/immich-ml.log" ;;
     com.local.docling.proxy)     echo "$LOG_DIR/docling-proxy.log" ;;
@@ -944,7 +941,9 @@ ensure_python_venvs() {
   # pillow: mlx-optiq does NOT depend on PIL, but `optiq serve` needs it to decode
   # image_url input — without it the server logs "vision serving not installed: No
   # module named 'PIL'" and silently runs text-only. Required for the multimodal main.
-  if [ "${TEXT_ENGINE:-mlx-vlm}" = optiq ]; then
+  # Also built when INSTALL_AGENT=1: the co-resident 'agent' is a 2nd optiq serve
+  # (OptiQ Gemma-4 e2b), so it needs the optiq venv even if the main runs another engine.
+  if [ "${TEXT_ENGINE:-mlx-vlm}" = optiq ] || [ "${INSTALL_AGENT:-0}" = 1 ]; then
     _ensure_venv optiq bin:optiq 'mlx-optiq' 'mlx-lm @ git+https://github.com/ml-explore/mlx-lm.git' 'pillow' 'huggingface_hub[cli]'
   fi
 
@@ -1090,40 +1089,26 @@ render_litellm_config() {
     # main: Gemma reference sampling (temp/top_p from catalog, top_k via extra_body);
     # thinking is left to the model/client (a reasoning model thinks by default; a client
     # can pass enable_thinking per request).
-    # main-fast / -metadata: thinking ALWAYS off at the proxy (emit_model arg 9).
+    # main-fast: thinking ALWAYS off at the proxy (emit_model arg 9).
     emit_model main "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" "" "${GEMMA_TOP_K:-64}"
-    # Sampling-preset aliases: SAME loaded gemma model, different DEFAULT behaviour
-    # (all share :18000 -> only ONE model stays resident). Apps pick the alias per
-    # workload. mlx-vlm has NO repetition_penalty -> anti-loop = non-greedy temp +
-    # frequency_penalty + a max_tokens backstop. Aliases:
-    #   main-fast     = exactly 'main' (Gemma reference sampling) but thinking OFF (fast,
-    #                   non-reasoning chat / tools / web / cron / email).
-    #   main-metadata = paperless-ngx JSON (deterministic temp 0 -> top_k inert, no think, tight cap).
+    # main-fast = SAME loaded gemma model as 'main' (shares :18000 -> only ONE resident),
+    # exactly 'main' sampling but thinking OFF at the proxy
+    # (fast, non-reasoning chat / tools / web / cron / email). (main-metadata was retired.)
     if [ "${PRESET_ALIASES:-1}" = 1 ]; then
-      emit_model main-fast     "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" 1 "${GEMMA_TOP_K:-64}"
-      emit_model main-metadata "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "${PRESET_METADATA_TEMP:-0.0}" "" "" "" "${PRESET_METADATA_MAXTOK:-2048}" 1
+      emit_model main-fast "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" 1 "${GEMMA_TOP_K:-64}"
     fi
-    # 'agent' — a small, fast, CO-RESIDENT Ollama text/agentic model (MLX runner + MTP)
-    # on its OWN internal port (AGENT_BACKEND_PORT), running ALONGSIDE the big unified
-    # main. It is NOT the main and NOT a TEXT_ENGINE — it's a self-contained extra like
-    # ocr/embed (driven purely by INSTALL_AGENT + AGENT_* config, not the catalog).
-    # Ollama serves gemma-4 TEXT+tools here (NOT images — image input isn't wired on Ollama's
-    # MLX runner; those go to the unified 'main'). Uses LiteLLM's **ollama_chat/** provider
-    # (api_base WITHOUT /v1) — NOT openai/ — because only ollama_chat natively forwards Ollama's
-    # `think` bool; the openai/ provider + drop_params silently DROPS it, so thinking-off never
-    # took effect (verified on the Mac: both aliases reasoned identically). `think`/`top_k` ride
-    # as normal litellm_params (ollama options), not extra_body. TWO aliases, SAME e2b backend:
-    #   agent          = FAST path, thinking OFF by default (AGENT_ENABLE_THINKING=1 flips it).
-    #   agent-thinking = SAME model, reasoning ON (think:true) — explicit thinking variant.
-    if [ "${INSTALL_AGENT:-0}" = 1 ] && [ -n "${AGENT_MODEL:-}" ]; then
-      _agent_think=false
-      [ "${AGENT_ENABLE_THINKING:-0}" = 1 ] && _agent_think=true
-      printf '  - model_name: agent\n    litellm_params:\n      model: ollama_chat/%s\n      api_base: http://127.0.0.1:%s\n      think: %s\n      temperature: 1.0\n      top_p: 0.95\n      top_k: %s\n' \
-        "${AGENT_MODEL}" "${AGENT_BACKEND_PORT:-18001}" "$_agent_think" "${GEMMA_TOP_K:-64}"
-      [ -n "${AGENT_MAX_TOKENS:-}" ] && printf '      max_tokens: %s\n' "${AGENT_MAX_TOKENS}"
-      printf '  - model_name: agent-thinking\n    litellm_params:\n      model: ollama_chat/%s\n      api_base: http://127.0.0.1:%s\n      think: true\n      temperature: 1.0\n      top_p: 0.95\n      top_k: %s\n' \
-        "${AGENT_MODEL}" "${AGENT_BACKEND_PORT:-18001}" "${GEMMA_TOP_K:-64}"
-      [ -n "${AGENT_MAX_TOKENS:-}" ] && printf '      max_tokens: %s\n' "${AGENT_MAX_TOKENS}"
+    # 'agent' — a small, fast, CO-RESIDENT OptiQ Gemma-4 (default gemma4-e2b-optiq) on its
+    # OWN internal port (AGENT_BACKEND_PORT), a 2nd `optiq serve` running ALONGSIDE the big
+    # unified main. NOT the main, NOT a TEXT_ENGINE — a self-contained extra like ocr/embed,
+    # driven by INSTALL_AGENT + AGENT_* config. Because it's optiq (OpenAI /v1) it does
+    # text + tools + IMAGES (vision) and a huge context (128K) at tiny KV — Ollama's MLX
+    # runner couldn't (drops Gemma-4 vision, verified). openai/ provider via emit_model;
+    # thinking-OFF by default (verified: e2b stays clean thinking-off; the 12B loops — so
+    # nothink is safe here). Gemma reference sampling. Emitted only when AGENT_MODEL resolves
+    # in the catalog (download first).
+    if [ "${INSTALL_AGENT:-0}" = 1 ]; then
+      local agent_repo; agent_repo=$(catalog_repo "${AGENT_MODEL:-}")
+      [ -n "$agent_repo" ] && emit_model agent "$agent_repo" "${AGENT_BACKEND_PORT:-18002}" 1.0 0.95 "" "" "${AGENT_MAX_TOKENS:-}" 1 "${GEMMA_TOP_K:-64}"
     fi
     if [ -n "$ocr_repo" ]; then
       printf '  - model_name: ocr\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
@@ -1143,10 +1128,9 @@ render_litellm_config() {
       printf '  - model_name: rerank\n    litellm_params:\n      model: infinity/%s\n      api_base: http://127.0.0.1:%s\n      api_key: dummy\n    model_info:\n      mode: rerank\n' \
         "${ALIAS_RERANK}" "${INFINITY_PUBLIC_PORT:-5004}"
     fi
-    # No 'vision' gateway alias: the unified mlx-vlm 'main' already does images, so the
-    # chat set is intentionally main / main-fast / main-metadata / ocr (plus the
-    # embed / rerank utility aliases above). The vision wrapper/daemon/role stay in the
-    # repo but dormant (ALIAS_VISION="").
+    # No 'vision' gateway alias: the unified 'main' already does images, so the chat set
+    # is intentionally main / main-fast / agent / ocr (plus the embed / rerank utility
+    # aliases above). The vision wrapper/daemon/role stay in the repo but dormant (ALIAS_VISION="").
     echo "litellm_settings:"
     echo "  drop_params: true"
     # Long docs/OCR generations can run minutes — raise the gateway timeout and
@@ -1269,9 +1253,10 @@ render_all_plists() {
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ -n "${ALIAS_VISION:-}" ]; } || { remove_plist "$label"; continue; } ;;
       com.local.ollama.headless)
         [ "${INSTALL_OLLAMA:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
-      com.local.ollama.agent)
-        # Small fast co-resident Ollama text/agentic model (alias 'agent'), alongside
-        # the big unified main. Independent of TEXT_ENGINE; needs the LiteLLM gateway.
+      com.local.optiq.agent)
+        # Small fast co-resident OptiQ Gemma-4 model (alias 'agent', 2nd 'optiq serve'),
+        # alongside the big unified main. Text+tools+vision + big context; needs the
+        # optiq venv (auto-built when INSTALL_AGENT=1) + the LiteLLM gateway.
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${INSTALL_AGENT:-0}" = 1 ]; } || { remove_plist "$label"; continue; } ;;
       com.local.ollama.exporter)
         { [ "${INSTALL_OLLAMA:-0}" = 1 ] && [ "${INSTALL_EXPORTERS:-1}" = 1 ]; } || { remove_plist "$label"; continue; } ;;
@@ -1328,9 +1313,9 @@ ensure_ollama_dist() {
   # Version-pinned Ollama distribution (GitHub ollama-darwin.tgz) → $VENV_DIR/ollama-dist.
   # The -mlx gemma-4 tags require Ollama >= 0.31.0, which the brew formula lags behind;
   # the tgz is self-contained (ollama + llama-server + mlx_metal runners). Needed for
-  # the 'agent' service (and the INSTALL_OLLAMA fallback, which now prefers this dist).
+  # the INSTALL_OLLAMA fallback (the 'agent' is optiq now, so it no longer needs this).
   # Idempotent: re-fetch only when the installed binary's version != OLLAMA_VERSION.
-  { [ "${INSTALL_AGENT:-0}" = 1 ] || [ "${INSTALL_OLLAMA:-0}" = 1 ]; } || return 0
+  [ "${INSTALL_OLLAMA:-0}" = 1 ] || return 0
   local ver="${OLLAMA_VERSION:-0.31.1}"
   local dist="${VENV_DIR:-/Users/mac/.macstudio-venvs}/ollama-dist"
   local bin="$dist/ollama" have=""
@@ -1352,38 +1337,6 @@ ensure_ollama_dist() {
     ok "ollama dist installed ($ver) at $dist"
   else
     warn "tar extract failed for $tgz"
-  fi
-}
-
-ensure_agent_model() {
-  # Pull the 'agent' Ollama model (raw tag, e.g. gemma4:e2b-mlx) if missing. Talks to
-  # the agent daemon on AGENT_BACKEND_PORT (render_all_plists just started it); models
-  # live in OLLAMA_MODELS, shared across serve instances. Idempotent (skip if present).
-  [ "${INSTALL_AGENT:-0}" = 1 ] || return 0
-  local tag="${AGENT_MODEL:-gemma4:e2b-mlx}"
-  local port="${AGENT_BACKEND_PORT:-18001}"
-  local dist="${VENV_DIR:-/Users/mac/.macstudio-venvs}/ollama-dist"
-  local bin=/opt/homebrew/opt/ollama/bin/ollama
-  [ -x "$dist/ollama" ] && bin="$dist/ollama"
-  local up=0 i
-  for i in $(seq 1 15); do
-    /usr/bin/curl -fsS -m 3 "http://127.0.0.1:${port}/api/tags" >/dev/null 2>&1 && { up=1; break; }
-    sleep 2
-  done
-  if [ "$up" != 1 ]; then
-    warn "agent ollama not reachable on :${port} — skipping model pull (re-run --apply once it's up)"
-    return 0
-  fi
-  if /usr/bin/curl -fsS -m 5 "http://127.0.0.1:${port}/api/tags" 2>/dev/null | /usr/bin/grep -q "\"${tag}\""; then
-    ok "agent model present ($tag)"
-    return 0
-  fi
-  log "pulling agent model '$tag' via Ollama (first time ~6 GB)…"
-  if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env OLLAMA_HOST="127.0.0.1:${port}" OLLAMA_LIBRARY_PATH="$dist" \
-        "$bin" pull "$tag"; then
-    ok "agent model pulled: $tag"
-  else
-    warn "ollama pull '$tag' failed (network/gated/too-old ollama?) — 'agent' alias will 404 until fixed"
   fi
 }
 
@@ -1530,7 +1483,6 @@ apply_everything() {
   dbg "step: render_motd";            render_motd
   dbg "step: apply_iogpu_wired_limit"; apply_iogpu_wired_limit
   dbg "step: ensure_ollama_models";    ensure_ollama_models
-  dbg "step: ensure_agent_model";      ensure_agent_model
   dbg "step: apply_pmset";            apply_pmset
   dbg "step: apply_os_trim";          apply_os_trim
   echo
