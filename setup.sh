@@ -137,6 +137,7 @@ CONFIG_KEYS=(
   AGENT_MODEL
   AGENT_BACKEND_PORT
   AGENT_CONTEXT_LENGTH
+  AGENT_MAX_TOKENS
   AGENT_ENABLE_THINKING
   ML_PUBLIC_PORT
   ML_BACKEND_PORT
@@ -252,6 +253,7 @@ config_default() {
     AGENT_MODEL)                 echo gemma4:e2b-mlx ;;
     AGENT_BACKEND_PORT)          echo 18001 ;;
     AGENT_CONTEXT_LENGTH)        echo 32768 ;;
+    AGENT_MAX_TOKENS)            echo 16384 ;;
     AGENT_ENABLE_THINKING)       echo 0 ;;
     ML_PUBLIC_PORT)              echo 3003 ;;
     ML_BACKEND_PORT)             echo 13003 ;;
@@ -348,7 +350,8 @@ config_hint() {
     INSTALL_AGENT)               echo "1 = run a small, fast, co-resident Ollama text/agentic model (MLX runner + MTP) ALONGSIDE the big unified main, exposed as LiteLLM alias 'agent'. Needs INSTALL_MLX=1 (for the LiteLLM gateway). ~6 GB always-warm; verified co-resident with the optiq 26b main" ;;
     AGENT_MODEL)                 echo "Ollama tag for the 'agent' model (raw ollama pull tag, NOT a HF catalog id). Default gemma4:e2b-mlx (~6 GB, ~78 tok/s, tools). e.g. gemma4:e4b-mlx for more quality" ;;
     AGENT_BACKEND_PORT)          echo "Internal port the 'agent' Ollama daemon binds (default 18001); LiteLLM fronts it. Distinct from VLLM_BACKEND_PORT (:18000 main) and the Ollama fallback OLLAMA_PORT (:11434)" ;;
-    AGENT_CONTEXT_LENGTH)        echo "Fixed context window for the agent (OLLAMA_CONTEXT_LENGTH, default 32768). Set ONCE so the warm model never reloads (all requests arrive via LiteLLM /v1 which omits per-request num_ctx). e2b supports up to 131072" ;;
+    AGENT_CONTEXT_LENGTH)        echo "Fixed context window for the agent (OLLAMA_CONTEXT_LENGTH, default 32768). Set ONCE so the warm model never reloads (all requests arrive via LiteLLM which omits per-request num_ctx). e2b supports up to 131072" ;;
+    AGENT_MAX_TOKENS)            echo "Default output-token ceiling for the agent/agent-thinking aliases (Ollama has NO built-in cap → unbounded until EOS/context; this prevents a runaway/looping generation). Default 16384 (matches OPTIQ_MAX_TOKENS); must be < AGENT_CONTEXT_LENGTH. Clients can override per request" ;;
     AGENT_ENABLE_THINKING)       echo "Default behaviour of the bare 'agent' alias: 0 = thinking off (default — the FAST path), 1 = reason. A separate 'agent-thinking' alias (same model, reasoning ON) is ALWAYS exposed too, so clients can pick per request. Wired as Ollama's extra_body think bool" ;;
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
@@ -1117,8 +1120,10 @@ render_litellm_config() {
       [ "${AGENT_ENABLE_THINKING:-0}" = 1 ] && _agent_think=true
       printf '  - model_name: agent\n    litellm_params:\n      model: ollama_chat/%s\n      api_base: http://127.0.0.1:%s\n      think: %s\n      temperature: 1.0\n      top_p: 0.95\n      top_k: %s\n' \
         "${AGENT_MODEL}" "${AGENT_BACKEND_PORT:-18001}" "$_agent_think" "${GEMMA_TOP_K:-64}"
+      [ -n "${AGENT_MAX_TOKENS:-}" ] && printf '      max_tokens: %s\n' "${AGENT_MAX_TOKENS}"
       printf '  - model_name: agent-thinking\n    litellm_params:\n      model: ollama_chat/%s\n      api_base: http://127.0.0.1:%s\n      think: true\n      temperature: 1.0\n      top_p: 0.95\n      top_k: %s\n' \
         "${AGENT_MODEL}" "${AGENT_BACKEND_PORT:-18001}" "${GEMMA_TOP_K:-64}"
+      [ -n "${AGENT_MAX_TOKENS:-}" ] && printf '      max_tokens: %s\n' "${AGENT_MAX_TOKENS}"
     fi
     if [ -n "$ocr_repo" ]; then
       printf '  - model_name: ocr\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
