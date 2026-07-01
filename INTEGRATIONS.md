@@ -23,23 +23,24 @@ behind an alias can be swapped (`llm-models`) without the app noticing.
 
 | Alias  | What it is                       | Endpoint(s)                       | Backed by                     |
 |--------|----------------------------------|-----------------------------------|-------------------------------|
-| `main` | The big always-on model (chat **+ images**), reasons by default | `/v1/chat/completions`, `/v1/completions`, `/v1/messages` | unified mlx-vlm main (always on) |
+| `main` | The big always-on model (chat **+ images**), reasons by default | `/v1/chat/completions`, `/v1/completions`, `/v1/messages` | unified optiq main (always on, context capped ~16K) |
 | `main-fast` | Exactly `main` but **thinking OFF** — fast, non-reasoning chat / tool use / web / cron / email | same as `main` | **same loaded model**, thinking-off |
-| `main-metadata` | `main` for **paperless-ngx JSON**: deterministic (temp 0) + tight `max_tokens` cap, **no thinking** (title/date/tags JSON) | same as `main` | **same loaded model**, different default sampling |
+| `agent` | Fast **co-resident** helper: text + tools + **images**, **128K context**, thinking-off — the long-context / fast path (`main` is capped small, longer prompts go here) | `/v1/chat/completions`, `/v1/messages` | OptiQ Gemma-4 e2b, a 2nd `optiq serve` (only if `INSTALL_AGENT=1`) |
 | `ocr`  | Dedicated OCR (document → text), best quality | `/v1/chat/completions` (image input) | GLM-OCR via mlx-vlm (on-demand) |
 | `embed` | Dense text **embeddings** for RAG (1024-dim, multilingual) | `/v1/embeddings` | BAAI/bge-m3 via Infinity (on-demand) |
 | `rerank` | Cross-encoder **reranker** (scores docs against a query) | `/v1/rerank`, `/rerank` | BAAI/bge-reranker-v2-m3 via Infinity (on-demand) |
 
-The gateway exposes **exactly these six aliases**. The `main*` aliases all point at
-the **one** loaded model — they only differ in DEFAULT sampling and thinking, so
-picking one does **not** load a second model. `main` and `main-fast` share Gemma's
-reference sampling (**temperature 1.0 / top_p 0.95 / top_k 64**); `main`/`main-fast`
+The gateway exposes `main`, `main-fast`, `ocr`, `embed`, `rerank` — plus `agent` when
+`INSTALL_AGENT=1`. `main` and `main-fast` point at the **one** big loaded model (they
+differ only in DEFAULT thinking, so picking one does **not** load a second model);
+`agent` is a **separate** small co-resident model. `main`/`main-fast`/`agent` share
+Gemma's reference sampling (**temperature 1.0 / top_p 0.95 / top_k 64**); `main`/`main-fast`
 temp+top_p come from the catalog, `top_k` from `GEMMA_TOP_K` (via `extra_body`, since
 top_k is not a native OpenAI param). Clients may override any of these per request.
-Toggle the presets with `PRESET_ALIASES`.
+Toggle `main-fast` with `PRESET_ALIASES`.
 
 **Thinking/reasoning:** `main` reasons by default (a reasoning model thinks; clients
-can send `enable_thinking:false` to turn it off). **`main-fast` and `main-metadata`
+can send `enable_thinking:false` to turn it off). **`main-fast` and `agent`
 always run without thinking** (suppressed at the gateway) — so `main-fast` is the
 fast/clean chat & tool path and metadata returns tidy JSON.
 
@@ -192,10 +193,11 @@ a local display — the JSON keys above are the contract.
 - **API Base URL:** `http://mac.home.arpa:11434/v1`
 - **API Key:** `sk-local`
 
-The models `main`, `main-fast`, `main-metadata` and `ocr` appear in the model picker.
+The models `main`, `main-fast`, `agent` and `ocr` appear in the model picker.
 For chat use `main`, which may emit reasoning that Open WebUI renders as a foldable
-"thinking" block; `main-fast` and `main-metadata` are thinking-off, so they return
-clean output with no thinking block (`main-fast` is the fast non-reasoning chat path).
+"thinking" block; `main-fast` and `agent` are thinking-off, so they return
+clean output with no thinking block (`main-fast` is the fast non-reasoning chat path,
+`agent` adds a 128K context for long documents).
 (Embeddings/STT are not served by this stack.)
 
 ---
