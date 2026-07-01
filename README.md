@@ -25,10 +25,18 @@ raise a couple of config keys.
 > **one big model** is in memory (GLM-OCR and the small BGE embed/rerank pair are the
 > only on-demand extras).
 
-> **Why not Ollama?** Ollama bakes context length into the model load (every
-> `num_ctx` change = a 30–60 s reload). `mlx_lm.server` keeps one model warm and
-> serves OpenAI `/v1` directly. Ollama is still shipped here as an **opt-in
-> fallback** (`INSTALL_OLLAMA=1`), off by default.
+> **Ollama's role here.** Ollama is not the unified `main` — its MLX runner doesn't
+> do Gemma-4 image input, so it can't be the one multimodal model. But its MLX runner
+> **is** faster than the MLX main engines and actually runs Gemma-4 **multi-token
+> prediction** (verified: ~+25 % on e2b). So it's used for one thing: an optional,
+> small, **always-warm co-resident `agent` model** (`INSTALL_AGENT=1`) — a fast text /
+> tool path served *alongside* the big multimodal main. The old "Ollama bakes
+> `num_ctx` into the load → 30–60 s reload on every context change" problem is gone
+> here: all traffic arrives through the LiteLLM `/v1` proxy (which never sends
+> `num_ctx`), so with a fixed `OLLAMA_CONTEXT_LENGTH` + `keep_alive=-1` the model loads
+> **once** and stays warm — no per-context Modelfiles needed. A separate full Ollama
+> daemon (`INSTALL_OLLAMA=1`, the gpt-oss/paperless Modelfiles) remains as an opt-in
+> fallback, off by default.
 
 ## What this gives you
 
@@ -38,10 +46,19 @@ raise a couple of config keys.
   its own field). 16-bit KV cache (no KV quantization yet — mlx-lm issue #1308);
   RAM bounded via `MLXLM_PROMPT_CACHE_MB`. Stable and simple.
 - **LiteLLM gateway** on the public port (:11434): apps talk OpenAI `/v1` (and
-  Anthropic `/v1/messages`) to **six stable aliases** — `main` (text + images),
+  Anthropic `/v1/messages`) to the stable aliases — `main` (text + images),
   `main-fast` (same, thinking-off), `main-metadata` (deterministic JSON), `ocr`,
-  `embed` (BGE-M3 embeddings) and `rerank` (BGE reranker).
+  `embed` (BGE-M3 embeddings), `rerank` (BGE reranker), and — when `INSTALL_AGENT=1` —
+  `agent` (the fast co-resident Ollama text/tool model, see below).
   The underlying model is swappable without the app noticing.
+- **`agent`** (opt-in `INSTALL_AGENT=1`, off by default): a small, fast, **always-warm
+  co-resident** text/agentic model served by **Ollama's MLX runner** (multi-token
+  prediction on) on its own internal port (:18001), exposed as the LiteLLM `agent`
+  alias. Default `gemma4:e2b-mlx` (~6 GB, ~78 tok/s, tool calling; text-only — images
+  go to `main`). Runs *alongside* the big multimodal main — verified co-resident with
+  the 26B main (both serve simultaneously, no slowdown). Thinking-off by default (it's
+  the fast path). Uses a version-pinned Ollama (`OLLAMA_VERSION`, fetched from GitHub —
+  the `-mlx` tags need ≥ 0.31.0, newer than the brew formula).
 - **GLM-OCR** (0.9 B, ~2 GB) on-demand on :5002 via `mlx-vlm` — document OCR,
   #1 on OmniDocBench. The only vision model small enough to co-reside with the
   big text main.
@@ -89,10 +106,11 @@ raise a couple of config keys.
 ```
 Public (apps point here):
   com.local.litellm.proxy          :11434   LiteLLM gateway — aliases main / main-fast /
-                                             main-metadata / ocr / embed / rerank
+                                             main-metadata / ocr / embed / rerank / agent
                                              (OpenAI /v1 + Anthropic /v1/messages)
 Always on (internal / support):
-  com.local.mlxlm.serve            :18000   mlx_lm.server — the ONE text model
+  com.local.optiq.main             :18000   the ONE unified multimodal main (TEXT_ENGINE)
+  com.local.ollama.agent           :18001   fast co-resident 'agent' text model (Ollama MLX, if INSTALL_AGENT=1)
   com.local.glmocr.proxy           :5002    on-demand proxy for GLM-OCR
   com.local.infinity.proxy         :5004    on-demand proxy for embed + rerank (Infinity)
   com.local.vision.proxy           :5003    on-demand proxy for the vision model (if ALIAS_VISION set)
@@ -411,6 +429,12 @@ use the menu) to change a live box.
 | `OPTIQ_KV_BITS` / `OPTIQ_KV_GROUP_SIZE` | `8` / _(empty)_ | `optiq serve` KV-cache quant (`--kv-bits` 4\|8, `--kv-group-size`); only when `TEXT_ENGINE=optiq` |
 | `OPTIQ_MAX_TOKENS` | `16384` | `optiq serve` default `--max-tokens` ceiling for `main` (only when `TEXT_ENGINE=optiq`) |
 | `OPTIQ_DRAFTER` | _(empty)_ | `optiq serve` speculative-decoding drafter repo (`--drafter`); empty = **off** (drafter costs extra RAM — leave off on 32 GB unless verified) |
+| `INSTALL_AGENT` | `0` | Opt-in fast co-resident Ollama text/agentic model → LiteLLM alias `agent` (runs alongside the main; needs `INSTALL_MLX=1`) |
+| `AGENT_MODEL` | `gemma4:e2b-mlx` | Ollama tag for `agent` (raw `ollama pull` tag, not a HF catalog id). ~6 GB, ~78 tok/s, tools; text-only |
+| `AGENT_BACKEND_PORT` | `18001` | Internal port the `agent` Ollama daemon binds (LiteLLM fronts it; distinct from `:18000` main and `:11434` Ollama fallback) |
+| `AGENT_CONTEXT_LENGTH` | `32768` | Fixed `OLLAMA_CONTEXT_LENGTH` for `agent` — set once so the warm model never reloads (e2b supports up to 131072) |
+| `AGENT_ENABLE_THINKING` | `0` | `agent` reasoning: `0` = thinking-off at the proxy (default fast path), `1` = reason |
+| `OLLAMA_VERSION` | `0.31.1` | Pinned Ollama fetched as `ollama-darwin.tgz` from GitHub → `$VENV_DIR/ollama-dist` (the `-mlx` tags need ≥ 0.31.0; brew formula lags). Used by `agent` + the Ollama fallback |
 | `GEMMA_TOP_K` | `64` | Gemma reference top_k for `main`/`main-fast` (via `extra_body`; top_k is not a native OpenAI param). `0`/empty = off; inert at temperature 0 |
 | `PRESET_ALIASES` | `1` | Expose the preset aliases `main-fast` / `main-metadata` (same loaded model) |
 | `PRESET_METADATA_TEMP` / `_MAXTOK` | `0.0` / `2048` | `main-metadata` = paperless-ngx JSON: deterministic + tight cap (thinking-off) |
