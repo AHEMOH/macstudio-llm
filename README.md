@@ -434,6 +434,7 @@ use the menu) to change a live box.
 | `AGENT_MODEL` | `gemma4:e2b-mlx` | Ollama tag for `agent` (raw `ollama pull` tag, not a HF catalog id). ~6 GB, ~78 tok/s, tools; text-only |
 | `AGENT_BACKEND_PORT` | `18001` | Internal port the `agent` Ollama daemon binds (LiteLLM fronts it; distinct from `:18000` main and `:11434` Ollama fallback) |
 | `AGENT_CONTEXT_LENGTH` | `32768` | Fixed `OLLAMA_CONTEXT_LENGTH` for `agent` — set once so the warm model never reloads (e2b supports up to 131072) |
+| `AGENT_MAX_TOKENS` | `16384` | Default output-token cap for `agent`/`agent-thinking` (Ollama has no built-in cap → this prevents a runaway generation). Must be < `AGENT_CONTEXT_LENGTH`; clients can override per request |
 | `AGENT_ENABLE_THINKING` | `0` | `agent` reasoning: `0` = thinking-off at the proxy (default fast path), `1` = reason |
 | `OLLAMA_VERSION` | `0.31.1` | Pinned Ollama fetched as `ollama-darwin.tgz` from GitHub → `$VENV_DIR/ollama-dist` (the `-mlx` tags need ≥ 0.31.0; brew formula lags). Used by `agent` + the Ollama fallback |
 | `GEMMA_TOP_K` | `64` | Gemma reference top_k for `main`/`main-fast` (via `extra_body`; top_k is not a native OpenAI param). `0`/empty = off; inert at temperature 0 |
