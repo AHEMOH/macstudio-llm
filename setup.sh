@@ -94,7 +94,6 @@ CONFIG_KEYS=(
   OPTIQ_KV_BITS
   OPTIQ_KV_GROUP_SIZE
   OPTIQ_MAX_TOKENS
-  OPTIQ_MAX_KV_SIZE
   OPTIQ_PROMPT_CACHE_MB
   OPTIQ_DRAFTER
   GEMMA_TOP_K
@@ -136,7 +135,6 @@ CONFIG_KEYS=(
   AGENT_MODEL
   AGENT_BACKEND_PORT
   AGENT_KV_BITS
-  AGENT_MAX_KV_SIZE
   AGENT_MAX_TOKENS
   ML_PUBLIC_PORT
   ML_BACKEND_PORT
@@ -209,7 +207,6 @@ config_default() {
     OPTIQ_KV_BITS)               echo 8 ;;
     OPTIQ_KV_GROUP_SIZE)         echo "" ;;
     OPTIQ_MAX_TOKENS)            echo 16384 ;;
-    OPTIQ_MAX_KV_SIZE)           echo "" ;;
     OPTIQ_PROMPT_CACHE_MB)       echo 8192 ;;
     OPTIQ_DRAFTER)               echo "" ;;
     GEMMA_TOP_K)                 echo 64 ;;
@@ -251,7 +248,6 @@ config_default() {
     AGENT_MODEL)                 echo gemma4-e2b-optiq ;;
     AGENT_BACKEND_PORT)          echo 18002 ;;
     AGENT_KV_BITS)               echo 4 ;;
-    AGENT_MAX_KV_SIZE)           echo 131072 ;;
     AGENT_MAX_TOKENS)            echo 8192 ;;
     ML_PUBLIC_PORT)              echo 3003 ;;
     ML_BACKEND_PORT)             echo 13003 ;;
@@ -319,8 +315,7 @@ config_hint() {
     MLXVLM_MAIN_ENABLE_THINKING) echo "mlx-vlm main: 1 = think by default (default — so 'main' reasons; OpenWebUI shows it), 0 = off. main-fast is forced thinking-off at the proxy regardless; clients can override per request" ;;
     OPTIQ_KV_BITS)               echo "optiq serve KV-cache quant bits: 4 or 8 (--kv-bits). empty = off. (Only when TEXT_ENGINE=optiq)" ;;
     OPTIQ_KV_GROUP_SIZE)         echo "optiq serve KV quant group size (--kv-group-size); empty = optiq default (64). Only with OPTIQ_KV_BITS set" ;;
-    OPTIQ_MAX_TOKENS)            echo "optiq serve default --max-tokens ceiling for main (default 16384). (Only when TEXT_ENGINE=optiq)" ;;
-    OPTIQ_MAX_KV_SIZE)           echo "main context cap (--max-kv-size, rotating window). Bounds the prefill working set so an over-long prompt degrades gracefully instead of OOM-crashing the daemon. 16384 (~20 A4 pages) is the recommended small-main cap; long-context work goes to the co-resident 'agent'. empty = uncapped (model max, OOM risk on 32 GB above ~110K). (Only when TEXT_ENGINE=optiq)" ;;
+    OPTIQ_MAX_TOKENS)            echo "optiq serve default --max-tokens ceiling for main (default 16384). (Only when TEXT_ENGINE=optiq). NOTE: there is NO main context cap — mlx_lm.server (which optiq wraps) has no --max-kv-size; a prompt beyond ~110K OOM-restarts the daemon, so route long-context work to the 'agent'" ;;
     OPTIQ_PROMPT_CACHE_MB)       echo "optiq serve prompt-cache cap in MB (--prompt-cache-bytes); bounds the reusable KV/prefix cache → enables a LARGE context window. Default 8192 (8 GB; model streams experts from SSD so plenty of headroom on 32 GB). Raise for huge contexts" ;;
     OPTIQ_DRAFTER)               echo "optiq serve speculative-decoding drafter repo (--drafter), e.g. google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant. empty = OFF (drafter costs extra RAM — leave off on 32 GB unless verified)" ;;
     GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast/agent (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off" ;;
@@ -348,8 +343,7 @@ config_hint() {
     AGENT_MODEL)                 echo "HF CATALOG id of the 'agent' model (an OptiQ Gemma-4 build). Default gemma4-e2b-optiq (~5 GB, ~76 tok/s, tools+vision, 128K). e.g. gemma4-e4b-optiq for more quality (NOTE: e4b co-resident swaps on 32 GB — verified; stick with e2b unless the main is smaller)" ;;
     AGENT_BACKEND_PORT)          echo "Internal port the 'agent' optiq daemon binds (default 18002); LiteLLM fronts it. Distinct from VLLM_BACKEND_PORT (:18000 main) and OLLAMA_PORT (:11434)" ;;
     AGENT_KV_BITS)               echo "agent optiq serve KV-cache quant bits: 4 (recommended — keeps 128K KV tiny) or 8. empty = fp16" ;;
-    AGENT_MAX_KV_SIZE)           echo "agent context cap (--max-kv-size, rotating). Default 131072 (e2b/e4b max is 128K; the 12B unified goes to 256K). Bounds prefill so an over-long prompt can't OOM the box" ;;
-    AGENT_MAX_TOKENS)            echo "agent default output-token ceiling (optiq --max-tokens). Default 8192; clients can override per request" ;;
+    AGENT_MAX_TOKENS)            echo "agent default output-token ceiling (optiq --max-tokens). Default 8192; clients can override per request. (No context cap — the model's own max_position, e2b/e4b = 128K, is the ceiling)" ;;
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
     AUTOUPDATE_WEEKDAY)          echo "launchd weekday: 0=Sun 1=Mon … 6=Sat" ;;

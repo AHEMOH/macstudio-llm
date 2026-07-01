@@ -73,10 +73,10 @@ ARGS=( serve
 [ -n "${OPTIQ_KV_BITS:-}" ]       && ARGS+=( --kv-bits "$OPTIQ_KV_BITS" )
 [ -n "${OPTIQ_KV_GROUP_SIZE:-}" ] && ARGS+=( --kv-group-size "$OPTIQ_KV_GROUP_SIZE" )
 [ -n "${OPTIQ_MAX_TOKENS:-}" ]    && ARGS+=( --max-tokens "$OPTIQ_MAX_TOKENS" )
-# Context cap: rotating KV window (--max-kv-size). Bounds the prefill working set so an
-# over-long prompt degrades gracefully instead of OOM-crashing the daemon. Long-context
-# work is offloaded to the co-resident 'agent' (e2b, 128K). empty = uncapped (model max).
-[ -n "${OPTIQ_MAX_KV_SIZE:-}" ]   && ARGS+=( --max-kv-size "$OPTIQ_MAX_KV_SIZE" )
+# NOTE: there is NO context cap here — `optiq serve` wraps mlx_lm.server, which has NO
+# --max-kv-size flag (only mlx_lm.generate does). So the main is uncapped: a prompt beyond
+# ~110K OOM-crashes the daemon (KeepAlive auto-restarts it). Route long-context work to the
+# co-resident 'agent' (e2b, 128K, memory-safe) instead.
 # --prompt-cache-bytes takes BYTES; OPTIQ_PROMPT_CACHE_MB is in MB → enables a large context window.
 [ -n "${OPTIQ_PROMPT_CACHE_MB:-}" ] && ARGS+=( --prompt-cache-bytes "$(( OPTIQ_PROMPT_CACHE_MB * 1048576 ))" )
 [ -n "${OPTIQ_DRAFTER:-}" ]       && ARGS+=( --drafter "$OPTIQ_DRAFTER" )

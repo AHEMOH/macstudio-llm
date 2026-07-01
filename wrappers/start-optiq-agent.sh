@@ -49,9 +49,11 @@ if [ -z "${MODEL_PATH:-}" ]; then
   exit 78   # EX_CONFIG
 fi
 
-# `optiq serve` wraps mlx_lm.server. --max-kv-size caps the (rotating) context so a
-# huge prompt can't OOM the box; e2b's max_position is 131072 (128K). --kv-bits keeps
-# the KV tiny. --no-auth: internal localhost backend behind LiteLLM (the auth boundary).
+# `optiq serve` wraps mlx_lm.server. --kv-bits keeps the KV tiny (e2b has 1 KV head →
+# 128K KV ~0.3 GB). --no-auth: internal localhost backend behind LiteLLM (the auth boundary).
+# NOTE: no --max-kv-size — mlx_lm.server doesn't have that flag. The model's own
+# max_position (e2b/e4b = 131072 = 128K) is the natural context ceiling; e2b is small
+# enough that a full 128K prefill is memory-safe co-resident with the big main (verified).
 ARGS=( serve
   --model "$MODEL_PATH"
   --host 127.0.0.1
@@ -59,10 +61,9 @@ ARGS=( serve
   --no-anthropic
   --no-auth )
 [ -n "${AGENT_KV_BITS:-}" ]     && ARGS+=( --kv-bits "$AGENT_KV_BITS" )
-[ -n "${AGENT_MAX_KV_SIZE:-}" ] && ARGS+=( --max-kv-size "$AGENT_MAX_KV_SIZE" )
 [ -n "${AGENT_MAX_TOKENS:-}" ]  && ARGS+=( --max-tokens "$AGENT_MAX_TOKENS" )
 
 echo "[start-optiq-agent] serving co-resident agent='$MODEL_ID' repo='$REPO' (text+image, optiq) on 127.0.0.1:${AGENT_BACKEND_PORT:-18002}"
-echo "[start-optiq-agent] kv_bits='${AGENT_KV_BITS:-default}' max_kv_size='${AGENT_MAX_KV_SIZE:-model default}' max_tokens='${AGENT_MAX_TOKENS:-default}'"
+echo "[start-optiq-agent] kv_bits='${AGENT_KV_BITS:-default}' max_tokens='${AGENT_MAX_TOKENS:-default}'"
 
 exec "$VENV_DIR/optiq/bin/optiq" "${ARGS[@]}"
