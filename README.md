@@ -30,10 +30,10 @@ raise a couple of config keys.
 > *alongside* the big unified main, exposed as the LiteLLM `agent` alias. Because it's
 > optiq (OpenAI `/v1`) it does **text + tools + images (vision)** and holds a **huge
 > context (128K)** at tiny KV (1 KV head) — verified swap-free co-resident with the 26B
-> main (peak ~13.6 GB). It's the **long-context / fast helper**: the `main` is capped
-> small (`OPTIQ_MAX_KV_SIZE`, ~16K) so an over-long prompt can't OOM it; anything longer
-> goes to `agent`. (Earlier this was an Ollama-served model, but Ollama's MLX runner
-> drops Gemma-4 vision — verified — so `agent` is optiq now.)
+> main (peak ~13.6 GB). It's the **long-context path**: send long documents here (the big
+> 26B main OOM-crashes above ~110K on 32 GB — `optiq serve` has no context cap — and the
+> e2b prefills long prompts far faster anyway). (Earlier this was an Ollama-served model,
+> but Ollama's MLX runner drops Gemma-4 vision — verified — so `agent` is optiq now.)
 >
 > **Ollama** is not the unified `main` and no longer backs `agent`; it remains only an
 > opt-in full-daemon fallback (`INSTALL_OLLAMA=1`, the gpt-oss/paperless Modelfiles),
@@ -57,7 +57,8 @@ raise a couple of config keys.
   on its own internal port (:18002), exposed as the LiteLLM `agent` alias. Does
   **text + tools + images (vision)** and a **128K context** at tiny KV — verified
   swap-free co-resident with the 26B main (peak ~13.6 GB). It's the long-context / fast
-  path; `main` is capped small so long prompts route here. thinking-off by default
+  path — send long documents here (the big main OOMs above ~110K; `optiq serve` has no
+  context cap, and e2b prefills long prompts far faster). thinking-off by default
   (verified: e2b stays clean thinking-off, unlike the 12B which loops). Switch the model
   via `AGENT_MODEL` (any OptiQ catalog id; note e4b **swaps** co-resident on 32 GB — stay on e2b).
 - **GLM-OCR** (0.9 B, ~2 GB) on-demand on :5002 via `mlx-vlm` — document OCR,
@@ -433,9 +434,7 @@ use the menu) to change a live box.
 | `AGENT_MODEL` | `gemma4-e2b-optiq` | HF **catalog id** of the `agent` model (an OptiQ build). ~5 GB, ~76 tok/s, tools+vision, 128K. e.g. `gemma4-e4b-optiq` for more quality (but e4b **swaps** co-resident on 32 GB — stay on e2b) |
 | `AGENT_BACKEND_PORT` | `18002` | Internal port the `agent` optiq daemon binds (LiteLLM fronts it; distinct from `:18000` main and `:11434` Ollama fallback) |
 | `AGENT_KV_BITS` | `4` | `agent` optiq KV-cache quant bits (`4` keeps 128K KV tiny, or `8`); empty = fp16 |
-| `AGENT_MAX_KV_SIZE` | `131072` | `agent` context cap (`--max-kv-size`, rotating). e2b/e4b max is 128K; bounds prefill so an over-long prompt can't OOM |
-| `AGENT_MAX_TOKENS` | `8192` | `agent` default output-token cap (optiq `--max-tokens`); clients can override per request |
-| `OPTIQ_MAX_KV_SIZE` | _(empty)_ | `main` context cap (`--max-kv-size`, rotating). Set `16384` (~20 A4 pages) for the small-main role; long-context work goes to `agent`. empty = uncapped (OOM risk above ~110K on 32 GB) |
+| `AGENT_MAX_TOKENS` | `8192` | `agent` default output-token cap (optiq `--max-tokens`); clients can override. (No context cap — the model's `max_position` 128K is the ceiling) |
 | `OLLAMA_VERSION` | `0.31.1` | Pinned Ollama fetched as `ollama-darwin.tgz` from GitHub → `$VENV_DIR/ollama-dist` (used only by the `INSTALL_OLLAMA` fallback; `agent` is optiq now) |
 | `GEMMA_TOP_K` | `64` | Gemma reference top_k for `main`/`main-fast`/`agent` (via `extra_body`; top_k is not a native OpenAI param). `0`/empty = off; inert at temperature 0 |
 | `PRESET_ALIASES` | `1` | Expose the `main-fast` preset alias (same loaded model as `main`, thinking-off) |
