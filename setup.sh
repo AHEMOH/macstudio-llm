@@ -349,7 +349,7 @@ config_hint() {
     AGENT_MODEL)                 echo "Ollama tag for the 'agent' model (raw ollama pull tag, NOT a HF catalog id). Default gemma4:e2b-mlx (~6 GB, ~78 tok/s, tools). e.g. gemma4:e4b-mlx for more quality" ;;
     AGENT_BACKEND_PORT)          echo "Internal port the 'agent' Ollama daemon binds (default 18001); LiteLLM fronts it. Distinct from VLLM_BACKEND_PORT (:18000 main) and the Ollama fallback OLLAMA_PORT (:11434)" ;;
     AGENT_CONTEXT_LENGTH)        echo "Fixed context window for the agent (OLLAMA_CONTEXT_LENGTH, default 32768). Set ONCE so the warm model never reloads (all requests arrive via LiteLLM /v1 which omits per-request num_ctx). e2b supports up to 131072" ;;
-    AGENT_ENABLE_THINKING)       echo "1 = let the agent model reason; 0 = thinking off at the proxy (default — the agent is the FAST path). Wired as extra_body think:false; verify Ollama /v1 honors it" ;;
+    AGENT_ENABLE_THINKING)       echo "Default behaviour of the bare 'agent' alias: 0 = thinking off (default — the FAST path), 1 = reason. A separate 'agent-thinking' alias (same model, reasoning ON) is ALWAYS exposed too, so clients can pick per request. Wired as Ollama's extra_body think bool" ;;
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
     AUTOUPDATE_WEEKDAY)          echo "launchd weekday: 0=Sun 1=Mon … 6=Sat" ;;
@@ -1104,18 +1104,22 @@ render_litellm_config() {
     # on its OWN internal port (AGENT_BACKEND_PORT), running ALONGSIDE the big unified
     # main. It is NOT the main and NOT a TEXT_ENGINE — it's a self-contained extra like
     # ocr/embed (driven purely by INSTALL_AGENT + AGENT_* config, not the catalog).
-    # Ollama's /v1 is OpenAI-compatible (openai/ provider). Thinking is OFF by default
-    # (fast path) via extra_body {"think": false} — Ollama's own toggle; Gemma top_k
-    # rides along. Ollama serves gemma-4 TEXT+tools here (NOT images — image input isn't
-    # wired on Ollama's MLX runner; those go to the unified 'main').
+    # Ollama's /v1 is OpenAI-compatible (openai/ provider). Ollama serves gemma-4 TEXT+tools
+    # here (NOT images — image input isn't wired on Ollama's MLX runner; those go to the
+    # unified 'main'). Thinking is Ollama's own `think` bool, passed via extra_body (verified
+    # accepted by Ollama /v1). TWO aliases on the SAME e2b backend (like main / main-fast):
+    #   agent          = FAST path, thinking OFF by default (AGENT_ENABLE_THINKING=1 flips it).
+    #   agent-thinking = SAME model, reasoning ON (think:true) — explicit thinking variant.
     if [ "${INSTALL_AGENT:-0}" = 1 ] && [ -n "${AGENT_MODEL:-}" ]; then
       printf '  - model_name: agent\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n      temperature: 1.0\n      top_p: 0.95\n' \
         "${AGENT_MODEL}" "${AGENT_BACKEND_PORT:-18001}"
       if [ "${AGENT_ENABLE_THINKING:-0}" = 1 ]; then
-        printf '      extra_body: {"top_k": %s}\n' "${GEMMA_TOP_K:-64}"
+        printf '      extra_body: {"think": true, "top_k": %s}\n' "${GEMMA_TOP_K:-64}"
       else
         printf '      extra_body: {"think": false, "top_k": %s}\n' "${GEMMA_TOP_K:-64}"
       fi
+      printf '  - model_name: agent-thinking\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n      temperature: 1.0\n      top_p: 0.95\n      extra_body: {"think": true, "top_k": %s}\n' \
+        "${AGENT_MODEL}" "${AGENT_BACKEND_PORT:-18001}" "${GEMMA_TOP_K:-64}"
     fi
     if [ -n "$ocr_repo" ]; then
       printf '  - model_name: ocr\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \

@@ -49,15 +49,15 @@ raise a couple of config keys.
   Anthropic `/v1/messages`) to the stable aliases — `main` (text + images),
   `main-fast` (same, thinking-off), `main-metadata` (deterministic JSON), `ocr`,
   `embed` (BGE-M3 embeddings), `rerank` (BGE reranker), and — when `INSTALL_AGENT=1` —
-  `agent` (the fast co-resident Ollama text/tool model, see below).
-  The underlying model is swappable without the app noticing.
+  `agent` (the fast co-resident Ollama text/tool model, thinking-off) + `agent-thinking`
+  (same model, reasoning on). The underlying model is swappable without the app noticing.
 - **`agent`** (opt-in `INSTALL_AGENT=1`, off by default): a small, fast, **always-warm
   co-resident** text/agentic model served by **Ollama's MLX runner** (multi-token
   prediction on) on its own internal port (:18001), exposed as the LiteLLM `agent`
   alias. Default `gemma4:e2b-mlx` (~6 GB, ~78 tok/s, tool calling; text-only — images
   go to `main`). Runs *alongside* the big multimodal main — verified co-resident with
-  the 26B main (both serve simultaneously, no slowdown). Thinking-off by default (it's
-  the fast path). Uses a version-pinned Ollama (`OLLAMA_VERSION`, fetched from GitHub —
+  the 26B main (both serve simultaneously, no slowdown). Two aliases on the same
+  backend: `agent` (thinking-off, the fast path) and `agent-thinking` (reasoning on). Uses a version-pinned Ollama (`OLLAMA_VERSION`, fetched from GitHub —
   the `-mlx` tags need ≥ 0.31.0, newer than the brew formula).
 - **GLM-OCR** (0.9 B, ~2 GB) on-demand on :5002 via `mlx-vlm` — document OCR,
   #1 on OmniDocBench. The only vision model small enough to co-reside with the
@@ -106,7 +106,8 @@ raise a couple of config keys.
 ```
 Public (apps point here):
   com.local.litellm.proxy          :11434   LiteLLM gateway — aliases main / main-fast /
-                                             main-metadata / ocr / embed / rerank / agent
+                                             main-metadata / ocr / embed / rerank /
+                                             agent / agent-thinking
                                              (OpenAI /v1 + Anthropic /v1/messages)
 Always on (internal / support):
   com.local.optiq.main             :18000   the ONE unified multimodal main (TEXT_ENGINE)
