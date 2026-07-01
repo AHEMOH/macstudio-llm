@@ -181,14 +181,14 @@ config_default() {
     INSTALL_OLLAMA)              echo 0 ;;
     VENV_DIR)                    echo /Users/mac/.macstudio-venvs ;;
     HF_CACHE_DIR)                echo /Users/mac/.cache/huggingface ;;
-    ALIAS_MAIN)                  echo gemma4-26b ;;
+    ALIAS_MAIN)                  echo gemma4-26b-optiq ;;
     ALIAS_OCR)                   echo glm-ocr ;;
     ALIAS_VISION)                echo "" ;;
     MODEL_PIN_MAIN)              echo 1 ;;
     VLLM_BACKEND_PORT)           echo 18000 ;;
     VLLM_MAX_NUM_SEQS)           echo 4 ;;
     LLM_REQUEST_TIMEOUT)         echo 3600 ;;
-    TEXT_ENGINE)                 echo mlx-vlm ;;
+    TEXT_ENGINE)                 echo optiq ;;
     MLXLM_VERSION)               echo 0.31.3 ;;
     MLXLM_PROMPT_CACHE_MB)       echo 8192 ;;
     MLXLM_DECODE_CONCURRENCY)    echo "" ;;

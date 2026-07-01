@@ -177,7 +177,7 @@ mosquitto_sub -h mqtt.home.arpa -u <user> -P <pass> -t 'macstudio/#' -v
 mosquitto_sub -h mqtt.home.arpa -u <user> -P <pass> -t 'homeassistant/+/macstudio/+/config' -v
 
 # Switch the main model (id from `llm-models`):
-mosquitto_pub -h mqtt.home.arpa -u <user> -P <pass> -t macstudio/model/set -m gemma4-12b
+mosquitto_pub -h mqtt.home.arpa -u <user> -P <pass> -t macstudio/model/set -m gemma4-26b-optiq
 ```
 
 An ESP32 (e.g. ESPHome) can subscribe to the same `macstudio/state` topic to drive
