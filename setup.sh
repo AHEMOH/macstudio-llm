@@ -1104,21 +1104,20 @@ render_litellm_config() {
     # on its OWN internal port (AGENT_BACKEND_PORT), running ALONGSIDE the big unified
     # main. It is NOT the main and NOT a TEXT_ENGINE — it's a self-contained extra like
     # ocr/embed (driven purely by INSTALL_AGENT + AGENT_* config, not the catalog).
-    # Ollama's /v1 is OpenAI-compatible (openai/ provider). Ollama serves gemma-4 TEXT+tools
-    # here (NOT images — image input isn't wired on Ollama's MLX runner; those go to the
-    # unified 'main'). Thinking is Ollama's own `think` bool, passed via extra_body (verified
-    # accepted by Ollama /v1). TWO aliases on the SAME e2b backend (like main / main-fast):
+    # Ollama serves gemma-4 TEXT+tools here (NOT images — image input isn't wired on Ollama's
+    # MLX runner; those go to the unified 'main'). Uses LiteLLM's **ollama_chat/** provider
+    # (api_base WITHOUT /v1) — NOT openai/ — because only ollama_chat natively forwards Ollama's
+    # `think` bool; the openai/ provider + drop_params silently DROPS it, so thinking-off never
+    # took effect (verified on the Mac: both aliases reasoned identically). `think`/`top_k` ride
+    # as normal litellm_params (ollama options), not extra_body. TWO aliases, SAME e2b backend:
     #   agent          = FAST path, thinking OFF by default (AGENT_ENABLE_THINKING=1 flips it).
     #   agent-thinking = SAME model, reasoning ON (think:true) — explicit thinking variant.
     if [ "${INSTALL_AGENT:-0}" = 1 ] && [ -n "${AGENT_MODEL:-}" ]; then
-      printf '  - model_name: agent\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n      temperature: 1.0\n      top_p: 0.95\n' \
-        "${AGENT_MODEL}" "${AGENT_BACKEND_PORT:-18001}"
-      if [ "${AGENT_ENABLE_THINKING:-0}" = 1 ]; then
-        printf '      extra_body: {"think": true, "top_k": %s}\n' "${GEMMA_TOP_K:-64}"
-      else
-        printf '      extra_body: {"think": false, "top_k": %s}\n' "${GEMMA_TOP_K:-64}"
-      fi
-      printf '  - model_name: agent-thinking\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n      temperature: 1.0\n      top_p: 0.95\n      extra_body: {"think": true, "top_k": %s}\n' \
+      _agent_think=false
+      [ "${AGENT_ENABLE_THINKING:-0}" = 1 ] && _agent_think=true
+      printf '  - model_name: agent\n    litellm_params:\n      model: ollama_chat/%s\n      api_base: http://127.0.0.1:%s\n      think: %s\n      temperature: 1.0\n      top_p: 0.95\n      top_k: %s\n' \
+        "${AGENT_MODEL}" "${AGENT_BACKEND_PORT:-18001}" "$_agent_think" "${GEMMA_TOP_K:-64}"
+      printf '  - model_name: agent-thinking\n    litellm_params:\n      model: ollama_chat/%s\n      api_base: http://127.0.0.1:%s\n      think: true\n      temperature: 1.0\n      top_p: 0.95\n      top_k: %s\n' \
         "${AGENT_MODEL}" "${AGENT_BACKEND_PORT:-18001}" "${GEMMA_TOP_K:-64}"
     fi
     if [ -n "$ocr_repo" ]; then
