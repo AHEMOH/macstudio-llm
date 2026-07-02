@@ -187,7 +187,7 @@ config_default() {
     VENV_DIR)                    echo /Users/mac/.macstudio-venvs ;;
     HF_CACHE_DIR)                echo /Users/mac/.cache/huggingface ;;
     ALIAS_MAIN)                  echo gemma4-26b-optiq ;;
-    ALIAS_OCR)                   echo glm-ocr ;;
+    ALIAS_OCR)                   echo "" ;;
     ALIAS_VISION)                echo "" ;;
     MODEL_PIN_MAIN)              echo 1 ;;
     VLLM_BACKEND_PORT)           echo 18000 ;;
@@ -296,7 +296,7 @@ config_hint() {
     VENV_DIR)                    echo "Where the mlxlm/litellm/mlxvlm Python venvs live (owned by TARGET_USER)" ;;
     HF_CACHE_DIR)                echo "HuggingFace model cache (HF_HOME) — where downloaded MLX models land" ;;
     ALIAS_MAIN)                  echo "Catalog id of the ONE active main/text model (manage via 'llm-models')" ;;
-    ALIAS_OCR)                   echo "Catalog id of the on-demand OCR model (engine mlxvlm)" ;;
+    ALIAS_OCR)                   echo "Catalog id of the on-demand OCR model (engine mlxvlm) -> alias 'ocr'. empty = ocr off (default)" ;;
     ALIAS_VISION)                echo "Catalog id of the on-demand VISION model (role=vision, engine mlxvlm) -> alias 'vision' for images. empty = vision off" ;;
     MODEL_PIN_MAIN)              echo "1 = keep the main model permanently warm (agentic main load)" ;;
     VLLM_BACKEND_PORT)           echo "Internal port the text engine (mlx_lm.server) binds; LiteLLM fronts it. (Legacy VLLM_ name kept to avoid config churn.)" ;;

@@ -26,12 +26,14 @@ behind an alias can be swapped (`llm-models`) without the app noticing.
 | `main` | The big always-on model (chat **+ images**), reasons by default | `/v1/chat/completions`, `/v1/completions`, `/v1/messages` | unified optiq main (always on; for very long docs use `agent`) |
 | `main-fast` | Exactly `main` but **thinking OFF** — fast, non-reasoning chat / tool use / web / cron / email | same as `main` | **same loaded model**, thinking-off |
 | `agent` | Fast **co-resident** helper: text + tools + **images**, **128K context**, thinking-off — the long-context / fast path (send long docs here; the big main OOMs above ~110K) | `/v1/chat/completions`, `/v1/messages` | OptiQ Gemma-4 e2b, a 2nd `optiq serve` (only if `INSTALL_AGENT=1`) |
-| `ocr`  | Dedicated OCR (document → text), best quality | `/v1/chat/completions` (image input) | GLM-OCR via mlx-vlm (on-demand) |
+| `ocr`  | Dedicated OCR (document → text), best quality | `/v1/chat/completions` (image input) | GLM-OCR via mlx-vlm (on-demand, only if `ALIAS_OCR` is set) |
 | `embed` | Dense text **embeddings** for RAG (1024-dim, multilingual) | `/v1/embeddings` | BAAI/bge-m3 via Infinity (on-demand) |
 | `rerank` | Cross-encoder **reranker** (scores docs against a query) | `/v1/rerank`, `/rerank` | BAAI/bge-reranker-v2-m3 via Infinity (on-demand) |
 
-The gateway exposes `main`, `main-fast`, `ocr`, `embed`, `rerank` — plus `agent` when
-`INSTALL_AGENT=1`. `main` and `main-fast` point at the **one** big loaded model (they
+The gateway exposes `main`, `main-fast`, `embed`, `rerank` by default — plus `ocr` when
+`ALIAS_OCR` is set (**empty/off by default**; set it via `llm-models` or
+`--set-model ocr <id>` to re-enable) and `agent` when
+`INSTALL_AGENT=1` (**off by default**). `main` and `main-fast` point at the **one** big loaded model (they
 differ only in DEFAULT thinking, so picking one does **not** load a second model);
 `agent` is a **separate** small co-resident model. `main`/`main-fast`/`agent` share
 Gemma's reference sampling (**temperature 1.0 / top_p 0.95 / top_k 64**); `main`/`main-fast`
@@ -46,7 +48,8 @@ fast/clean chat & tool path and metadata returns tidy JSON.
 
 **Images:** the unified mlx-vlm `main` is multimodal — send `image_url` straight to
 `main` (or `main-fast`). There is **no separate `vision` alias** (`ALIAS_VISION=""`);
-the dedicated `ocr` alias (GLM-OCR) is for best-quality document transcription.
+the dedicated `ocr` alias (GLM-OCR) is for best-quality document transcription, when
+enabled (`ALIAS_OCR` set — off by default).
 
 ### Authentication
 
@@ -193,7 +196,8 @@ a local display — the JSON keys above are the contract.
 - **API Base URL:** `http://mac.home.arpa:11434/v1`
 - **API Key:** `sk-local`
 
-The models `main`, `main-fast`, `agent` and `ocr` appear in the model picker.
+The models `main` and `main-fast` always appear in the model picker; `agent` and `ocr`
+appear only when enabled (`INSTALL_AGENT=1` / `ALIAS_OCR` set — both off by default).
 For chat use `main`, which may emit reasoning that Open WebUI renders as a foldable
 "thinking" block; `main-fast` and `agent` are thinking-off, so they return
 clean output with no thinking block (`main-fast` is the fast non-reasoning chat path,
@@ -212,13 +216,15 @@ environment:
   LLM_MODEL: main
   OPENAI_API_KEY: sk-local
   OPENAI_BASE_URL: http://mac.home.arpa:11434/v1
-  # OCR via the on-demand vision model:
+  # OCR via the on-demand vision model (requires ALIAS_OCR set — off by default):
   OCR_PROVIDER: llm
   VISION_LLM_PROVIDER: openai
   VISION_LLM_MODEL: ocr
 ```
 
-First OCR call wakes GLM-OCR (~10–20 s) and then it serves; it sleeps again after
+`ocr` is off by default (`ALIAS_OCR` empty) — enable it first via `llm-models` or
+`setup.sh --set-model ocr <id>`. Once enabled, the first OCR call wakes GLM-OCR
+(~10–20 s) and then it serves; it sleeps again after
 the idle timeout, freeing RAM for the main model.
 
 ---
@@ -293,8 +299,9 @@ print(msg.content[0].text)
 
 - **One text model at a time.** `main` is whatever model is currently loaded;
   switching it (`llm-models`) restarts the text engine (~30–60 s) — there is no silent
-  hot-swap. **GLM-OCR (`ocr`) is the only model that co-resides** (small, on-demand).
-  Under `TEXT_ENGINE=mlx-vlm` the `main` model handles images itself.
+  hot-swap. **GLM-OCR (`ocr`) is the only model that co-resides** (small, on-demand,
+  and off by default — set `ALIAS_OCR` to enable). Under `TEXT_ENGINE=mlx-vlm` the
+  `main` model handles images itself.
 - **On-demand backends** (`ocr`, and the companion services) wake on the first
   request after idle — expect a one-time spin-up delay, then normal latency.
 - **Long requests:** the gateway timeout is `LLM_REQUEST_TIMEOUT` (default 3600 s
