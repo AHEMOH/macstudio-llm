@@ -408,7 +408,7 @@ use the menu) to change a live box.
 | `VENV_DIR` | `/Users/mac/.macstudio-venvs` | Where the mlxlm/litellm/mlxvlm venvs live |
 | `HF_CACHE_DIR` | `/Users/mac/.cache/huggingface` | HF model cache (`HF_HOME`) + token store |
 | `ALIAS_MAIN` | `gemma4-26b-optiq` | Catalog id of the active text model (an OptiQ Gemma-4 main under `optiq`; a VLM like gemma-4 under `mlx-vlm`; any text arch under `mlx-lm`) |
-| `ALIAS_OCR` | `glm-ocr` | Catalog id of the on-demand OCR model |
+| `ALIAS_OCR` | _(empty)_ | Catalog id of the on-demand OCR model (`ocr` gateway alias). Empty = no `ocr` alias (off by default); set to `glm-ocr` to re-enable |
 | `ALIAS_EMBED` | `bge-m3` | Catalog id of the on-demand embedder (Infinity, alias `embed`). Empty = no embed alias |
 | `ALIAS_RERANK` | `bge-reranker-v2-m3` | Catalog id of the on-demand reranker (Infinity, alias `rerank`). Empty = no rerank alias |
 | `ALIAS_VISION` | _(empty)_ | (Dormant) catalog id of an on-demand vision model. The `vision` **gateway alias is no longer emitted** under the unified mlx-vlm main — send images to `main` instead. Leave empty |
