@@ -541,7 +541,7 @@ a second request gets "Ein Vorgang läuft bereits" and the job banner links to
 the running one. The API also works headless with the same token:
 
 ```bash
-TOKEN=$(sudo grep '^DASHBOARD_TOKEN=' /usr/local/etc/macstudio.conf | cut -d"'" -f2)
+TOKEN=$(sudo sed -n "s/^DASHBOARD_TOKEN=//p" /usr/local/etc/macstudio.conf | tr -d "'")
 curl -s -H "Authorization: Bearer $TOKEN" http://mac.home.arpa:8090/api/status
 ```
 

@@ -111,7 +111,7 @@ token-protected: log in with `DASHBOARD_TOKEN` from
 header:
 
 ```bash
-TOKEN=…   # sudo grep '^DASHBOARD_TOKEN=' /usr/local/etc/macstudio.conf | cut -d"'" -f2
+TOKEN=…   # sudo sed -n "s/^DASHBOARD_TOKEN=//p" /usr/local/etc/macstudio.conf | tr -d "'"
 curl -s -H "Authorization: Bearer $TOKEN" http://mac.home.arpa:8090/api/status      # daemons + memory + active models
 curl -s -H "Authorization: Bearer $TOKEN" http://mac.home.arpa:8090/api/telemetry   # power/thermal/RAM history
 curl -s -H "Authorization: Bearer $TOKEN" -X POST http://mac.home.arpa:8090/api/models/select \
