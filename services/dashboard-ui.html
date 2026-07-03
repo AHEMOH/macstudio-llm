@@ -828,6 +828,12 @@ function viewModelle() {
       const stBadge = m.status === "ok" ? '<span class="badge ok">geladen</span>'
         : m.status === "partial" ? '<span class="badge part">teilweise</span>'
         : '<span class="badge none">–</span>';
+      // GB-Spalte: echte Größe von der Platte, wenn heruntergeladen; sonst der
+      // Katalogwert; sonst "?" (Katalog-Konvention für unbekannt).
+      let gbtxt = "?";
+      const gbNum = parseFloat(String(m.gb).replace(",", "."));
+      if (m.disk_bytes) gbtxt = (m.disk_bytes / 1e9).toFixed(1).replace(".", ",");
+      else if (isFinite(gbNum) && gbNum > 0) gbtxt = esc(m.gb);
       let flags = "";
       if (m.broken) flags += ` <span class="badge broken" title="${esc(m.notes)}">BROKEN</span>`;
       else if (m.role === "text" && (m.broken_main || m.broken_agent)) {
@@ -854,7 +860,7 @@ function viewModelle() {
           acts.push(`<button class="small" data-act="rerank" data-id="${esc(m.id)}" ${m.broken ? "disabled" : ""}>→ rerank</button>`);
       }
       if (m.status !== "none")
-        acts.push(`<button class="small danger" data-act="delete" data-id="${esc(m.id)}" data-gb="${esc(m.gb)}">Löschen</button>`);
+        acts.push(`<button class="small danger" data-act="delete" data-id="${esc(m.id)}" data-gb="${gbtxt}">Löschen</button>`);
 
       const detail = `<details class="mdetail"><summary>${esc(m.id)}</summary><div>
           <b>Repo:</b> <code>${esc(m.repo)}</code><br>
@@ -866,7 +872,7 @@ function viewModelle() {
       return `<tr>
         <td>${detail}</td>
         <td>${esc(m.role)}</td>
-        <td class="num">${esc(m.gb)}</td>
+        <td class="num">${gbtxt}</td>
         <td>${stBadge}</td>
         <td>${flags || '<span class="muted">–</span>'}</td>
         <td>${slots || '<span class="muted">–</span>'}</td>

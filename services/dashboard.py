@@ -828,6 +828,10 @@ def api_models():
         notes = r["notes"]
         row = dict(r)
         row["status"] = st
+        # Real on-disk size (bytes) for downloaded models — the UI shows it when
+        # the catalog's gb column is unknown ("?"). Display-only; the TUI-owned
+        # catalog is never rewritten.
+        row["disk_bytes"] = model_downloaded_bytes(r["repo"], hf) if st in ("ok", "partial") else 0
         row["broken_main"] = is_broken_for(notes, engine) if r["role"] == "text" else None
         row["broken_agent"] = is_broken_for(notes, "optiq") if r["role"] == "text" else None
         if r["role"] in ("embed", "rerank"):
