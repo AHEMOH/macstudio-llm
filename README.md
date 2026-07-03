@@ -99,6 +99,13 @@ raise a couple of config keys.
   default): publishes power/GPU/thermal/RAM/disk/update telemetry with HA
   autodiscovery and exposes a **one-click main-model switch** as an HA `select`.
   See [INTEGRATIONS.md](INTEGRATIONS.md#mac-studio-in-home-assistant-mqtt).
+- **Web dashboard** (on by default, `INSTALL_DASHBOARD=1`): browser control of
+  the whole box on `http://mac.home.arpa:8090` — models (download with live
+  progress, switch main/agent/ocr/embed/rerank), services (restart/stop/wake +
+  live state), every `macstudio.conf` setting with **Save & Apply**, live log
+  tails, and power/thermal/GPU/RAM charts. Token-protected (auto-generated
+  `DASHBOARD_TOKEN` in `macstudio.conf`). The SSH TUI stays fully authoritative
+  — the dashboard only calls the same `setup.sh` verbs.
 - **One script** (`setup.sh`): install, update, settings, **model manager**,
   service control, clean-up, uninstall. TUI by default, `--apply` for
   non-interactive runs. Idempotent — re-run safely any time.
@@ -507,6 +514,41 @@ To watch **what the model is doing right now** from the TUI: `sudo bash setup.sh
 → *View logs* → type `f <n>` to **follow live** (Ctrl-C returns to the menu);
 the `mlxlm.log` follow is filtered to request/completion lines. Or on the CLI:
 `llm-logs mlxlm`.
+
+## Web dashboard (browser control)
+
+Open **`http://mac.home.arpa:8090`** and log in with the token from
+`/usr/local/etc/macstudio.conf` (key `DASHBOARD_TOKEN` — printed once when
+`--apply` generates it; `grep DASHBOARD_TOKEN /usr/local/etc/macstudio.conf`
+shows it any time). Five views:
+
+- **Übersicht** — status tiles (gateway, active models, RAM/GPU/swap/pressure)
+  plus power / temperature / GPU / memory charts (~1 h history). The
+  power/thermal charts need `INSTALL_EXPORTERS=1`; without it they say so.
+- **Modelle** — the same catalog as `llm-models`: download with a live progress
+  bar, activate a model per slot (main / agent / ocr / embed / rerank; same
+  validation incl. BROKEN refusal), delete local files, store the HF token.
+- **Dienste** — every active daemon with live state; restart / stop / wake.
+- **Einstellungen** — every `macstudio.conf` key, grouped, with the same hints
+  as the TUI; **Speichern** writes the conf, **Speichern & Anwenden** runs
+  `setup.sh --apply` with a live log. The apply survives the dashboard
+  restarting itself mid-run (jobs are detached processes) — the page reconnects
+  automatically.
+- **Logs** — live tail of any `/var/log/macstudio/*.log` with a text filter.
+
+Long-running actions (apply, downloads, model switches) run **one at a time**;
+a second request gets "Ein Vorgang läuft bereits" and the job banner links to
+the running one. The API also works headless with the same token:
+
+```bash
+TOKEN=$(sudo grep '^DASHBOARD_TOKEN=' /usr/local/etc/macstudio.conf | cut -d"'" -f2)
+curl -s -H "Authorization: Bearer $TOKEN" http://mac.home.arpa:8090/api/status
+```
+
+Rotate the token by clearing `DASHBOARD_TOKEN` (menu 4) and re-running
+`--apply` — a new one is generated and every browser session is logged out.
+Turn the dashboard off with `INSTALL_DASHBOARD=0` + `--apply`. Note it is
+**LAN-only trust**: HTTP without TLS, like every other port on this box.
 
 ## Monitoring (opt-in: Prometheus → Grafana)
 

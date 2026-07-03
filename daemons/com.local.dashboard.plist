@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.local.dashboard</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/libexec/start-dashboard.sh</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <!-- Jobs the dashboard spawns (setup.sh - -apply etc.) are detached
+       (start_new_session); AbandonProcessGroup keeps launchd from reaping
+       them when this daemon is kickstarted mid-apply. -->
+  <key>AbandonProcessGroup</key><true/>
+  <!-- Port in the plist (not just the wrapper/conf) so a DASHBOARD_PORT
+       change produces a plist diff -> automatic bootout+bootstrap. The token
+       is deliberately NOT here: dashboard.py re-reads it from macstudio.conf,
+       so rotation needs no restart. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DASHBOARD_PORT</key><string>@DASHBOARD_PORT@</string>
+  </dict>
+  <key>StandardOutPath</key><string>/var/log/macstudio/dashboard.log</string>
+  <key>StandardErrorPath</key><string>/var/log/macstudio/dashboard.log</string>
+</dict>
+</plist>

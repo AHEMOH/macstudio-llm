@@ -101,6 +101,25 @@ curl -s http://mac.home.arpa:11434/v1/rerank \
 
 ---
 
+## Web dashboard (browser + JSON API)
+
+Management (not inference) lives on its own port — **`http://mac.home.arpa:8090`**:
+browser control of models / services / settings / logs / telemetry (see the
+README's "Web dashboard" section). Unlike the LiteLLM gateway it **is**
+token-protected: log in with `DASHBOARD_TOKEN` from
+`/usr/local/etc/macstudio.conf`, or script against the JSON API with a Bearer
+header:
+
+```bash
+TOKEN=…   # sudo grep '^DASHBOARD_TOKEN=' /usr/local/etc/macstudio.conf | cut -d"'" -f2
+curl -s -H "Authorization: Bearer $TOKEN" http://mac.home.arpa:8090/api/status      # daemons + memory + active models
+curl -s -H "Authorization: Bearer $TOKEN" http://mac.home.arpa:8090/api/telemetry   # power/thermal/RAM history
+curl -s -H "Authorization: Bearer $TOKEN" -X POST http://mac.home.arpa:8090/api/models/select \
+  -H "Content-Type: application/json" -d '{"slot":"main","id":"gemma4-26b-optiq"}'  # returns {"job_id":…}
+```
+
+---
+
 ## Mac Studio in Home Assistant (MQTT)
 
 Besides serving LLMs, the Mac can publish its **runtime telemetry** to your MQTT
