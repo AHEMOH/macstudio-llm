@@ -300,6 +300,51 @@
   </div>
 </div>
 
+<!-- Modell-hinzufügen-Modal -->
+<div class="overlay" id="addOverlay">
+  <div class="modal">
+    <h2>Modell hinzufügen</h2>
+    <p>Neuen Katalogeintrag anlegen (danach herunterladen). HF-Repo muss ein
+       fertiges MLX-Build sein — z. B. <code>mlx-community/…-OptiQ-4bit</code>.
+       Bearbeiten/Entfernen weiterhin per TUI.</p>
+    <div style="display:grid;gap:10px">
+      <div><label class="muted" style="font-size:12px">HF-Repo (org/name)</label>
+        <input type="text" id="addRepo" placeholder="mlx-community/gpt-oss-20b-OptiQ-4bit" autocomplete="off"></div>
+      <div><label class="muted" style="font-size:12px">ID (Kurzname — leer = aus Repo)</label>
+        <input type="text" id="addId" placeholder="gpt-oss-20b-optiq" autocomplete="off"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div><label class="muted" style="font-size:12px">Rolle</label>
+          <select id="addRole">
+            <option value="text">text (main/agent)</option>
+            <option value="ocr">ocr</option>
+            <option value="vision">vision</option>
+            <option value="embed">embed</option>
+            <option value="rerank">rerank</option>
+          </select></div>
+        <div><label class="muted" style="font-size:12px">Engine (leer = automatisch)</label>
+          <select id="addEngine">
+            <option value="">automatisch</option>
+            <option value="optiq">optiq</option>
+            <option value="mlxvlm">mlxvlm</option>
+            <option value="mlxlm">mlxlm</option>
+            <option value="infinity">infinity</option>
+          </select></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end">
+        <div><label class="muted" style="font-size:12px">ca. GB (optional)</label>
+          <input type="text" id="addGb" placeholder="z. B. 12" autocomplete="off"></div>
+        <label style="display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:13px;padding-bottom:8px">
+          <input type="checkbox" id="addGated" style="width:auto"> gated (Token + Lizenz nötig)
+        </label>
+      </div>
+    </div>
+    <div class="row">
+      <button id="addCancel">Abbrechen</button>
+      <button class="primary" id="addSaveDl">Hinzufügen &amp; herunterladen</button>
+    </div>
+  </div>
+</div>
+
 <!-- HF-Token-Modal -->
 <div class="overlay" id="hfOverlay">
   <div class="modal">
@@ -757,6 +802,7 @@ function viewModelle() {
   $("#view").innerHTML = `
     <div class="section-title"><h2>Modellkatalog</h2><div class="spacer"></div>
       <span class="pill" id="hfState"></span>
+      <button class="small" id="addBtn">+ Modell hinzufügen</button>
       <button class="small" id="hfBtn">HF-Token…</button>
     </div>
     <div class="tablewrap"><table>
@@ -768,6 +814,11 @@ function viewModelle() {
       gesperrt (Details im Ausklapper).</p>`;
 
   $("#hfBtn").onclick = () => { $("#hfToken").value = ""; $("#hfOverlay").classList.add("open"); };
+  $("#addBtn").onclick = () => {
+    ["addRepo", "addId", "addGb"].forEach(i => $("#" + i).value = "");
+    $("#addRole").value = "text"; $("#addEngine").value = ""; $("#addGated").checked = false;
+    $("#addOverlay").classList.add("open");
+  };
 
   const load = async () => {
     let d;
@@ -862,6 +913,26 @@ $("#hfSave").onclick = async () => {
     $("#hfOverlay").classList.remove("open");
     toast("HF-Token gespeichert.");
     if (state.view === "modelle") route();
+  } catch (e) { toast(e.message, true); }
+};
+
+$("#addCancel").onclick = () => $("#addOverlay").classList.remove("open");
+$("#addSaveDl").onclick = async () => {
+  const repo = $("#addRepo").value.trim();
+  if (!repo) { toast("HF-Repo ist erforderlich.", true); return; }
+  // ID leer → aus Repo ableiten (Teil nach dem letzten '/', kleingeschrieben)
+  let id = $("#addId").value.trim();
+  if (!id) id = repo.split("/").pop().toLowerCase().replace(/[^a-z0-9._-]/g, "-");
+  const payload = {
+    id: id, repo: repo, role: $("#addRole").value, engine: $("#addEngine").value,
+    gb: $("#addGb").value.trim(), gated: $("#addGated").checked,
+  };
+  try {
+    await api("/api/models/add", { body: payload });
+    $("#addOverlay").classList.remove("open");
+    toast("„" + id + "“ hinzugefügt — Download startet.");
+    if (state.view === "modelle") route();
+    runJob("/api/models/download", { id: id }, "Modell herunterladen: " + id);
   } catch (e) { toast(e.message, true); }
 };
 

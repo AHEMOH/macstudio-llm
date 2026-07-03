@@ -1923,6 +1923,70 @@ cli_delete_model() {
   delete_local_model "$1" || exit 1
 }
 
+cli_add_model() {
+  # --add-model key=value … — append a catalog row non-interactively (the web
+  # dashboard's "Modell hinzufügen"). Same 17-col schema and 644 chmod as the
+  # TUI's catalog_add_entry; editing/removing rows stays TUI-only. Keys:
+  #   id=      short slug (required, [A-Za-z0-9._-])
+  #   repo=    HF org/name — a ready MLX build (required)
+  #   role=    text|ocr|vision|embed|rerank  (default text)
+  #   engine=  optiq|mlxvlm|mlxlm|infinity   (default: derived from role/TEXT_ENGINE)
+  #   quant=   e.g. 4bit                     (default ?)
+  #   gb=      approx footprint              (default ?)
+  #   gated=   yes|no                        (default no)
+  INTERACTIVE=0
+  load_config
+  local id="" repo="" role="text" engine="" quant="?" gb="?" gated="no" arg
+  for arg in "$@"; do
+    case "$arg" in
+      id=*)     id=${arg#id=} ;;
+      repo=*)   repo=${arg#repo=} ;;
+      role=*)   role=${arg#role=} ;;
+      engine=*) engine=${arg#engine=} ;;
+      quant=*)  quant=${arg#quant=} ;;
+      gb=*)     gb=${arg#gb=} ;;
+      gated=*)  gated=${arg#gated=} ;;
+      *) err "bad arg '$arg' (expected key=value)"; exit 2 ;;
+    esac
+  done
+  [ -n "$id" ] && [ -n "$repo" ] || { err "usage: --add-model id=<slug> repo=<org/name> [role=] [engine=] [gb=] [gated=]"; exit 2; }
+  case "$id" in
+    *[!A-Za-z0-9._-]*) err "invalid id '$id' — use only letters, digits, . _ -"; exit 2 ;;
+  esac
+  case "$repo" in
+    */*) : ;;
+    *) err "invalid repo '$repo' — expected 'org/name'"; exit 2 ;;
+  esac
+  case "$repo" in
+    *[\|]*|*" "*) err "invalid repo '$repo' — no spaces or '|'"; exit 2 ;;
+  esac
+  case "$role" in
+    text|ocr|vision|embed|rerank) : ;;
+    *) err "invalid role '$role' (text|ocr|vision|embed|rerank)"; exit 2 ;;
+  esac
+  if [ -z "$engine" ]; then
+    case "$role" in
+      ocr|vision)   engine=mlxvlm ;;
+      embed|rerank) engine=infinity ;;
+      *) case "${TEXT_ENGINE:-optiq}" in
+           mlx-vlm) engine=mlxvlm ;;
+           mlx-lm)  engine=mlxlm ;;
+           *)       engine=optiq ;;
+         esac ;;
+    esac
+  fi
+  ensure_model_catalog
+  if [ -n "$(catalog_repo "$id")" ]; then
+    err "id '$id' already exists in the catalog — use the TUI ('e $id') to edit"
+    exit 2
+  fi
+  # 17 cols: id|repo|role|engine|quant|gb|gated|rp|tp|kv|seqs|rating|notes|temp|topp|freq|pres
+  printf '%s|%s|%s|%s|%s|%s|%s|||||3|added via dashboard||||\n' \
+    "$id" "$repo" "$role" "$engine" "$quant" "$gb" "$gated" >> "$CATALOG_FILE"
+  /bin/chmod 644 "$CATALOG_FILE"
+  ok "added '$id' (role=$role, engine=$engine) → $repo  (download it next)"
+}
+
 cli_set_hf_token() {
   # --set-hf-token — token on STDIN (never argv: visible in `ps`), e.g.
   #   printf '%s' "$TOKEN" | sudo bash setup.sh --set-hf-token
@@ -2380,6 +2444,8 @@ MacStudio LLM Server — setup.sh v${SCRIPT_VERSION}
                                  Save one config key (no apply; key must exist)
   sudo bash setup.sh --config-schema
                                  Dump KEY<TAB>current<TAB>default<TAB>hint
+  sudo bash setup.sh --add-model id=<slug> repo=<org/name> [role=text] [engine=] [gb=] [gated=no]
+                                 Append a new catalog entry (then download it)
   sudo bash setup.sh --download-model <id>
                                  Download a catalog model non-interactively
   sudo bash setup.sh --delete-model <id>
@@ -2465,6 +2531,7 @@ case "${1:-}" in
   --config-schema) need_root "$@"; cli_config_schema ;;
   --download-model) need_root "$@"; shift; cli_download_model "$@" ;;
   --delete-model) need_root "$@"; shift; cli_delete_model "$@" ;;
+  --add-model) need_root "$@"; shift; cli_add_model "$@" ;;
   --set-hf-token) need_root "$@"; cli_set_hf_token ;;
   --check-updates) need_root "$@"; menu_updates ;;
   --help|-h) show_help ;;
