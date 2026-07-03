@@ -1092,6 +1092,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/models/select":
             self.handle_model_select(body)
+        elif path == "/api/models/add":
+            self.handle_model_add(body)
         elif path == "/api/models/download":
             self.handle_model_download(body)
         elif path == "/api/models/delete":
@@ -1163,6 +1165,31 @@ class Handler(BaseHTTPRequestHandler):
                 self.busy_409(busy)
             return
         self.send_json({"job_id": job["id"]})
+
+    def handle_model_add(self, body):
+        job = active_job()
+        if job:
+            self.busy_409(job)
+            return
+        mid = str(body.get("id", "")).strip()
+        repo = str(body.get("repo", "")).strip()
+        role = str(body.get("role", "text")).strip() or "text"
+        engine = str(body.get("engine", "")).strip()
+        gb = str(body.get("gb", "")).strip()
+        gated = "yes" if body.get("gated") in (True, "yes", "1", 1) else "no"
+        if not mid or not repo:
+            self.send_json({"error": "ID und HF-Repo sind erforderlich"}, code=400)
+            return
+        args = ["--add-model", "id=" + mid, "repo=" + repo, "role=" + role, "gated=" + gated]
+        if engine:
+            args.append("engine=" + engine)
+        if gb:
+            args.append("gb=" + gb)
+        rc, out = setup_sync(args, timeout=30)
+        if rc == 0:
+            self.send_json({"ok": True, "id": mid, "output": out})
+        else:
+            self.send_json({"error": last_lines(out), "output": out}, code=400)
 
     def handle_model_download(self, body):
         mid = str(body.get("id", ""))
