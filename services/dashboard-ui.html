@@ -174,6 +174,7 @@
   /* ---- Logs ---------------------------------------------------------------- */
   .logbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
   .logbar select { width: auto; min-width: 220px; }
+  .logbar select#logLines { min-width: 0; }
   .logbar input { width: 200px; }
   pre.logview {
     background: #101010; border: 1px solid var(--border); border-radius: var(--radius);
@@ -1063,6 +1064,12 @@ function viewLogs() {
   $("#view").innerHTML = `
     <div class="logbar">
       <select id="logSelect"></select>
+      <select id="logLines" title="Anzahl Zeilen beim Laden">
+        <option value="200">200 Zeilen</option>
+        <option value="1000" selected>1000 Zeilen</option>
+        <option value="5000">5000 Zeilen</option>
+        <option value="20000">20000 Zeilen</option>
+      </select>
       <input type="text" id="logFilter" placeholder="Filter (Text)…">
       <label style="display:flex;align-items:center;gap:6px;color:var(--ink-2);font-size:13px">
         <input type="checkbox" id="logFollow" checked style="width:auto"> folgen
@@ -1072,7 +1079,9 @@ function viewLogs() {
     <pre class="logview" id="logView">Lade…</pre>`;
 
   const lv = state.logView;
-  lv.offset = 0;
+  lv.offset = null;        // null = Erstladung (letzte N Zeilen in EINEM Request)
+  lv.lines = 1000;
+  lv.busy = false;
   let buffer = "";
 
   const renderBuf = () => {
@@ -1085,6 +1094,8 @@ function viewLogs() {
     if (stick) pre.scrollTop = pre.scrollHeight;
   };
 
+  const reload = () => { lv.offset = null; buffer = ""; $("#logView").textContent = "Lade…"; tail(); };
+
   const loadList = async () => {
     let d;
     try { d = await api("/api/logs"); } catch (e) { return; }
@@ -1093,31 +1104,42 @@ function viewLogs() {
     if (!lv.name || !names.includes(lv.name)) lv.name = names.includes("optiq-main.log") ? "optiq-main.log" : names[0];
     sel.innerHTML = d.logs.map(l =>
       `<option value="${esc(l.name)}" ${l.name === lv.name ? "selected" : ""}>${esc(l.name)} (${fmtBytes(l.size)})</option>`).join("");
-    sel.onchange = () => { lv.name = sel.value; lv.offset = 0; buffer = ""; $("#logView").textContent = "Lade…"; tail(); };
+    sel.onchange = () => { lv.name = sel.value; reload(); };
   };
 
   const tail = async () => {
-    if (!lv.name) return;
-    let d;
-    try { d = await api("/api/logs/" + encodeURIComponent(lv.name) + "?offset=" + lv.offset); }
-    catch (e) { return; }
-    if (d.missing) { $("#logView").textContent = "(Log nicht gefunden)"; return; }
-    if (d.next_offset < lv.offset) { buffer = ""; }           // Rotation
-    if (lv.offset === 0 && d.size > 200000) {
-      lv.offset = d.size - 100000;                            // nur das Ende laden
-      buffer = "";
-      return tail();
+    if (!lv.name || lv.busy) return;
+    lv.busy = true;
+    try {
+      let d;
+      if (lv.offset === null) {
+        d = await api("/api/logs/" + encodeURIComponent(lv.name) + "?lines=" + lv.lines);
+        buffer = "";
+      } else {
+        d = await api("/api/logs/" + encodeURIComponent(lv.name) + "?offset=" + lv.offset);
+      }
+      if (d.missing) { $("#logView").textContent = "(Log nicht gefunden)"; return; }
+      if (lv.offset !== null && d.next_offset < lv.offset) {  // Rotation → neu laden
+        lv.offset = null;
+        buffer = "";
+        return;
+      }
+      if (d.data || lv.offset === null) {
+        buffer += d.data;
+        if (buffer.length > 2000000) buffer = buffer.slice(-1500000);
+        renderBuf();
+      }
+      lv.offset = d.next_offset;
+      $("#logMeta").textContent = fmtBytes(d.size);
+    } catch (e) {
+      /* Verbindungsfehler — nächster Poll versucht es erneut */
+    } finally {
+      lv.busy = false;
     }
-    if (d.data) {
-      buffer += d.data;
-      if (buffer.length > 500000) buffer = buffer.slice(-400000);
-      renderBuf();
-    }
-    lv.offset = d.next_offset;
-    $("#logMeta").textContent = fmtBytes(d.size);
   };
 
   $("#logFilter").addEventListener("input", renderBuf);
+  $("#logLines").onchange = () => { lv.lines = parseInt($("#logLines").value, 10) || 1000; reload(); };
   loadList().then(tail);
   every(1500, () => { if (lv.name) tail(); });
   state.timers.push(setInterval(loadList, 30000));

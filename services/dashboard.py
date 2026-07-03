@@ -651,6 +651,28 @@ def cancel_job(job_id):
     return True, None
 
 
+def read_tail_lines(path, lines, max_bytes=2 * 1024 * 1024):
+    """Last N lines of a file in ONE read (initial log view). Returns the
+    same shape as read_incremental with next_offset = size, so the UI can
+    continue polling incrementally from the end."""
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return {"data": "", "next_offset": 0, "size": 0, "missing": True}
+    want = min(size, max(LOG_CHUNK, lines * 300), max_bytes)
+    try:
+        with open(path, "rb") as f:
+            f.seek(size - want)
+            raw = f.read(want)
+    except OSError:
+        return {"data": "", "next_offset": size, "size": size}
+    text = raw.decode("utf-8", "replace")
+    all_lines = text.splitlines(True)
+    if size > want and all_lines:
+        all_lines = all_lines[1:]      # drop the likely-partial first line
+    return {"data": "".join(all_lines[-lines:]), "next_offset": size, "size": size}
+
+
 def read_incremental(path, offset, limit=LOG_CHUNK):
     """Rotation-aware cursor read: size < offset -> reset to 0."""
     try:
@@ -1036,7 +1058,17 @@ class Handler(BaseHTTPRequestHandler):
             if not full.startswith(os.path.realpath(LOG_DIR) + os.sep):
                 self.send_json({"error": "ungültiger Pfad"}, code=400)
                 return
-            self.send_json(read_incremental(full, offset))
+            # No offset -> initial view: last N lines in one shot (default
+            # 1000). With offset -> incremental follow-up read.
+            if "offset" not in qs:
+                try:
+                    lines = int(qs.get("lines", ["1000"])[0])
+                except ValueError:
+                    lines = 1000
+                lines = max(10, min(lines, 20000))
+                self.send_json(read_tail_lines(full, lines))
+            else:
+                self.send_json(read_incremental(full, offset))
         else:
             self.send_json({"error": "not found"}, code=404)
 
