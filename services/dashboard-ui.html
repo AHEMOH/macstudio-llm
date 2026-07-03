@@ -300,13 +300,69 @@
   </div>
 </div>
 
+<!-- Modell-bearbeiten-Modal -->
+<div class="overlay" id="editOverlay">
+  <div class="modal wide">
+    <h2>Modell bearbeiten</h2>
+    <p id="editSub" class="muted"></p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 14px">
+      <div style="grid-column:1/3"><label class="muted" style="font-size:12px">HF-Repo</label>
+        <input type="text" id="edRepo" autocomplete="off"></div>
+      <div><label class="muted" style="font-size:12px">Rolle</label>
+        <select id="edRole">
+          <option value="text">text</option><option value="ocr">ocr</option>
+          <option value="vision">vision</option><option value="embed">embed</option>
+          <option value="rerank">rerank</option>
+        </select></div>
+      <div><label class="muted" style="font-size:12px">Engine</label>
+        <select id="edEngine">
+          <option value="optiq">optiq</option><option value="mlxvlm">mlxvlm</option>
+          <option value="mlxlm">mlxlm</option><option value="infinity">infinity</option>
+        </select></div>
+      <div><label class="muted" style="font-size:12px">Quant</label>
+        <input type="text" id="edQuant" placeholder="4bit" autocomplete="off"></div>
+      <div><label class="muted" style="font-size:12px">ca. GB</label>
+        <input type="text" id="edGb" autocomplete="off"></div>
+      <div><label class="muted" style="font-size:12px">Kontextlänge (max_kv_size)</label>
+        <input type="text" id="edKv" placeholder="z. B. 131072" autocomplete="off"></div>
+      <div><label class="muted" style="font-size:12px">max_num_seqs</label>
+        <input type="text" id="edSeqs" autocomplete="off"></div>
+      <div><label class="muted" style="font-size:12px">reasoning_parser</label>
+        <input type="text" id="edRp" placeholder="gpt_oss / gemma4 / …" autocomplete="off"></div>
+      <div><label class="muted" style="font-size:12px">tool_parser</label>
+        <input type="text" id="edTp" placeholder="gpt-oss / gemma4 / …" autocomplete="off"></div>
+      <div><label class="muted" style="font-size:12px">Rating (1–5; 5 = REC)</label>
+        <input type="text" id="edRating" autocomplete="off"></div>
+      <label style="display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:13px;align-self:end;padding-bottom:8px">
+        <input type="checkbox" id="edGated" style="width:auto"> gated</label>
+      <div style="grid-column:1/3"><label class="muted" style="font-size:12px">Notizen (BROKEN / BROKEN[engine] sperrt die Auswahl)</label>
+        <input type="text" id="edNotes" autocomplete="off"></div>
+      <div><label class="muted" style="font-size:12px">temperature</label>
+        <input type="text" id="edTemp" autocomplete="off"></div>
+      <div><label class="muted" style="font-size:12px">top_p</label>
+        <input type="text" id="edTopp" autocomplete="off"></div>
+      <div><label class="muted" style="font-size:12px">frequency_penalty</label>
+        <input type="text" id="edFreq" autocomplete="off"></div>
+      <div><label class="muted" style="font-size:12px">presence_penalty</label>
+        <input type="text" id="edPres" autocomplete="off"></div>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:10px">Hinweis: Unter der optiq-Engine ist die
+      Kontextlänge informativ (kein Cap-Flag); KV-Quantisierung ist die globale Einstellung
+      <code>OPTIQ_KV_BITS</code>. Sampling-Änderungen an einem aktiven Modell greifen erst nach erneutem Aktivieren.</p>
+    <div class="row">
+      <button id="editCancel">Abbrechen</button>
+      <button class="primary" id="editSave">Speichern</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modell-hinzufügen-Modal -->
 <div class="overlay" id="addOverlay">
   <div class="modal">
     <h2>Modell hinzufügen</h2>
     <p>Neuen Katalogeintrag anlegen (danach herunterladen). HF-Repo muss ein
        fertiges MLX-Build sein — z. B. <code>mlx-community/…-OptiQ-4bit</code>.
-       Bearbeiten/Entfernen weiterhin per TUI.</p>
+       Bearbeiten/Entfernen jetzt auch per Zeilenaktion.</p>
     <div style="display:grid;gap:10px">
       <div><label class="muted" style="font-size:12px">HF-Repo (org/name)</label>
         <input type="text" id="addRepo" placeholder="mlx-community/gpt-oss-20b-OptiQ-4bit" autocomplete="off"></div>
@@ -859,8 +915,10 @@ function viewModelle() {
         if (m.role === "rerank" && !(m.slots || []).includes("rerank"))
           acts.push(`<button class="small" data-act="rerank" data-id="${esc(m.id)}" ${m.broken ? "disabled" : ""}>→ rerank</button>`);
       }
+      acts.push(`<button class="small" data-act="edit" data-id="${esc(m.id)}">Bearbeiten</button>`);
       if (m.status !== "none")
-        acts.push(`<button class="small danger" data-act="delete" data-id="${esc(m.id)}" data-gb="${gbtxt}">Löschen</button>`);
+        acts.push(`<button class="small danger" data-act="delete" data-id="${esc(m.id)}" data-gb="${gbtxt}">Dateien löschen</button>`);
+      acts.push(`<button class="small danger" data-act="remove" data-id="${esc(m.id)}">Aus Katalog</button>`);
 
       const detail = `<details class="mdetail"><summary>${esc(m.id)}</summary><div>
           <b>Repo:</b> <code>${esc(m.repo)}</code><br>
@@ -880,16 +938,28 @@ function viewModelle() {
       </tr>`;
     });
     $("#modelRows").innerHTML = rows.join("") || '<tr><td colspan="7" class="muted">Katalog leer</td></tr>';
+    state.modelsById = {};
+    d.models.forEach(m => { state.modelsById[m.id] = m; });
 
     $$("#modelRows button").forEach(btn => {
       btn.onclick = async () => {
         const act = btn.dataset.act, id = btn.dataset.id;
         if (act === "download") {
           runJob("/api/models/download", { id: id }, "Modell herunterladen: " + id);
+        } else if (act === "edit") {
+          openEditModal(state.modelsById[id]);
+        } else if (act === "remove") {
+          if (!await confirmDlg("Aus dem Katalog entfernen?",
+              `Der Katalogeintrag „${id}“ wird gelöscht. Bereits heruntergeladene Dateien bleiben erhalten.`, "Ja, entfernen")) return;
+          try {
+            await api("/api/models/remove", { body: { id: id } });
+            toast("„" + id + "“ aus dem Katalog entfernt.");
+            load();
+          } catch (e) { toast(e.message, true); }
         } else if (act === "delete") {
           const gb = btn.dataset.gb;
           if (!await confirmDlg("Lokale Dateien löschen?",
-              `„${id}" (${gb} GB) wird vom HF-Cache gelöscht. Der Katalogeintrag bleibt.`, "Ja, löschen")) return;
+              `„${id}“ (${gb} GB) wird vom HF-Cache gelöscht. Der Katalogeintrag bleibt.`, "Ja, löschen")) return;
           try {
             await api("/api/models/delete", { body: { id: id } });
             toast("„" + id + "“ gelöscht.");
@@ -918,6 +988,50 @@ $("#hfSave").onclick = async () => {
     await api("/api/hf-token", { body: { token: $("#hfToken").value.trim() } });
     $("#hfOverlay").classList.remove("open");
     toast("HF-Token gespeichert.");
+    if (state.view === "modelle") route();
+  } catch (e) { toast(e.message, true); }
+};
+
+function openEditModal(m) {
+  if (!m) return;
+  $("#editSub").textContent = m.id + " — " + m.repo;
+  $("#edRepo").value = m.repo || "";
+  $("#edRole").value = m.role || "text";
+  $("#edEngine").value = m.engine || "optiq";
+  $("#edQuant").value = m.quant || "";
+  $("#edGb").value = m.gb || "";
+  $("#edKv").value = m.max_kv_size || "";
+  $("#edSeqs").value = m.max_num_seqs || "";
+  $("#edRp").value = m.reasoning_parser || "";
+  $("#edTp").value = m.tool_parser || "";
+  $("#edRating").value = m.rating || "";
+  $("#edGated").checked = m.gated === "yes";
+  $("#edNotes").value = m.notes || "";
+  $("#edTemp").value = m.temperature || "";
+  $("#edTopp").value = m.top_p || "";
+  $("#edFreq").value = m.frequency_penalty || "";
+  $("#edPres").value = m.presence_penalty || "";
+  $("#editOverlay").dataset.id = m.id;
+  $("#editOverlay").classList.add("open");
+}
+$("#editCancel").onclick = () => $("#editOverlay").classList.remove("open");
+$("#editSave").onclick = async () => {
+  const id = $("#editOverlay").dataset.id;
+  const payload = {
+    id: id,
+    repo: $("#edRepo").value.trim(), role: $("#edRole").value, engine: $("#edEngine").value,
+    quant: $("#edQuant").value.trim(), gb: $("#edGb").value.trim(),
+    gated: $("#edGated").checked ? "yes" : "no",
+    max_kv_size: $("#edKv").value.trim(), max_num_seqs: $("#edSeqs").value.trim(),
+    reasoning_parser: $("#edRp").value.trim(), tool_parser: $("#edTp").value.trim(),
+    rating: $("#edRating").value.trim(), notes: $("#edNotes").value.trim(),
+    temperature: $("#edTemp").value.trim(), top_p: $("#edTopp").value.trim(),
+    frequency_penalty: $("#edFreq").value.trim(), presence_penalty: $("#edPres").value.trim(),
+  };
+  try {
+    await api("/api/models/edit", { body: payload });
+    $("#editOverlay").classList.remove("open");
+    toast("„" + id + "“ gespeichert.");
     if (state.view === "modelle") route();
   } catch (e) { toast(e.message, true); }
 };

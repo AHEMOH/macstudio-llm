@@ -1098,11 +1098,16 @@ class Handler(BaseHTTPRequestHandler):
             self.handle_model_select(body)
         elif path == "/api/models/add":
             self.handle_model_add(body)
+        elif path == "/api/models/edit":
+            self.handle_model_edit(body)
         elif path == "/api/models/download":
             self.handle_model_download(body)
         elif path == "/api/models/delete":
             self.handle_sync_guarded(
                 lambda: setup_sync(["--delete-model", str(body.get("id", ""))], timeout=120))
+        elif path == "/api/models/remove":
+            self.handle_sync_guarded(
+                lambda: setup_sync(["--remove-model", str(body.get("id", ""))], timeout=30))
         elif path == "/api/hf-token":
             self.handle_sync_guarded(
                 lambda: setup_sync(["--set-hf-token"], timeout=60,
@@ -1192,6 +1197,39 @@ class Handler(BaseHTTPRequestHandler):
         rc, out = setup_sync(args, timeout=30)
         if rc == 0:
             self.send_json({"ok": True, "id": mid, "output": out})
+        else:
+            self.send_json({"error": last_lines(out), "output": out}, code=400)
+
+    def handle_model_edit(self, body):
+        job = active_job()
+        if job:
+            self.busy_409(job)
+            return
+        mid = str(body.get("id", "")).strip()
+        if not mid:
+            self.send_json({"error": "ID fehlt"}, code=400)
+            return
+        # Map JSON fields → --edit-model key=value args (only those present).
+        field_map = [
+            ("repo", "repo"), ("role", "role"), ("engine", "engine"),
+            ("quant", "quant"), ("gb", "gb"), ("gated", "gated"),
+            ("reasoning_parser", "reasoning"), ("tool_parser", "tool"),
+            ("max_kv_size", "max_kv"), ("max_num_seqs", "max_seqs"),
+            ("rating", "rating"), ("notes", "notes"), ("temperature", "temp"),
+            ("top_p", "top_p"), ("frequency_penalty", "freq"),
+            ("presence_penalty", "pres"),
+        ]
+        args = ["--edit-model", "id=" + mid]
+        for json_key, cli_key in field_map:
+            if json_key in body and body[json_key] is not None:
+                val = str(body[json_key])
+                if "|" in val:
+                    self.send_json({"error": f"Feld '{json_key}' darf kein '|' enthalten"}, code=400)
+                    return
+                args.append(cli_key + "=" + val)
+        rc, out = setup_sync(args, timeout=30)
+        if rc == 0:
+            self.send_json({"ok": True, "output": out})
         else:
             self.send_json({"error": last_lines(out), "output": out}, code=400)
 

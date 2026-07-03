@@ -525,12 +525,13 @@ shows it any time). Five views:
 - **Übersicht** — status tiles (gateway, active models, RAM/GPU/swap/pressure)
   plus power / temperature / GPU / memory charts (~1 h history). The
   power/thermal charts need `INSTALL_EXPORTERS=1`; without it they say so.
-- **Modelle** — the same catalog as `llm-models`: **add a new model** by HF repo
-  id (e.g. `mlx-community/…-OptiQ-4bit`) which appends a catalog row and starts
-  the download, download with a live progress bar, activate a model per slot
-  (main / agent / ocr / embed / rerank; same validation incl. BROKEN refusal),
-  delete local files, store the HF token. (Editing/removing catalog rows stays
-  in the TUI.)
+- **Modelle** — full catalog management (same catalog as `llm-models`): **add**
+  a new model by HF repo id (e.g. `mlx-community/…-OptiQ-4bit`) which appends a
+  row and starts the download, **edit** any row's fields (repo, GB, context /
+  `max_kv_size`, parsers, rating, notes, sampling), **remove** a catalog row,
+  download with a live progress bar, activate per slot (main / agent / ocr /
+  embed / rerank; same validation incl. BROKEN refusal), delete local files,
+  store the HF token. The GB column shows the real on-disk size once downloaded.
 - **Dienste** — every active daemon with live state; restart / stop / wake.
 - **Einstellungen** — every `macstudio.conf` key, grouped, with the same hints
   as the TUI; **Speichern** writes the conf, **Speichern & Anwenden** runs

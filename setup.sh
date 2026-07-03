@@ -1923,6 +1923,99 @@ cli_delete_model() {
   delete_local_model "$1" || exit 1
 }
 
+cli_remove_model() {
+  # --remove-model <id> — drop a catalog row (local HF files are kept, like the
+  # TUI's 'x'). confirm() auto-accepts because INTERACTIVE=0. The dashboard's
+  # "Aus Katalog entfernen".
+  INTERACTIVE=0
+  load_config
+  [ "$#" -eq 1 ] || { err "usage: --remove-model <id>"; exit 2; }
+  catalog_remove_entry "$1" || exit 1
+}
+
+cli_edit_model() {
+  # --edit-model id=<slug> [repo=] [role=] [engine=] [quant=] [gb=] [gated=]
+  #   [reasoning=] [tool=] [max_kv=] [max_seqs=] [rating=] [notes=]
+  #   [temp=] [top_p=] [freq=] [pres=]
+  # In-place edit of ONE catalog row (the dashboard's "Bearbeiten"). Only the
+  # keys you pass change; the rest keep their current values (pass key= to
+  # clear a field). Values may not contain '|' (the TSV delimiter). Mirrors the
+  # TUI's catalog_edit_entry + 644 chmod.
+  INTERACTIVE=0
+  load_config
+  local id="" arg k v
+  local s_repo=0 s_role=0 s_engine=0 s_quant=0 s_gb=0 s_gated=0 s_rp=0 s_tp=0
+  local s_kv=0 s_seqs=0 s_rating=0 s_notes=0 s_temp=0 s_topp=0 s_freq=0 s_pres=0
+  local n_repo n_role n_engine n_quant n_gb n_gated n_rp n_tp
+  local n_kv n_seqs n_rating n_notes n_temp n_topp n_freq n_pres
+  for arg in "$@"; do
+    case "$arg" in *=*) : ;; *) err "bad arg '$arg' (expected key=value)"; exit 2 ;; esac
+    k=${arg%%=*}; v=${arg#*=}
+    case "$v" in *"|"*) err "value for '$k' must not contain '|'"; exit 2 ;; esac
+    case "$k" in
+      id)        id=$v ;;
+      repo)      n_repo=$v;   s_repo=1 ;;
+      role)      n_role=$v;   s_role=1 ;;
+      engine)    n_engine=$v; s_engine=1 ;;
+      quant)     n_quant=$v;  s_quant=1 ;;
+      gb)        n_gb=$v;     s_gb=1 ;;
+      gated)     n_gated=$v;  s_gated=1 ;;
+      reasoning) n_rp=$v;     s_rp=1 ;;
+      tool)      n_tp=$v;     s_tp=1 ;;
+      max_kv)    n_kv=$v;     s_kv=1 ;;
+      max_seqs)  n_seqs=$v;   s_seqs=1 ;;
+      rating)    n_rating=$v; s_rating=1 ;;
+      notes)     n_notes=$v;  s_notes=1 ;;
+      temp)      n_temp=$v;   s_temp=1 ;;
+      top_p)     n_topp=$v;   s_topp=1 ;;
+      freq)      n_freq=$v;   s_freq=1 ;;
+      pres)      n_pres=$v;   s_pres=1 ;;
+      *) err "unknown key '$k'"; exit 2 ;;
+    esac
+  done
+  [ -n "$id" ] || { err "usage: --edit-model id=<slug> [repo=] [gb=] [max_kv=] [notes=] …"; exit 2; }
+  ensure_model_catalog
+  local line; line=$(/usr/bin/grep -E "^${id}\|" "$CATALOG_FILE" | /usr/bin/head -1)
+  [ -n "$line" ] || { err "unknown id: $id"; exit 2; }
+  local c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 c11 c12 c13 c14 c15 c16 c17
+  IFS='|' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 c11 c12 c13 c14 c15 c16 c17 <<EOF
+$line
+EOF
+  [ "$s_repo" = 1 ]   && c2=$n_repo
+  [ "$s_role" = 1 ]   && c3=$n_role
+  [ "$s_engine" = 1 ] && c4=$n_engine
+  [ "$s_quant" = 1 ]  && c5=$n_quant
+  [ "$s_gb" = 1 ]     && c6=$n_gb
+  [ "$s_gated" = 1 ]  && c7=$n_gated
+  [ "$s_rp" = 1 ]     && c8=$n_rp
+  [ "$s_tp" = 1 ]     && c9=$n_tp
+  [ "$s_kv" = 1 ]     && c10=$n_kv
+  [ "$s_seqs" = 1 ]   && c11=$n_seqs
+  [ "$s_rating" = 1 ] && c12=$n_rating
+  [ "$s_notes" = 1 ]  && c13=$n_notes
+  [ "$s_temp" = 1 ]   && c14=$n_temp
+  [ "$s_topp" = 1 ]   && c15=$n_topp
+  [ "$s_freq" = 1 ]   && c16=$n_freq
+  [ "$s_pres" = 1 ]   && c17=$n_pres
+  case "$c3" in text|ocr|vision|embed|rerank) : ;; *) err "invalid role '$c3'"; exit 2 ;; esac
+  local newline; newline="$c1|$c2|$c3|$c4|$c5|$c6|$c7|$c8|$c9|$c10|$c11|$c12|$c13|$c14|$c15|$c16|$c17"
+  local tmp l; tmp=$(/usr/bin/mktemp)
+  while IFS= read -r l || [ -n "$l" ]; do
+    case "$l" in
+      "$id|"*) printf '%s\n' "$newline" ;;
+      *)       printf '%s\n' "$l" ;;
+    esac
+  done <"$CATALOG_FILE" >"$tmp"
+  /bin/mv -f "$tmp" "$CATALOG_FILE"
+  /bin/chmod 644 "$CATALOG_FILE"
+  ok "updated catalog entry '$id'"
+  if [ "$id" = "${ALIAS_MAIN:-}" ] || [ "$id" = "${ALIAS_OCR:-}" ] \
+     || [ "$id" = "${ALIAS_EMBED:-}" ] || [ "$id" = "${ALIAS_RERANK:-}" ]; then
+    render_litellm_config
+    warn "'$id' is an active alias — re-select it to apply engine-level changes"
+  fi
+}
+
 cli_add_model() {
   # --add-model key=value … — append a catalog row non-interactively (the web
   # dashboard's "Modell hinzufügen"). Same 17-col schema and 644 chmod as the
@@ -2446,6 +2539,11 @@ MacStudio LLM Server — setup.sh v${SCRIPT_VERSION}
                                  Dump KEY<TAB>current<TAB>default<TAB>hint
   sudo bash setup.sh --add-model id=<slug> repo=<org/name> [role=text] [engine=] [gb=] [gated=no]
                                  Append a new catalog entry (then download it)
+  sudo bash setup.sh --edit-model id=<slug> [repo=] [gb=] [reasoning=] [tool=]
+                                 [max_kv=] [max_seqs=] [rating=] [notes=] [temp=] …
+                                 Edit fields of an existing catalog entry in place
+  sudo bash setup.sh --remove-model <id>
+                                 Remove a catalog row (local files are kept)
   sudo bash setup.sh --download-model <id>
                                  Download a catalog model non-interactively
   sudo bash setup.sh --delete-model <id>
@@ -2532,6 +2630,8 @@ case "${1:-}" in
   --download-model) need_root "$@"; shift; cli_download_model "$@" ;;
   --delete-model) need_root "$@"; shift; cli_delete_model "$@" ;;
   --add-model) need_root "$@"; shift; cli_add_model "$@" ;;
+  --edit-model) need_root "$@"; shift; cli_edit_model "$@" ;;
+  --remove-model) need_root "$@"; shift; cli_remove_model "$@" ;;
   --set-hf-token) need_root "$@"; cli_set_hf_token ;;
   --check-updates) need_root "$@"; menu_updates ;;
   --help|-h) show_help ;;
