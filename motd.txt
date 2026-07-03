@@ -29,6 +29,7 @@
     Aliases stay stable ('main', 'ocr') — switching the underlying model is an
     explicit step via 'llm-models' and never happens on the fly.
 
+  Dashboard:    http://<this-mac>:@DASHBOARD_PORT@   (browser control — token: DASHBOARD_TOKEN in macstudio.conf)
   Settings:     sudo bash /opt/macstudio/setup.sh
   Logs:         tail -F /var/log/macstudio/mlxlm.log    (or litellm.log / glmocr-serve.log)
   Weekly auto:  @AUTOUPDATE_HUMAN@ → /var/log/macstudio/autoupdate.log

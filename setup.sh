@@ -50,6 +50,7 @@ ALWAYS_ON_LABELS=(
   com.local.iogpu.wiredlimit
   com.local.weekly.autoupdate
   com.local.mqtt.bridge
+  com.local.dashboard
 )
 # On-demand backends (KeepAlive=false, RunAtLoad=false)
 ONDEMAND_LABELS=(
@@ -170,6 +171,9 @@ CONFIG_KEYS=(
   MQTT_TOPIC_PREFIX
   MQTT_DISCOVERY_PREFIX
   MQTT_PUBLISH_INTERVAL_SEC
+  INSTALL_DASHBOARD
+  DASHBOARD_PORT
+  DASHBOARD_TOKEN
   AUTO_ACCEPT
 )
 # Bash-3.2 safe (macOS ships /bin/bash 3.2): lookup functions instead of
@@ -283,6 +287,9 @@ config_default() {
     MQTT_TOPIC_PREFIX)           echo macstudio ;;
     MQTT_DISCOVERY_PREFIX)       echo homeassistant ;;
     MQTT_PUBLISH_INTERVAL_SEC)   echo 10 ;;
+    INSTALL_DASHBOARD)           echo 1 ;;
+    DASHBOARD_PORT)              echo 8090 ;;
+    DASHBOARD_TOKEN)             echo "" ;;
     AUTO_ACCEPT)                 echo 0 ;;
     *)                           echo "" ;;
   esac
@@ -362,6 +369,9 @@ config_hint() {
     MQTT_TOPIC_PREFIX)           echo "Base topic for state/command (default 'macstudio' -> macstudio/state, macstudio/model/set)" ;;
     MQTT_DISCOVERY_PREFIX)       echo "Home Assistant MQTT discovery prefix (default 'homeassistant' — match HA's mqtt integration setting)" ;;
     MQTT_PUBLISH_INTERVAL_SEC)   echo "Seconds between fast telemetry publishes (power/status/model; default 10). Version/update checks run every 6 h" ;;
+    INSTALL_DASHBOARD)           echo "1 = run the web dashboard (browser control of models / services / settings / logs / telemetry) on :8090. Token-protected; the SSH TUI stays fully authoritative" ;;
+    DASHBOARD_PORT)              echo "Public port the web dashboard binds (default 8090)" ;;
+    DASHBOARD_TOKEN)             echo "Web-dashboard access token (browser login + 'Authorization: Bearer' for curl). Plaintext in this 644 conf — LAN-only, like MQTT_PASS. Empty = auto-generated on the next --apply; clear it + --apply to rotate (logs out all browsers)" ;;
     *)                           echo "" ;;
   esac
 }
@@ -559,6 +569,8 @@ load_config() {
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || continue ;;
       com.local.mqtt.bridge)
         [ "${INSTALL_MQTT:-0}" = 1 ] || continue ;;
+      com.local.dashboard)
+        [ "${INSTALL_DASHBOARD:-1}" = 1 ] || continue ;;
     esac
     ACTIVE_LABELS+=("$_lbl")
   done
@@ -615,6 +627,7 @@ label_log() {
     com.local.iogpu.wiredlimit)  echo "$LOG_DIR/iogpu-wired-limit.log" ;;
     com.local.weekly.autoupdate) echo "$LOG_DIR/autoupdate.log" ;;
     com.local.mqtt.bridge)       echo "$LOG_DIR/mqtt-bridge.log" ;;
+    com.local.dashboard)         echo "$LOG_DIR/dashboard.log" ;;
     *) echo "$LOG_DIR/${1#com.local.}.log" ;;
   esac
 }
@@ -1170,6 +1183,7 @@ render_wrappers() {
 service_py_label() {
   case "$1" in
     mqtt-bridge.py)        echo com.local.mqtt.bridge ;;
+    dashboard.py)          echo com.local.dashboard ;;
     silicon-exporter.py)   echo com.local.silicon.exporter ;;
     ondemand-exporter.py)  echo com.local.ondemand.exporter ;;
     ollama-exporter.py)    echo com.local.ollama.exporter ;;
@@ -1193,6 +1207,13 @@ render_services() {
   fi
   if install_if_different "$REPO_DIR/services/weekly-autoupdate.sh" "$SBIN_DIR/weekly-autoupdate.sh" 755; then
     changed=$((changed+1)); ok "updated $SBIN_DIR/weekly-autoupdate.sh"
+  fi
+  # The dashboard SPA is a data file dashboard.py re-reads from disk (mtime
+  # cache) — an html-only change needs NO daemon restart, so it is deliberately
+  # not mapped in service_py_label.
+  if [ -f "$REPO_DIR/services/dashboard-ui.html" ] \
+     && install_if_different "$REPO_DIR/services/dashboard-ui.html" "$LIBEXEC_DIR/dashboard-ui.html" 644; then
+    changed=$((changed+1)); ok "updated $LIBEXEC_DIR/dashboard-ui.html"
   fi
   # A .py-only change doesn't touch the plist, so render_all_plists sees no
   # diff and never restarts the daemon — it would keep running stale code.
@@ -1262,6 +1283,9 @@ render_all_plists() {
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.mqtt.bridge)
         [ "${INSTALL_MQTT:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
+      com.local.dashboard)
+        # Web dashboard (browser control). Root daemon like the MQTT bridge.
+        [ "${INSTALL_DASHBOARD:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
     esac
     local before_hash; before_hash=$(hash_file "$dst")
     render_template "$src" "$dst" 644 root:wheel || true
@@ -1442,6 +1466,28 @@ apply_tui_sudoers() {
 # Orchestration
 # ===========================================================================
 
+ensure_dashboard_token() {
+  # Generate the web-dashboard access token ONCE (empty = not yet generated).
+  # Idempotent: an existing token is never touched — rotate by clearing
+  # DASHBOARD_TOKEN (menu 4) and re-running --apply. The dashboard daemon
+  # re-reads the conf per auth check, so no restart is needed after rotation.
+  [ "${INSTALL_DASHBOARD:-1}" = 1 ] || return 0
+  if [ -n "${DASHBOARD_TOKEN:-}" ]; then
+    ok "dashboard token present"
+    return 0
+  fi
+  local t
+  t=$(/usr/bin/openssl rand -hex 16 2>/dev/null)
+  if [ -z "$t" ]; then
+    warn "openssl rand failed — dashboard token NOT generated (dashboard will refuse all logins)"
+    return 0
+  fi
+  save_config_key DASHBOARD_TOKEN "$t"
+  export DASHBOARD_TOKEN="$t"
+  ok "dashboard token generated: $t"
+  ok "  (log in at http://$(/bin/hostname 2>/dev/null || echo localhost):${DASHBOARD_PORT:-8090} — also in $CONF_FILE)"
+}
+
 mqtt_apply_warnings() {
   [ "${INSTALL_MQTT:-0}" = 1 ] || return 0
   if [ -z "${MQTT_HOST:-}" ]; then
@@ -1472,6 +1518,7 @@ apply_everything() {
   dbg "step: render_services";        render_services
   dbg "step: render_bin";             render_bin
   dbg "step: render_litellm_config";   render_litellm_config
+  dbg "step: ensure_dashboard_token";  ensure_dashboard_token
   dbg "step: render_all_plists";      render_all_plists
   dbg "step: mqtt_apply_warnings";    mqtt_apply_warnings
   dbg "step: render_motd";            render_motd
@@ -1546,6 +1593,11 @@ verify_and_summary() {
          | awk '/next run/{print; exit}')
   printf "Scheduled autoupdate: %s\n" "${next:-(not scheduled)}"
 
+  if [ "${INSTALL_DASHBOARD:-1}" = 1 ]; then
+    printf "Web dashboard: http://%s:%s/  (token: DASHBOARD_TOKEN in %s)\n" \
+      "$(/bin/hostname 2>/dev/null || echo localhost)" "${DASHBOARD_PORT:-8090}" "$CONF_FILE"
+  fi
+
   echo
 }
 
@@ -1595,13 +1647,15 @@ menu_select_services() {
       INSTALL_WATCHDOG  "$(onoff_label "${INSTALL_WATCHDOG:-1}")"
     printf "  7) %-18s [%s]   MQTT bridge -> Home Assistant (runtime data + model switch); host %s\n" \
       INSTALL_MQTT      "$(onoff_label "${INSTALL_MQTT:-0}")" "${MQTT_HOST:-<unset>}"
+    printf "  8) %-18s [%s]   Web dashboard (browser control: models/services/settings/logs) :%s\n" \
+      INSTALL_DASHBOARD "$(onoff_label "${INSTALL_DASHBOARD:-1}")" "${DASHBOARD_PORT:-8090}"
     echo
     if [ "${INSTALL_MLX:-1}" = 1 ] && [ "${INSTALL_OLLAMA:-0}" = 1 ] \
        && [ "${LITELLM_PORT:-11434}" = "${OLLAMA_PORT:-11434}" ]; then
       warn "MLX and Ollama are both on but share port ${LITELLM_PORT:-11434} — change OLLAMA_PORT in settings."
     fi
     echo "   a) Apply these choices now     q) Back (don't apply)"
-    read -r -p "Toggle which? [1-7 / a / q]: " c
+    read -r -p "Toggle which? [1-8 / a / q]: " c
     case "$c" in
       1) toggle_install_flag INSTALL_MLX       ;;
       2) toggle_install_flag INSTALL_OLLAMA    ;;
@@ -1610,6 +1664,7 @@ menu_select_services() {
       5) toggle_install_flag INSTALL_EXPORTERS ;;
       6) toggle_install_flag INSTALL_WATCHDOG  ;;
       7) toggle_install_flag INSTALL_MQTT      ;;
+      8) toggle_install_flag INSTALL_DASHBOARD ;;
       a|A) apply_everything; pause_enter; return 0 ;;
       q|Q|"") return 0 ;;
       *) warn "unknown: $c"; sleep 1 ;;
@@ -1733,6 +1788,7 @@ set_model_alias() {
   [ "$st" = ok ] || { err "'$id' is not fully downloaded (status=$st) — run 'd $id' first"; return 1; }
   case "$slot" in
     main)   key=ALIAS_MAIN;   want_role=text ;;
+    agent)  key=AGENT_MODEL;  want_role=text ;;
     ocr)    key=ALIAS_OCR;    want_role=ocr  ;;
     vision) key=ALIAS_VISION; want_role=vision ;;
     embed)  key=ALIAS_EMBED;  want_role=embed ;;
@@ -1751,10 +1807,11 @@ set_model_alias() {
   # blocks; an engine-tagged BROKEN[<engine>] blocks ONLY for that engine. So
   # BROKEN[mlx-lm] (e.g. gemma4-12b = gemma4_unified) is fine under mlx-vlm and
   # selectable there; BROKEN[vllm] is HISTORICAL (vllm-mlx retired) and never blocks.
-  # main runs on TEXT_ENGINE; ocr/vision always run on mlx-vlm.
+  # main runs on TEXT_ENGINE; agent always runs on optiq; ocr/vision always on mlx-vlm.
   local _notes _broken=0 _check_engine
   case "$slot" in
     main)         _check_engine="${TEXT_ENGINE:-mlx-vlm}" ;;
+    agent)        _check_engine="optiq" ;;
     embed|rerank) _check_engine="infinity" ;;
     *)            _check_engine="mlx-vlm" ;;
   esac
@@ -1783,6 +1840,13 @@ set_model_alias() {
       /bin/launchctl kickstart -k "system/$_text_label" >/dev/null 2>&1 \
         && ok "restarting $_text_label with new main model (load ~30–60 s, no hot-swap)"
     fi
+  elif [ "$slot" = agent ]; then
+    if daemon_loaded com.local.optiq.agent; then
+      /bin/launchctl kickstart -k system/com.local.optiq.agent >/dev/null 2>&1 \
+        && ok "restarting com.local.optiq.agent with new agent model (load ~10-30 s)"
+    else
+      [ "${INSTALL_AGENT:-0}" = 1 ] || warn "INSTALL_AGENT=0 — the agent daemon is off; enable it (menu 4) + --apply"
+    fi
   elif [ "$slot" = ocr ]; then
     if daemon_running com.local.glmocr.serve; then
       /bin/launchctl stop com.local.glmocr.serve >/dev/null 2>&1 || true
@@ -1807,15 +1871,78 @@ cli_set_model() {
   # (downloaded, role match, BROKEN refusal). Usage: --set-model <slot> <id>.
   INTERACTIVE=0
   load_config
-  [ "$#" -eq 2 ] || { err "usage: --set-model <main|ocr|vision|embed|rerank> <id>"; exit 2; }
+  [ "$#" -eq 2 ] || { err "usage: --set-model <main|agent|ocr|vision|embed|rerank> <id>"; exit 2; }
   set_model_alias "$1" "$2" || exit 1
 }
 
+cli_set_config() {
+  # --set-config KEY VALUE — save one config key non-interactively (same
+  # semantics as the TUI settings menu: save-only, --apply activates). The
+  # key must be a known CONFIG_KEYS entry; quoting stays in bash
+  # (save_config_key/conf_quote). Used by the web dashboard.
+  INTERACTIVE=0
+  load_config
+  [ "$#" -eq 2 ] || { err "usage: --set-config KEY VALUE"; exit 2; }
+  local key=$1 value=$2 k found=0
+  for k in "${CONFIG_KEYS[@]}"; do
+    [ "$k" = "$key" ] && { found=1; break; }
+  done
+  [ "$found" = 1 ] || { err "unknown config key: $key"; exit 2; }
+  save_config_key "$key" "$value"
+  ok "saved $key=$value (not applied yet — run 'sudo bash setup.sh --apply' to activate)"
+}
+
+cli_config_schema() {
+  # --config-schema — dump KEY<TAB>current<TAB>default<TAB>hint, one line per
+  # key. TAB-delimited on purpose: hints contain '|' (e.g. TEXT_ENGINE).
+  # Consumed by the web dashboard's settings view.
+  INTERACTIVE=0
+  load_config
+  local k
+  for k in "${CONFIG_KEYS[@]}"; do
+    printf '%s\t%s\t%s\t%s\n' "$k" "${!k:-}" "$(config_default "$k")" "$(config_hint "$k")"
+  done
+}
+
+cli_download_model() {
+  # --download-model <id> — non-interactive download (same classification of
+  # gated/404/network failures as the TUI 'd' action). The web dashboard runs
+  # this as a detached job and streams the log.
+  INTERACTIVE=0
+  load_config
+  [ "$#" -eq 1 ] || { err "usage: --download-model <id>"; exit 2; }
+  download_model "$1" || exit 1
+}
+
+cli_delete_model() {
+  # --delete-model <id> — delete the local HF files for a catalog id
+  # (confirm() auto-accepts because INTERACTIVE=0). Catalog row is kept.
+  INTERACTIVE=0
+  load_config
+  [ "$#" -eq 1 ] || { err "usage: --delete-model <id>"; exit 2; }
+  delete_local_model "$1" || exit 1
+}
+
+cli_set_hf_token() {
+  # --set-hf-token — token on STDIN (never argv: visible in `ps`), e.g.
+  #   printf '%s' "$TOKEN" | sudo bash setup.sh --set-hf-token
+  # Empty stdin = logout. Used by the web dashboard's HF-token dialog.
+  INTERACTIVE=0
+  load_config
+  set_hf_token
+}
+
 set_hf_token() {
+  # Interactive: prompt. Non-interactive (INTERACTIVE=0, --set-hf-token):
+  # read the token from stdin — never from argv (visible in `ps`).
   local t cli
   cli=$(hf_cli)
   [ -x "$cli" ] || { err "hf CLI missing — run 'sudo bash setup.sh --apply' first"; return 1; }
-  read -r -p "Paste HF token (input visible; blank = logout): " t
+  if [ "$INTERACTIVE" = 0 ]; then
+    IFS= read -r t || t=""
+  else
+    read -r -p "Paste HF token (input visible; blank = logout): " t
+  fi
   if [ -z "$t" ]; then
     /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
       "$cli" auth logout >/dev/null 2>&1 || true
@@ -1930,6 +2057,7 @@ print_catalog_table() {
     case "$notes" in *BROKEN*|*broken*) flag="BROKEN" ;; esac
     if [ -z "$flag" ]; then case "${rating:-}" in 5) flag="REC" ;; esac; fi
     [ "$id" = "${ALIAS_MAIN:-}" ] && tag="${tag}main "
+    [ "$id" = "${AGENT_MODEL:-}" ] && [ "${INSTALL_AGENT:-0}" = 1 ] && tag="${tag}agent "
     [ "$id" = "${ALIAS_OCR:-}" ]  && tag="${tag}ocr "
     printf "$fmt" \
       "$id" "${role:-text}" "$mark" "$flag" "$engine" "$gb" "$gated" "$rating" "${tag:-}" "$repo"
@@ -1976,7 +2104,7 @@ menu_models() {
     print_catalog_table
     printf "\nSTATUS ok = downloaded+verified (only ok is selectable).  FLAG: ${C_RED}BROKEN${C_RST}=not selectable  ${C_GRN}REC${C_RST}=recommended (rating 5).\n"
     printf "Roles: text -> 's' (main)   ocr -> 'o'   vision -> 'v'   embed -> 'm'   rerank -> 'k'. Source: HuggingFace repo-ids.\n"
-    printf "Actions:  i <id> info   d <id> download   s <id> set TEXT/main   o <id> set OCR   v <id> set VISION\n"
+    printf "Actions:  i <id> info   d <id> download   s <id> set TEXT/main   g <id> set AGENT   o <id> set OCR   v <id> set VISION\n"
     printf "          m <id> set EMBED   k <id> set RERANK   a add   e <id> edit   x <id> remove   r <id> delete-local   t HF token   q back\n"
     read -r -p "models> " line || return 0
     local cmd arg
@@ -1986,6 +2114,7 @@ menu_models() {
       i) print_model_detail "$arg";    pause_enter ;;
       d) download_model "$arg";        pause_enter ;;
       s) set_model_alias main "$arg";   pause_enter ;;
+      g) set_model_alias agent "$arg";  pause_enter ;;
       o) set_model_alias ocr "$arg";    pause_enter ;;
       v) set_model_alias vision "$arg"; pause_enter ;;
       m) set_model_alias embed "$arg";  pause_enter ;;
@@ -2162,7 +2291,9 @@ menu_uninstall() {
   /bin/rm -rf "$LIBEXEC_DIR"/start-*.sh "$LIBEXEC_DIR"/ondemand-proxy.py \
               "$LIBEXEC_DIR"/ollama-exporter.py "$LIBEXEC_DIR"/silicon-exporter.py \
               "$LIBEXEC_DIR"/ondemand-exporter.py "$LIBEXEC_DIR"/llm-watchdog.sh \
-              "$LIBEXEC_DIR"/inference-watchdog.py
+              "$LIBEXEC_DIR"/inference-watchdog.py \
+              "$LIBEXEC_DIR"/mqtt-bridge.py "$LIBEXEC_DIR"/dashboard.py \
+              "$LIBEXEC_DIR"/dashboard-ui.html
   /bin/rm -rf /usr/local/etc/macstudio-models
   /bin/rm -f /usr/local/etc/litellm.config.yaml
   /bin/rm -f "$SBIN_DIR/set-iogpu-wired-limit.sh" "$SBIN_DIR/weekly-autoupdate.sh"
@@ -2241,9 +2372,20 @@ MacStudio LLM Server — setup.sh v${SCRIPT_VERSION}
   sudo bash setup.sh             Interactive TUI (recommended)
   sudo bash setup.sh --apply     Non-interactive install/update (no prompts)
   sudo bash setup.sh --status    Print live status and exit
-  sudo bash setup.sh --set-model <main|ocr|vision|embed|rerank> <id>
+  sudo bash setup.sh --set-model <main|agent|ocr|vision|embed|rerank> <id>
                                  Switch a model slot non-interactively (same
-                                 validation as the TUI; used by the MQTT bridge)
+                                 validation as the TUI; used by the MQTT bridge
+                                 and the web dashboard)
+  sudo bash setup.sh --set-config KEY VALUE
+                                 Save one config key (no apply; key must exist)
+  sudo bash setup.sh --config-schema
+                                 Dump KEY<TAB>current<TAB>default<TAB>hint
+  sudo bash setup.sh --download-model <id>
+                                 Download a catalog model non-interactively
+  sudo bash setup.sh --delete-model <id>
+                                 Delete a model's local HF files (row is kept)
+  sudo bash setup.sh --set-hf-token
+                                 Store the HF token read from STDIN (empty=logout)
   sudo bash setup.sh --help      Show this help
 
 Global modifiers (combine with any mode above):
@@ -2319,6 +2461,11 @@ case "${1:-}" in
   --status) INTERACTIVE=0; load_config; verify_and_summary ;;
   --models) need_root "$@"; menu_models ;;
   --set-model) need_root "$@"; shift; cli_set_model "$@" ;;
+  --set-config) need_root "$@"; shift; cli_set_config "$@" ;;
+  --config-schema) need_root "$@"; cli_config_schema ;;
+  --download-model) need_root "$@"; shift; cli_download_model "$@" ;;
+  --delete-model) need_root "$@"; shift; cli_delete_model "$@" ;;
+  --set-hf-token) need_root "$@"; cli_set_hf_token ;;
   --check-updates) need_root "$@"; menu_updates ;;
   --help|-h) show_help ;;
   "") main_menu "$@" ;;
