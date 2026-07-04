@@ -90,6 +90,7 @@ SERVICES = [
     ("com.local.mlxlm.serve",       "Text-Engine (mlx-lm)",        "always"),
     ("com.local.mlxvlm.main",       "Text-Engine (mlx-vlm)",       "always"),
     ("com.local.optiq.main",        "Text-Engine (optiq, main)",   "always"),
+    ("com.local.vllmmlx.main",      "Text-Engine (vllm-mlx)",      "always"),
     ("com.local.litellm.proxy",     "LiteLLM-Gateway",             "always"),
     ("com.local.glmocr.proxy",      "GLM-OCR Proxy",               "always"),
     ("com.local.glmocr.serve",      "GLM-OCR Backend",             "ondemand"),
@@ -122,6 +123,7 @@ LABEL_LOG = {
     "com.local.mlxlm.serve": "mlxlm.log",
     "com.local.mlxvlm.main": "mlxvlm-main.log",
     "com.local.optiq.main": "optiq-main.log",
+    "com.local.vllmmlx.main": "vllmmlx-main.log",
     "com.local.litellm.proxy": "litellm.log",
     "com.local.glmocr.proxy": "glmocr-proxy.log",
     "com.local.glmocr.serve": "glmocr-serve.log",
@@ -217,6 +219,8 @@ def active_labels():
             keep = mlx and engine == "mlx-vlm"
         elif lbl == "com.local.optiq.main":
             keep = mlx and engine == "optiq"
+        elif lbl == "com.local.vllmmlx.main":
+            keep = mlx and engine == "vllm-mlx"
         elif lbl.startswith("com.local.litellm.") or lbl.startswith("com.local.glmocr."):
             keep = mlx
         elif lbl.startswith("com.local.infinity."):
