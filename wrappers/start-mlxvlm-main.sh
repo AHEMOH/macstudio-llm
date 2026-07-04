@@ -57,7 +57,23 @@ ARGS=( -m mlx_vlm.server
 # Thinking is OFF by default on mlx_vlm.server; only opt in explicitly.
 [ "${MLXVLM_MAIN_ENABLE_THINKING:-0}" = 1 ] && ARGS+=( --enable-thinking )
 
+# Speculative decoding (MTP). OFF by default (MLXVLM_DRAFT_MODEL empty). Verified +18% (12B) /
+# +8% (26B) on code-gen; E2B/E4B drafters crash on mlx-vlm 0.6.3 so leave empty for those.
+# FAIL-SOFT: if the drafter repo isn't downloaded, start the main WITHOUT it rather than block
+# the whole main daemon for an optional accelerator.
+DRAFT_OK=0
+if [ -n "${MLXVLM_DRAFT_MODEL:-}" ]; then
+  DHUB="$HF_HOME/hub/models--${MLXVLM_DRAFT_MODEL//\//--}"
+  if /usr/bin/find "$DHUB/snapshots" -name '*.safetensors' 2>/dev/null | /usr/bin/grep -q .; then
+    ARGS+=( --draft-model "$MLXVLM_DRAFT_MODEL" --draft-kind "${MLXVLM_DRAFT_KIND:-mtp}" )
+    [ -n "${MLXVLM_DRAFT_BLOCK_SIZE:-}" ] && ARGS+=( --draft-block-size "$MLXVLM_DRAFT_BLOCK_SIZE" )
+    DRAFT_OK=1
+  else
+    echo "[start-mlxvlm-main] WARN: drafter '$MLXVLM_DRAFT_MODEL' not downloaded — starting WITHOUT MTP (run: llm-models -> d, or hf download)" >&2
+  fi
+fi
+
 echo "[start-mlxvlm-main] serving UNIFIED main='$MODEL_ID' repo='$REPO' (text+vision) on 127.0.0.1:${VLLM_BACKEND_PORT:-18000}"
-echo "[start-mlxvlm-main] kv_bits='${MLXVLM_MAIN_KV_BITS:-default}' kv_scheme='${MLXVLM_MAIN_KV_SCHEME:-default}' max_kv_size='${MLXVLM_MAIN_MAX_KV_SIZE:-default}' max_tokens='${MLXLM_MAX_TOKENS:-default}' thinking='${MLXVLM_MAIN_ENABLE_THINKING:-0}'"
+echo "[start-mlxvlm-main] kv_bits='${MLXVLM_MAIN_KV_BITS:-default}' kv_scheme='${MLXVLM_MAIN_KV_SCHEME:-default}' max_kv_size='${MLXVLM_MAIN_MAX_KV_SIZE:-default}' max_tokens='${MLXLM_MAX_TOKENS:-default}' thinking='${MLXVLM_MAIN_ENABLE_THINKING:-0}' mtp_drafter='${MLXVLM_DRAFT_MODEL:-off}'($([ "$DRAFT_OK" = 1 ] && echo active || echo off))"
 
 exec "$VENV_DIR/mlxvlm/bin/python" "${ARGS[@]}"

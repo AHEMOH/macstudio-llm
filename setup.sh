@@ -94,6 +94,9 @@ CONFIG_KEYS=(
   MLXVLM_MAIN_KV_SCHEME
   MLXVLM_MAIN_MAX_KV_SIZE
   MLXVLM_MAIN_ENABLE_THINKING
+  MLXVLM_DRAFT_MODEL
+  MLXVLM_DRAFT_KIND
+  MLXVLM_DRAFT_BLOCK_SIZE
   OPTIQ_KV_BITS
   OPTIQ_KV_GROUP_SIZE
   OPTIQ_MAX_TOKENS
@@ -216,8 +219,11 @@ config_default() {
     MLXVLM_VERSION)              echo 0.6.3 ;;
     MLXVLM_MAIN_KV_BITS)         echo 8 ;;
     MLXVLM_MAIN_KV_SCHEME)       echo uniform ;;
-    MLXVLM_MAIN_MAX_KV_SIZE)     echo "" ;;
+    MLXVLM_MAIN_MAX_KV_SIZE)     echo 131072 ;;
     MLXVLM_MAIN_ENABLE_THINKING) echo 1 ;;
+    MLXVLM_DRAFT_MODEL)          echo "" ;;
+    MLXVLM_DRAFT_KIND)           echo mtp ;;
+    MLXVLM_DRAFT_BLOCK_SIZE)     echo "" ;;
     OPTIQ_KV_BITS)               echo 8 ;;
     OPTIQ_KV_GROUP_SIZE)         echo "" ;;
     OPTIQ_MAX_TOKENS)            echo 16384 ;;
@@ -336,8 +342,11 @@ config_hint() {
     MLXVLM_VERSION)              echo "Pinned mlx-vlm for the 'mlxvlm' venv (unified text+vision main + GLM-OCR). 0.6.3 = the release that FIXED Gemma-4 unified silently dropping images (0.6.2 answered text-only, no error). Bump deliberately + --apply" ;;
     MLXVLM_MAIN_KV_BITS)         echo "KV-cache quant bits for the mlx-vlm unified main: 8 (recommended), 4, or 3.5 with turboquant. empty=off. (Only when TEXT_ENGINE=mlx-vlm)" ;;
     MLXVLM_MAIN_KV_SCHEME)       echo "mlx-vlm main KV quant scheme: uniform | turboquant (fractional bits like 3.5)" ;;
-    MLXVLM_MAIN_MAX_KV_SIZE)     echo "mlx-vlm main context cap (--max-kv-size); empty = model default. Raise to exploit KV-quant for big context on 32 GB" ;;
+    MLXVLM_MAIN_MAX_KV_SIZE)     echo "mlx-vlm main CONTEXT cap (--max-kv-size) = the OOM guard (bounds prompt+KV, unlike MLXLM_MAX_TOKENS which only caps generation). Default 131072 (128K). Verified 2026-07-04 on 26B-A4B @ 8-bit KV: 70K-token prompt used only ~96M swap / ~4.7GB free, no OOM; Gemma-4's 5 growing global layers make 128K ≈ ~3GB KV. empty = model native 262144 (256K, OOM-risky uncapped). Per-model tuning (e2b/e4b/12b) is a separate step" ;;
     MLXVLM_MAIN_ENABLE_THINKING) echo "mlx-vlm main: 1 = think by default (default — so 'main' reasons; OpenWebUI shows it), 0 = off. main-fast is forced thinking-off at the proxy regardless; clients can override per request" ;;
+    MLXVLM_DRAFT_MODEL)          echo "mlx-vlm speculative-decoding (MTP) drafter HF repo for the main (--draft-model). empty = OFF (default). Verified 2026-07-04: +18% (12B) / +8% (26B-A4B) on code-gen best-case; use the matching assistant, e.g. mlx-community/gemma-4-12B-it-qat-assistant-4bit or gemma-4-26B-A4B-it-qat-assistant-4bit. E2B/E4B MTP is BROKEN in mlx-vlm 0.6.3 (reshape crash) — leave empty for those. Must be downloaded first (hf download); if missing, the main starts WITHOUT the drafter" ;;
+    MLXVLM_DRAFT_KIND)           echo "mlx-vlm drafter family (--draft-kind): mtp (Gemma-4) | dflash | eagle3. Default mtp. Only used when MLXVLM_DRAFT_MODEL is set" ;;
+    MLXVLM_DRAFT_BLOCK_SIZE)     echo "mlx-vlm drafter block size (--draft-block-size); empty = drafter's configured default. Only used when MLXVLM_DRAFT_MODEL is set" ;;
     OPTIQ_KV_BITS)               echo "optiq serve KV-cache quant bits: 4 or 8 (--kv-bits). empty = off. (Only when TEXT_ENGINE=optiq)" ;;
     OPTIQ_KV_GROUP_SIZE)         echo "optiq serve KV quant group size (--kv-group-size); empty = optiq default (64). Only with OPTIQ_KV_BITS set" ;;
     OPTIQ_MAX_TOKENS)            echo "optiq serve default --max-tokens ceiling for main (default 16384). (Only when TEXT_ENGINE=optiq). NOTE: there is NO main context cap — mlx_lm.server (which optiq wraps) has no --max-kv-size; a prompt beyond ~110K OOM-restarts the daemon, so route long-context work to the 'agent'" ;;
