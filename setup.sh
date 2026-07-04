@@ -100,8 +100,9 @@ CONFIG_KEYS=(
   OPTIQ_DRAFTER
   VLLMMLX_MAX_TOKENS
   VLLMMLX_CONTINUOUS_BATCHING
-  VLLMMLX_KV_BITS
   VLLMMLX_PAGED_CACHE
+  VLLMMLX_FORCE_MLLM
+  VLLMMLX_REASONING_PARSER
   VLLMMLX_MAX_KV_SIZE
   GEMMA_TOP_K
   PRESET_ALIASES
@@ -221,8 +222,9 @@ config_default() {
     OPTIQ_DRAFTER)               echo "" ;;
     VLLMMLX_MAX_TOKENS)          echo 16384 ;;
     VLLMMLX_CONTINUOUS_BATCHING) echo 1 ;;
-    VLLMMLX_KV_BITS)             echo 8 ;;
-    VLLMMLX_PAGED_CACHE)         echo 0 ;;
+    VLLMMLX_PAGED_CACHE)         echo 1 ;;
+    VLLMMLX_FORCE_MLLM)          echo 1 ;;
+    VLLMMLX_REASONING_PARSER)    echo gemma4 ;;
     VLLMMLX_MAX_KV_SIZE)         echo "" ;;
     GEMMA_TOP_K)                 echo 64 ;;
     PRESET_ALIASES)              echo 1 ;;
@@ -338,9 +340,10 @@ config_hint() {
     OPTIQ_DRAFTER)               echo "optiq serve speculative-decoding drafter repo (--drafter), e.g. google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant. empty = OFF (drafter costs extra RAM — leave off on 32 GB unless verified)" ;;
     VLLMMLX_MAX_TOKENS)          echo "vllm-mlx serve default --max-tokens ceiling for main (default 16384). (Only when TEXT_ENGINE=vllm-mlx)" ;;
     VLLMMLX_CONTINUOUS_BATCHING) echo "vllm-mlx: 1 = --continuous-batching (multi-user throughput; vllm-mlx's edge over the single-stream engines), 0 = off. (Only when TEXT_ENGINE=vllm-mlx)" ;;
-    VLLMMLX_KV_BITS)             echo "vllm-mlx KV-cache quant bits (--kv-bits): 4 or 8. empty = off. NOTE: v0.4.0 flag name differs across docs (--kv-bits vs --use-paged-cache) — verify with 'vllm-mlx serve --help' on the Mac. (Only when TEXT_ENGINE=vllm-mlx)" ;;
-    VLLMMLX_PAGED_CACHE)         echo "vllm-mlx: 1 = --use-paged-cache (paged/memory-efficient KV cache), 0 = off. Alternative to VLLMMLX_KV_BITS depending on which flag the installed vllm-mlx accepts" ;;
-    VLLMMLX_MAX_KV_SIZE)         echo "vllm-mlx max tokens a client may request (--max-request-tokens); empty = server default. Bounds context on 32 GB" ;;
+    VLLMMLX_PAGED_CACHE)         echo "vllm-mlx: 1 = --use-paged-cache (paged/memory-efficient KV cache — recommended on 32 GB), 0 = off. (vllm-mlx has NO --kv-bits; this is its KV-memory lever.)" ;;
+    VLLMMLX_FORCE_MLLM)          echo "vllm-mlx: 1 = --mllm (force-load the model as MULTIMODAL/vision even if name auto-detect misses — keep 1 for gemma-4 to guarantee the image path), 0 = auto-detect only" ;;
+    VLLMMLX_REASONING_PARSER)    echo "vllm-mlx --reasoning-parser: splits thinking into the reasoning_content field. gemma4 (matches the model) | qwen3 | deepseek_r1 | gpt_oss | harmony | glm4 | mistral. empty = off" ;;
+    VLLMMLX_MAX_KV_SIZE)         echo "vllm-mlx context cap (--max-kv-size); empty = model default. Bounds KV memory/context on 32 GB (paired with --use-paged-cache)" ;;
     GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast/agent (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off" ;;
     PRESET_ALIASES)              echo "1 = also expose the 'main-fast' preset alias (same loaded model as 'main' but thinking-OFF at the proxy — fast non-reasoning chat / tools / web / cron / email)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
