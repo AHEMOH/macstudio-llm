@@ -1,4 +1,4 @@
-# schema: 11
+# schema: 12
 # MacStudio LLM — model catalog (seed)
 #
 # Pipe-delimited, shell-readable, TUI-editable (see `llm-models`). This file is a
@@ -66,8 +66,8 @@ gemma4-e2b-optiq|mlx-community/gemma-4-e2b-it-qat-OptiQ-4bit|text|optiq|4bit|6|y
 # path drops the vision tower -> constant color; non-batched crashes 'no Stream(gpu,1)'). So run these
 # under TEXT_ENGINE=mlx-vlm for images; they ALSO run text+tools-only under vllm-mlx (fast + batching).
 # BROKEN[mlx-lm] (text-only can't load the vision arch) + BROKEN[optiq] (optiq needs OptiQ format).
-gemma4-12b-qat|mlx-community/gemma-4-12B-it-qat-4bit|text|mlxvlm|4bit|11|yes|gemma4|gemma4|131072|1|4|QAT 12B dense unified, multimodal text+image+tools. Verified mlx-vlm 0.6.3: text 19 tok/s, tools OK, vision 4/4. QAT > naive 4bit (avoids PLE garbage). vision BROKEN under vllm-mlx. BROKEN[mlx-lm] BROKEN[optiq]. gated; native max 262144|1.0|0.95|0.3|0.3
-gemma4-26b-qat|mlx-community/gemma-4-26B-A4B-it-qat-4bit|text|mlxvlm|4bit|16|yes|gemma4|gemma4|131072|1|5|RECOMMENDED main. QAT 26B-A4B MoE (~4B active), multimodal text+image+tools. Verified mlx-vlm 0.6.3: text 32 tok/s, tools OK, vision 4/4 - faster AND stronger than 12B. vision BROKEN under vllm-mlx. BROKEN[mlx-lm] BROKEN[optiq]. gated; native max 262144|1.0|0.95|0.3|0.3
+gemma4-12b-qat|mlx-community/gemma-4-12B-it-qat-4bit|text|mlxvlm|4bit|11|yes|gemma4|gemma4|131072|1|4|QAT 12B dense unified, multimodal text+image+tools. Verified mlx-vlm 0.6.3: text 19 tok/s, tools OK, vision 4/4. QAT beats naive 4bit (avoids PLE garbage). No image support under vllm-mlx (text/tools only there). BROKEN[mlx-lm] BROKEN[optiq]. gated; native max 262144|1.0|0.95|0.3|0.3
+gemma4-26b-qat|mlx-community/gemma-4-26B-A4B-it-qat-4bit|text|mlxvlm|4bit|16|yes|gemma4|gemma4|131072|1|5|RECOMMENDED main. QAT 26B-A4B MoE (~4B active), multimodal text+image+tools. Verified mlx-vlm 0.6.3: text 32 tok/s, tools OK, vision 4/4 - faster AND stronger than 12B. No image support under vllm-mlx (text/tools only there). BROKEN[mlx-lm] BROKEN[optiq]. gated; native max 262144|1.0|0.95|0.3|0.3
 gemma4-e4b-qat|mlx-community/gemma-4-E4B-it-qat-4bit|text|mlxvlm|4bit|8|yes|gemma4|gemma4|131072|1|3|QAT E4B edge main, multimodal text+image+tools. Verified mlx-vlm 0.6.3: text 34 tok/s, tools OK, vision 4/4. fast/light ~7.5 GB. BROKEN[mlx-lm] BROKEN[optiq]. gated|1.0|0.95|0.3|0.3
 gemma4-e2b-qat|mlx-community/gemma-4-E2B-it-qat-4bit|text|mlxvlm|4bit|6|yes|gemma4|gemma4|131072|1|3|QAT E2B smallest multimodal, text+image+tools. Verified mlx-vlm 0.6.3: text 53 tok/s (fastest), tools OK, vision 4/4. ~5.2 GB. BROKEN[mlx-lm] BROKEN[optiq]. gated|1.0|0.95|0.3|0.3
 glm-ocr|mlx-community/GLM-OCR-4bit|ocr|mlxvlm|4bit|2|no|||||5|Default OCR, on-demand. #1 OmniDocBench. GLMOCR_MAX_TOKENS=8192 covers a full page. alt: mlx-community/GLM-OCR-bf16||||
