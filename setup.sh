@@ -89,6 +89,7 @@ CONFIG_KEYS=(
   MLXLM_PROMPT_CONCURRENCY
   MLXLM_MAX_TOKENS
   MLXLM_CHAT_TEMPLATE_ARGS
+  MLXVLM_VERSION
   MLXVLM_MAIN_KV_BITS
   MLXVLM_MAIN_KV_SCHEME
   MLXVLM_MAIN_MAX_KV_SIZE
@@ -212,6 +213,7 @@ config_default() {
     MLXLM_PROMPT_CONCURRENCY)    echo 1 ;;
     MLXLM_MAX_TOKENS)            echo 16384 ;;
     MLXLM_CHAT_TEMPLATE_ARGS)    echo "" ;;
+    MLXVLM_VERSION)              echo 0.6.3 ;;
     MLXVLM_MAIN_KV_BITS)         echo 8 ;;
     MLXVLM_MAIN_KV_SCHEME)       echo uniform ;;
     MLXVLM_MAIN_MAX_KV_SIZE)     echo "" ;;
@@ -331,6 +333,7 @@ config_hint() {
     MLXLM_PROMPT_CONCURRENCY)    echo "mlx-lm concurrent prompt prefills (--prompt-concurrency); default 1 on 32 GB (limits prefill RAM spikes)" ;;
     MLXLM_MAX_TOKENS)            echo "mlx-lm server default --max-tokens = ceiling for main (unset would be only 512!). 16384 = effectively unrestricted for chat/long text; model stops at EOS" ;;
     MLXLM_CHAT_TEMPLATE_ARGS)    echo "mlx-lm chat-template JSON (--chat-template-args), e.g. {\"enable_thinking\":false} to suppress reasoning output. empty = off" ;;
+    MLXVLM_VERSION)              echo "Pinned mlx-vlm for the 'mlxvlm' venv (unified text+vision main + GLM-OCR). 0.6.3 = the release that FIXED Gemma-4 unified silently dropping images (0.6.2 answered text-only, no error). Bump deliberately + --apply" ;;
     MLXVLM_MAIN_KV_BITS)         echo "KV-cache quant bits for the mlx-vlm unified main: 8 (recommended), 4, or 3.5 with turboquant. empty=off. (Only when TEXT_ENGINE=mlx-vlm)" ;;
     MLXVLM_MAIN_KV_SCHEME)       echo "mlx-vlm main KV quant scheme: uniform | turboquant (fractional bits like 3.5)" ;;
     MLXVLM_MAIN_MAX_KV_SIZE)     echo "mlx-vlm main context cap (--max-kv-size); empty = model default. Raise to exploit KV-quant for big context on 32 GB" ;;
@@ -959,9 +962,13 @@ ensure_python_venvs() {
 
   # The text engine is Apple's mlx_lm.server (venv 'mlxlm'), pinned via
   # MLXLM_VERSION so neither a fresh build nor the weekly autoupdate floats it.
-  # mlx-vlm (vision/OCR) + litellm stay at the version first built (no auto-upgrade).
+  # mlx-vlm (unified text+vision main, GLM-OCR) is pinned via MLXVLM_VERSION: 0.6.3
+  # is the release that fixed Gemma-4 unified SILENTLY DROPPING image/video inputs
+  # (0.6.2 had the bug — a main would answer text-only with no error). litellm floats.
   _ensure_venv litellm bin:litellm       'litellm[proxy]'
-  _ensure_venv mlxvlm  mod:mlx_vlm        mlx-vlm 'huggingface_hub[cli]'
+  local mlxvlm_spec="mlx-vlm"
+  [ -n "${MLXVLM_VERSION:-}" ] && mlxvlm_spec="mlx-vlm==${MLXVLM_VERSION}"
+  _ensure_venv mlxvlm  mod:mlx_vlm        "$mlxvlm_spec" 'huggingface_hub[cli]'
   local mlxlm_spec="mlx-lm"
   [ -n "${MLXLM_VERSION:-}" ] && mlxlm_spec="mlx-lm==${MLXLM_VERSION}"
   _ensure_venv mlxlm   bin:mlx_lm.server  "$mlxlm_spec" 'huggingface_hub[cli]'
