@@ -103,6 +103,7 @@ CONFIG_KEYS=(
   VLLMMLX_PAGED_CACHE
   VLLMMLX_FORCE_MLLM
   VLLMMLX_REASONING_PARSER
+  VLLMMLX_TOOL_PARSER
   VLLMMLX_MAX_KV_SIZE
   GEMMA_TOP_K
   PRESET_ALIASES
@@ -225,6 +226,7 @@ config_default() {
     VLLMMLX_PAGED_CACHE)         echo 1 ;;
     VLLMMLX_FORCE_MLLM)          echo 1 ;;
     VLLMMLX_REASONING_PARSER)    echo gemma4 ;;
+    VLLMMLX_TOOL_PARSER)         echo gemma4 ;;
     VLLMMLX_MAX_KV_SIZE)         echo "" ;;
     GEMMA_TOP_K)                 echo 64 ;;
     PRESET_ALIASES)              echo 1 ;;
@@ -343,6 +345,7 @@ config_hint() {
     VLLMMLX_PAGED_CACHE)         echo "vllm-mlx: 1 = --use-paged-cache (paged/memory-efficient KV cache — recommended on 32 GB), 0 = off. (vllm-mlx has NO --kv-bits; this is its KV-memory lever.)" ;;
     VLLMMLX_FORCE_MLLM)          echo "vllm-mlx: 1 = --mllm (force-load the model as MULTIMODAL/vision even if name auto-detect misses — keep 1 for gemma-4 to guarantee the image path), 0 = auto-detect only" ;;
     VLLMMLX_REASONING_PARSER)    echo "vllm-mlx --reasoning-parser: splits thinking into the reasoning_content field. gemma4 (matches the model) | qwen3 | deepseek_r1 | gpt_oss | harmony | glm4 | mistral. empty = off" ;;
+    VLLMMLX_TOOL_PARSER)         echo "vllm-mlx --tool-call-parser (enables --enable-auto-tool-choice): parses the model's tool syntax into structured tool_calls. gemma4 (matches the model) | qwen3_coder | hermes | llama | granite | ... empty = off (tool calls would leak as raw text)" ;;
     VLLMMLX_MAX_KV_SIZE)         echo "vllm-mlx context cap (--max-kv-size); empty = model default. Bounds KV memory/context on 32 GB (paired with --use-paged-cache)" ;;
     GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast/agent (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off" ;;
     PRESET_ALIASES)              echo "1 = also expose the 'main-fast' preset alias (same loaded model as 'main' but thinking-OFF at the proxy — fast non-reasoning chat / tools / web / cron / email)" ;;
@@ -979,8 +982,20 @@ ensure_python_venvs() {
   # vllm-mlx engine venv (only when TEXT_ENGINE=vllm-mlx). The 'vllm-mlx' PyPI package
   # pulls mlx + mlx-lm + mlx-vlm (its vision path rides on mlx-vlm's SigLIP2 loader) and
   # installs the 'vllm-mlx' console script. Serves stock/QAT gemma-4 (NOT OptiQ format).
+  # transformers must be DOWNGRADED to 5.10.2 AFTER install: vllm-mlx pulls 5.13.x, which
+  # breaks mlx-lm 0.31.3's AutoTokenizer.register (AttributeError: 'str' has no attribute
+  # '__module__') at import (verified on Mac 2026-07-04; 5.10.2 is what the working mlxvlm
+  # venv uses). Done as a separate idempotent step because co-specifying it in the initial
+  # pip install can trip vllm-mlx's own resolver.
   if [ "${TEXT_ENGINE:-mlx-vlm}" = vllm-mlx ]; then
     _ensure_venv vllmmlx bin:vllm-mlx 'vllm-mlx' 'huggingface_hub[cli]'
+    local _tfver
+    _tfver=$("$vdir/vllmmlx/bin/python" -c 'import transformers,sys; sys.stdout.write(transformers.__version__)' 2>/dev/null || true)
+    if [ "$_tfver" != "5.10.2" ]; then
+      ok "pinning transformers==5.10.2 in vllmmlx venv (was '${_tfver:-none}'; 5.13.x breaks mlx-lm 0.31.3)"
+      "$vdir/vllmmlx/bin/pip" install -q 'transformers==5.10.2' >>"$LOG_DIR/vllmmlx-venv-install.log" 2>&1 \
+        || warn "transformers pin failed — see $LOG_DIR/vllmmlx-venv-install.log"
+    fi
   fi
 
   # Embeddings + reranker: BGE pair served by Infinity (infinity-emb) on MPS,
@@ -1090,12 +1105,13 @@ render_litellm_config() {
   #     it is inert, so we don't bother passing it to deterministic aliases.
   # LiteLLM forwards extra_body verbatim (drop_params leaves it untouched).
   # optiq serve wraps mlx_lm.server, so it uses mlx-lm's nested chat_template_kwargs
-  # form for enable_thinking (NOT mlx-vlm's top-level form). Verify on the Mac.
-  # vllm-mlx wraps mlx-vlm, so it uses the TOP-LEVEL form (the default below / else
-  # branch) — no case arm needed; verify the nothink wire form on the Mac.
+  # form for enable_thinking (NOT mlx-vlm's top-level form).
+  # vllm-mlx ALSO uses the nested chat_template_kwargs form (verified on Mac 2026-07-04:
+  # top-level enable_thinking is ignored; {"chat_template_kwargs":{"enable_thinking":false}}
+  # correctly suppresses thinking -> content populated, finish=stop).
   local _nothink_body='{"enable_thinking": false}'
   case "${TEXT_ENGINE:-mlx-vlm}" in
-    mlx-lm|optiq) _nothink_body='{"chat_template_kwargs": {"enable_thinking": false}}' ;;
+    mlx-lm|optiq|vllm-mlx) _nothink_body='{"chat_template_kwargs": {"enable_thinking": false}}' ;;
   esac
   emit_model() {
     printf '  - model_name: %s\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' "$1" "$2" "$3"
@@ -1106,11 +1122,12 @@ render_litellm_config() {
     [ -n "${8:-}" ] && printf '      max_tokens: %s\n' "$8"
     local _eb=""
     if [ -n "${9:-}" ] && [ -n "${10:-}" ]; then
-      if [ "${TEXT_ENGINE:-mlx-vlm}" = mlx-lm ] || [ "${TEXT_ENGINE:-mlx-vlm}" = optiq ]; then
-        _eb=$(printf '{"chat_template_kwargs": {"enable_thinking": false}, "top_k": %s}' "${10}")
-      else
-        _eb=$(printf '{"enable_thinking": false, "top_k": %s}' "${10}")
-      fi
+      case "${TEXT_ENGINE:-mlx-vlm}" in
+        mlx-lm|optiq|vllm-mlx)
+          _eb=$(printf '{"chat_template_kwargs": {"enable_thinking": false}, "top_k": %s}' "${10}") ;;
+        *)
+          _eb=$(printf '{"enable_thinking": false, "top_k": %s}' "${10}") ;;
+      esac
     elif [ -n "${9:-}" ]; then
       _eb="$_nothink_body"
     elif [ -n "${10:-}" ]; then
