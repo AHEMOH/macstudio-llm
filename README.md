@@ -18,9 +18,13 @@ raise a couple of config keys.
 > handles text *and* images in the same chat**, KV-cache quantization (bigger context on
 > 32 GB) + tool calling, served over OpenAI `/v1`, single-stream (fine for one user).
 > It builds its own venv (`mlx-optiq` + `mlx-lm` from git) and has **no audio**.
-> Flip to **`mlx-vlm`** (`mlx_vlm.server`) to run stock (non-OptiQ) VLM mains, or to
+> Flip to **`mlx-vlm`** (`mlx_vlm.server`) to run stock (non-OptiQ) VLM mains, to
 > **`mlx-lm`** (Apple `mlx_lm.server`) for a text-only main that **batches** parallel
-> requests and supports broad archs (granite/glm) — but no images, no KV-quant.
+> requests and supports broad archs (granite/glm) — but no images, no KV-quant — or to
+> **`vllm-mlx`** (waybarrios `vllm-mlx serve`) for stock/**QAT** Gemma-4 with **continuous
+> batching** (multi-user throughput) + KV-quant over OpenAI `/v1` (+ Anthropic); its vision
+> rides on a bundled mlx-vlm (verify 12B/26B image input on the Mac; the QAT rows also run
+> under `mlx-vlm` as a one-flip vision-safe fallback).
 > One text daemon runs at a time; `--apply` to switch or roll back. Either way only
 > **one big model** is in memory (GLM-OCR and the small BGE embed/rerank pair are the
 > only on-demand extras).

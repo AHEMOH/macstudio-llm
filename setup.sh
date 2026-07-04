@@ -32,6 +32,7 @@ ALWAYS_ON_LABELS=(
   com.local.mlxlm.serve
   com.local.mlxvlm.main
   com.local.optiq.main
+  com.local.vllmmlx.main
   com.local.litellm.proxy
   com.local.glmocr.proxy
   com.local.vision.proxy
@@ -97,6 +98,11 @@ CONFIG_KEYS=(
   OPTIQ_MAX_TOKENS
   OPTIQ_PROMPT_CACHE_MB
   OPTIQ_DRAFTER
+  VLLMMLX_MAX_TOKENS
+  VLLMMLX_CONTINUOUS_BATCHING
+  VLLMMLX_KV_BITS
+  VLLMMLX_PAGED_CACHE
+  VLLMMLX_MAX_KV_SIZE
   GEMMA_TOP_K
   PRESET_ALIASES
   LITELLM_PORT
@@ -213,6 +219,11 @@ config_default() {
     OPTIQ_MAX_TOKENS)            echo 16384 ;;
     OPTIQ_PROMPT_CACHE_MB)       echo 8192 ;;
     OPTIQ_DRAFTER)               echo "" ;;
+    VLLMMLX_MAX_TOKENS)          echo 16384 ;;
+    VLLMMLX_CONTINUOUS_BATCHING) echo 1 ;;
+    VLLMMLX_KV_BITS)             echo 8 ;;
+    VLLMMLX_PAGED_CACHE)         echo 0 ;;
+    VLLMMLX_MAX_KV_SIZE)         echo "" ;;
     GEMMA_TOP_K)                 echo 64 ;;
     PRESET_ALIASES)              echo 1 ;;
     LITELLM_PORT)                echo 11434 ;;
@@ -309,7 +320,7 @@ config_hint() {
     VLLM_BACKEND_PORT)           echo "Internal port the text engine (mlx_lm.server) binds; LiteLLM fronts it. (Legacy VLLM_ name kept to avoid config churn.)" ;;
     VLLM_MAX_NUM_SEQS)           echo "Fallback for MLXLM_DECODE_CONCURRENCY (concurrent decode streams). (Legacy VLLM_ name.)" ;;
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
-    TEXT_ENGINE)                 echo "Which engine serves 'main': mlx-lm (Apple mlx_lm.server — text-only, batches, broad models incl. granite/glm) | mlx-vlm (mlx_vlm.server — UNIFIED text+images, KV-quant, single-stream; needs a VLM main like gemma-4) | optiq (mlx-optiq 'optiq serve', BETA — QAT OptiQ Gemma-4 mains, multimodal text+image + KV-quant, mlx-lm-from-git venv). Flip + --apply to switch/rollback; one runs at a time" ;;
+    TEXT_ENGINE)                 echo "Which engine serves 'main': mlx-lm (Apple mlx_lm.server — text-only, batches, broad models incl. granite/glm) | mlx-vlm (mlx_vlm.server — UNIFIED text+images, KV-quant, single-stream; needs a VLM main like gemma-4) | optiq (mlx-optiq 'optiq serve', BETA — QAT OptiQ Gemma-4 mains, multimodal text+image + KV-quant, mlx-lm-from-git venv) | vllm-mlx (waybarrios 'vllm-mlx serve' — OpenAI+Anthropic, CONTINUOUS BATCHING + KV-quant, pulls mlx-vlm for gemma-4 vision; loads stock/QAT gemma-4, NOT OptiQ format; verify 12B/26B vision on Mac). Flip + --apply to switch/rollback; one runs at a time" ;;
     MLXLM_VERSION)               echo "Pinned mlx-lm for the 'mlxlm' venv (the text engine). Bump deliberately + --apply" ;;
     MLXLM_PROMPT_CACHE_MB)       echo "mlx-lm prompt-cache hard cap in MB (--prompt-cache-bytes). Bounds KV/prefix RAM (16-bit KV grows fast — no kv-quant); default 8192" ;;
     MLXLM_DECODE_CONCURRENCY)    echo "mlx-lm concurrent decode streams (--decode-concurrency). empty = reuse VLLM_MAX_NUM_SEQS" ;;
@@ -323,8 +334,13 @@ config_hint() {
     OPTIQ_KV_BITS)               echo "optiq serve KV-cache quant bits: 4 or 8 (--kv-bits). empty = off. (Only when TEXT_ENGINE=optiq)" ;;
     OPTIQ_KV_GROUP_SIZE)         echo "optiq serve KV quant group size (--kv-group-size); empty = optiq default (64). Only with OPTIQ_KV_BITS set" ;;
     OPTIQ_MAX_TOKENS)            echo "optiq serve default --max-tokens ceiling for main (default 16384). (Only when TEXT_ENGINE=optiq). NOTE: there is NO main context cap — mlx_lm.server (which optiq wraps) has no --max-kv-size; a prompt beyond ~110K OOM-restarts the daemon, so route long-context work to the 'agent'" ;;
-    OPTIQ_PROMPT_CACHE_MB)       echo "optiq serve prompt-cache cap in MB (--prompt-cache-bytes); bounds the reusable KV/prefix cache → enables a LARGE context window. Default 8192 (8 GB; model streams experts from SSD so plenty of headroom on 32 GB). Raise for huge contexts" ;;
+    OPTIQ_PROMPT_CACHE_MB)       echo "optiq serve prompt-cache cap in MB (--prompt-cache-bytes); bounds the reusable KV/prefix cache → enables a LARGE context window. Default 8192 (8 GB; model streams experts from SSD so plenty of headroom on 32 GB). Raise for huge contexts. It's a lazy CAP not a pre-allocation, but under real multi-turn load it can grow to fill it — size it to the ACTIVE main's footprint: with ALIAS_MAIN=gemma4-26b-optiq (~20 GB weights) co-resident with the agent, 1024 was the swap-safe live value (see project_coresident_swap_tuning memory); with a small standalone main like gemma4-e4b-optiq (~8 GB weights, no agent), 16384 (16 GB) verified swap-free with ~13.7 GB still free (2026-07-03 live test, mac.home.arpa)" ;;
     OPTIQ_DRAFTER)               echo "optiq serve speculative-decoding drafter repo (--drafter), e.g. google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant. empty = OFF (drafter costs extra RAM — leave off on 32 GB unless verified)" ;;
+    VLLMMLX_MAX_TOKENS)          echo "vllm-mlx serve default --max-tokens ceiling for main (default 16384). (Only when TEXT_ENGINE=vllm-mlx)" ;;
+    VLLMMLX_CONTINUOUS_BATCHING) echo "vllm-mlx: 1 = --continuous-batching (multi-user throughput; vllm-mlx's edge over the single-stream engines), 0 = off. (Only when TEXT_ENGINE=vllm-mlx)" ;;
+    VLLMMLX_KV_BITS)             echo "vllm-mlx KV-cache quant bits (--kv-bits): 4 or 8. empty = off. NOTE: v0.4.0 flag name differs across docs (--kv-bits vs --use-paged-cache) — verify with 'vllm-mlx serve --help' on the Mac. (Only when TEXT_ENGINE=vllm-mlx)" ;;
+    VLLMMLX_PAGED_CACHE)         echo "vllm-mlx: 1 = --use-paged-cache (paged/memory-efficient KV cache), 0 = off. Alternative to VLLMMLX_KV_BITS depending on which flag the installed vllm-mlx accepts" ;;
+    VLLMMLX_MAX_KV_SIZE)         echo "vllm-mlx max tokens a client may request (--max-request-tokens); empty = server default. Bounds context on 32 GB" ;;
     GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast/agent (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off" ;;
     PRESET_ALIASES)              echo "1 = also expose the 'main-fast' preset alias (same loaded model as 'main' but thinking-OFF at the proxy — fast non-reasoning chat / tools / web / cron / email)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
@@ -549,6 +565,8 @@ load_config() {
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = mlx-vlm ]; } || continue ;;
       com.local.optiq.main)
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = optiq ]; } || continue ;;
+      com.local.vllmmlx.main)
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = vllm-mlx ]; } || continue ;;
       com.local.litellm.*|com.local.glmocr.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || continue ;;
       com.local.infinity.*)
@@ -604,6 +622,7 @@ label_log() {
     com.local.mlxlm.serve)       echo "$LOG_DIR/mlxlm.log" ;;
     com.local.mlxvlm.main)       echo "$LOG_DIR/mlxvlm-main.log" ;;
     com.local.optiq.main)        echo "$LOG_DIR/optiq-main.log" ;;
+    com.local.vllmmlx.main)      echo "$LOG_DIR/vllmmlx-main.log" ;;
     com.local.litellm.proxy)     echo "$LOG_DIR/litellm.log" ;;
     com.local.glmocr.proxy)      echo "$LOG_DIR/glmocr-proxy.log" ;;
     com.local.glmocr.serve)      echo "$LOG_DIR/glmocr-serve.log" ;;
@@ -954,6 +973,13 @@ ensure_python_venvs() {
     _ensure_venv optiq bin:optiq 'mlx-optiq' 'mlx-lm @ git+https://github.com/ml-explore/mlx-lm.git' 'pillow' 'huggingface_hub[cli]'
   fi
 
+  # vllm-mlx engine venv (only when TEXT_ENGINE=vllm-mlx). The 'vllm-mlx' PyPI package
+  # pulls mlx + mlx-lm + mlx-vlm (its vision path rides on mlx-vlm's SigLIP2 loader) and
+  # installs the 'vllm-mlx' console script. Serves stock/QAT gemma-4 (NOT OptiQ format).
+  if [ "${TEXT_ENGINE:-mlx-vlm}" = vllm-mlx ]; then
+    _ensure_venv vllmmlx bin:vllm-mlx 'vllm-mlx' 'huggingface_hub[cli]'
+  fi
+
   # Embeddings + reranker: BGE pair served by Infinity (infinity-emb) on MPS,
   # on-demand. Independent of the text engine; pulls torch, so only built when
   # INSTALL_EMBED=1. The wrapper execs the 'infinity_emb' console script.
@@ -1062,6 +1088,8 @@ render_litellm_config() {
   # LiteLLM forwards extra_body verbatim (drop_params leaves it untouched).
   # optiq serve wraps mlx_lm.server, so it uses mlx-lm's nested chat_template_kwargs
   # form for enable_thinking (NOT mlx-vlm's top-level form). Verify on the Mac.
+  # vllm-mlx wraps mlx-vlm, so it uses the TOP-LEVEL form (the default below / else
+  # branch) — no case arm needed; verify the nothink wire form on the Mac.
   local _nothink_body='{"enable_thinking": false}'
   case "${TEXT_ENGINE:-mlx-vlm}" in
     mlx-lm|optiq) _nothink_body='{"chat_template_kwargs": {"enable_thinking": false}}' ;;
@@ -1257,6 +1285,9 @@ render_all_plists() {
       com.local.optiq.main)
         # Text engine: mlx-optiq 'optiq serve' (unified text+image, BETA). One text daemon at a time.
         { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = optiq ]; } || { remove_plist "$label"; continue; } ;;
+      com.local.vllmmlx.main)
+        # Text engine: vllm-mlx 'vllm-mlx serve' (unified text+image, batching). One text daemon at a time.
+        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = vllm-mlx ]; } || { remove_plist "$label"; continue; } ;;
       com.local.litellm.*|com.local.glmocr.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.infinity.*)
@@ -1834,8 +1865,9 @@ set_model_alias() {
   if [ "$slot" = main ]; then
     ram_guard_warn
     local _text_label=com.local.mlxlm.serve
-    [ "${TEXT_ENGINE:-mlx-lm}" = mlx-vlm ] && _text_label=com.local.mlxvlm.main
-    [ "${TEXT_ENGINE:-mlx-lm}" = optiq ]   && _text_label=com.local.optiq.main
+    [ "${TEXT_ENGINE:-mlx-lm}" = mlx-vlm ]  && _text_label=com.local.mlxvlm.main
+    [ "${TEXT_ENGINE:-mlx-lm}" = optiq ]    && _text_label=com.local.optiq.main
+    [ "${TEXT_ENGINE:-mlx-lm}" = vllm-mlx ] && _text_label=com.local.vllmmlx.main
     if daemon_loaded "$_text_label"; then
       /bin/launchctl kickstart -k "system/$_text_label" >/dev/null 2>&1 \
         && ok "restarting $_text_label with new main model (load ~30–60 s, no hot-swap)"
@@ -2062,9 +2094,10 @@ cli_add_model() {
       ocr|vision)   engine=mlxvlm ;;
       embed|rerank) engine=infinity ;;
       *) case "${TEXT_ENGINE:-optiq}" in
-           mlx-vlm) engine=mlxvlm ;;
-           mlx-lm)  engine=mlxlm ;;
-           *)       engine=optiq ;;
+           mlx-vlm)  engine=mlxvlm ;;
+           mlx-lm)   engine=mlxlm ;;
+           vllm-mlx) engine=vllmmlx ;;
+           *)        engine=optiq ;;
          esac ;;
     esac
   fi
@@ -2397,7 +2430,7 @@ follow_log() {
   printf "\n${C_DIM}── live: %s  (Ctrl-C to stop) ──${C_RST}\n" "$f"
   trap 'true' INT
   case "$f" in
-    *mlxlm.log|*mlxvlm-main.log|*vllm.log)
+    *mlxlm.log|*mlxvlm-main.log|*vllmmlx-main.log|*vllm.log)
       /usr/bin/tail -n 20 -F "$f" 2>/dev/null \
         | /usr/bin/grep --line-buffered -E 'REQUEST|Chat completion|tok/s|running=|ABORTED|schedule|Error|Traceback|mllm=' || true ;;
     *)
