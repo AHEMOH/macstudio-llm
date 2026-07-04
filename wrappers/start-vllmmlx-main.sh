@@ -67,10 +67,14 @@ ARGS=( serve "$REPO"
 [ "${VLLMMLX_PAGED_CACHE:-1}" = 1 ]  && ARGS+=( --use-paged-cache )
 [ "${VLLMMLX_FORCE_MLLM:-1}" = 1 ]   && ARGS+=( --mllm )
 [ -n "${VLLMMLX_REASONING_PARSER:-}" ] && ARGS+=( --reasoning-parser "$VLLMMLX_REASONING_PARSER" )
+# Structured tool calling: without --enable-auto-tool-choice + a --tool-call-parser, Gemma's
+# tool-call syntax leaks as raw text in content instead of populating tool_calls. gemma4 parser
+# matches the model. (verified on Mac: raw leak without these; clean tool_calls with them.)
+[ -n "${VLLMMLX_TOOL_PARSER:-}" ]    && ARGS+=( --enable-auto-tool-choice --tool-call-parser "$VLLMMLX_TOOL_PARSER" )
 [ -n "${VLLMMLX_MAX_TOKENS:-}" ]     && ARGS+=( --max-tokens "$VLLMMLX_MAX_TOKENS" )
 [ -n "${VLLMMLX_MAX_KV_SIZE:-}" ]    && ARGS+=( --max-kv-size "$VLLMMLX_MAX_KV_SIZE" )
 
 echo "[start-vllmmlx-main] serving UNIFIED main='$MODEL_ID' repo='$REPO' (text+image, vllm-mlx) on 127.0.0.1:${VLLM_BACKEND_PORT:-18000}"
-echo "[start-vllmmlx-main] continuous_batching='${VLLMMLX_CONTINUOUS_BATCHING:-1}' paged_cache='${VLLMMLX_PAGED_CACHE:-1}' mllm='${VLLMMLX_FORCE_MLLM:-1}' reasoning_parser='${VLLMMLX_REASONING_PARSER:-off}' max_tokens='${VLLMMLX_MAX_TOKENS:-default}' max_kv_size='${VLLMMLX_MAX_KV_SIZE:-default}'"
+echo "[start-vllmmlx-main] continuous_batching='${VLLMMLX_CONTINUOUS_BATCHING:-1}' paged_cache='${VLLMMLX_PAGED_CACHE:-1}' mllm='${VLLMMLX_FORCE_MLLM:-1}' reasoning_parser='${VLLMMLX_REASONING_PARSER:-off}' tool_parser='${VLLMMLX_TOOL_PARSER:-off}' max_tokens='${VLLMMLX_MAX_TOKENS:-default}' max_kv_size='${VLLMMLX_MAX_KV_SIZE:-default}'"
 
 exec "$VENV_DIR/vllmmlx/bin/vllm-mlx" "${ARGS[@]}"
