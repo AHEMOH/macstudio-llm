@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# paperless-ocr — one-shot Apple-Vision searchable-PDF OCR (manual / testing).
+# Produces a PDF with an INVISIBLE, correctly-Unicode-encoded text layer.
+#
+#   paperless-ocr in.(pdf|png|jpg) out.pdf [--langs ru-RU,en-US]
+#
+# The always-on gateway + retro-fix worker is com.local.paperless.ocr; this is the
+# same OCR core exposed as a CLI for ad-hoc use.
+set -eu
+
+CONF=/usr/local/etc/macstudio.conf
+[ -r "$CONF" ] && . "$CONF"
+
+VENV_DIR="${VENV_DIR:-/Users/mac/.macstudio-venvs}"
+PY="$VENV_DIR/paperlessocr/bin/python"
+if [ ! -x "$PY" ]; then
+  echo "paperless-ocr venv missing ($PY)." >&2
+  echo "Enable it: set INSTALL_PAPERLESS_OCR=1 in /usr/local/etc/macstudio.conf, then 'sudo bash setup.sh --apply'." >&2
+  exit 1
+fi
+
+export PATH="$VENV_DIR/paperlessocr/bin:/opt/homebrew/bin:/usr/bin:/bin"
+export PAPERLESS_OCR_LANGS="${PAPERLESS_OCR_LANGS:-ru-RU,en-US}"
+export PAPERLESS_OCR_RECMODE="${PAPERLESS_OCR_RECMODE:-accurate}"
+export PAPERLESS_OCR_FONT="${PAPERLESS_OCR_FONT:-/System/Library/Fonts/Supplemental/Arial Unicode.ttf}"
+export PAPERLESS_OCR_DPI="${PAPERLESS_OCR_DPI:-200}"
+export PAPERLESS_OCR_INBOX="${PAPERLESS_OCR_INBOX:-${TARGET_HOME:-/Users/mac}/paperless-ocr/inbox}"
+
+exec "$PY" /usr/local/libexec/paperless-ocr.py --ocr "$@"

@@ -248,6 +248,49 @@ the idle timeout, freeing RAM for the main model.
 
 ---
 
+## paperless-ngx — Apple-Vision searchable-PDF OCR (`INSTALL_PAPERLESS_OCR`)
+
+A Mac-side worker (`com.local.paperless.ocr`, opt-in `INSTALL_PAPERLESS_OCR=1`) that
+produces **genuinely searchable PDFs** using **Apple Vision** OCR — the engine that, in
+testing, cleanly transcribed dense Russian/Cyrillic documents that Tesseract (paperless's
+built-in OCR) turns into mojibake and that GLM-OCR truncates. It adds an *invisible*,
+correctly-Unicode-encoded text layer (via `ocrmac` + PyMuPDF) without changing how the page
+looks. Runs on the Mac because Apple Vision is macOS-only; paperless-ngx can live anywhere
+reachable over HTTP.
+
+**Enable it** (edit `/usr/local/etc/macstudio.conf`, then `sudo bash setup.sh --apply`):
+```sh
+INSTALL_PAPERLESS_OCR=1
+PAPERLESS_OCR_URL=http://paperless.home.arpa:8000      # your paperless-ngx
+PAPERLESS_OCR_TOKEN=<paperless API token>              # Settings → API token
+PAPERLESS_OCR_LANGS=ru-RU,en-US                        # Apple Vision locales (multiple OK)
+# optional: PAPERLESS_OCR_RECMODE=accurate  PAPERLESS_OCR_DPI=200
+```
+
+**On the paperless-ngx side:** keep the default `PAPERLESS_OCR_MODE=skip` so paperless
+**indexes the text layer we provide** instead of re-running Tesseract, and create two tags:
+`ocr:apple` (trigger) and `ocr:done`.
+
+Two workflows run together:
+
+- **Gateway (new documents):** drop PDFs/images into `PAPERLESS_OCR_INBOX`
+  (`~/paperless-ocr/inbox`). Each is OCR'd, uploaded to paperless (searchable), and the
+  pristine original is kept in `PAPERLESS_OCR_ARCHIVE`.
+- **Retro-fix (existing documents):** tag any paperless document **`ocr:apple`**. The worker
+  downloads the original, re-OCRs it with Apple Vision, uploads a new searchable copy (tagged
+  `ocr:done`, metadata preserved), and retags the old one `ocr:superseded` (kept unless
+  `PAPERLESS_OCR_DELETE_ORIGINAL=1`).
+
+**Ad-hoc CLI:** `paperless-ocr in.pdf out.pdf -l ru-RU,en-US` (also accepts images).
+Verify with `pdftotext out.pdf -` → clean Unicode text.
+
+Notes: `PAPERLESS_OCR_RECMODE` must be `accurate` or `fast` — **not** `livetext` (VisionKit,
+crashes headless). This supersedes the `OCR_PROVIDER=llm` path above for OCR quality; keep
+paperless-gpt only if you also want LLM-generated titles/tags. The API token sits in the
+644 conf (LAN-only, same precedent as `MQTT_PASS`/`DASHBOARD_TOKEN`).
+
+---
+
 ## OpenAI SDK (Python / JS / anything OpenAI-compatible)
 
 ```python
