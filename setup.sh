@@ -195,6 +195,7 @@ CONFIG_KEYS=(
   PAPERLESS_OCR_FONT
   PAPERLESS_OCR_DPI
   PAPERLESS_OCR_JPEG_Q
+  PAPERLESS_OCR_TEXT_MIN_CHARS
   PAPERLESS_OCR_INBOX
   PAPERLESS_OCR_ARCHIVE
   PAPERLESS_OCR_ERRORS
@@ -342,6 +343,7 @@ config_default() {
     PAPERLESS_OCR_FONT)          echo "/System/Library/Fonts/Supplemental/Arial Unicode.ttf" ;;
     PAPERLESS_OCR_DPI)           echo 200 ;;
     PAPERLESS_OCR_JPEG_Q)        echo 75 ;;
+    PAPERLESS_OCR_TEXT_MIN_CHARS) echo 50 ;;
     PAPERLESS_OCR_INBOX)         echo /Users/mac/paperless-ocr/inbox ;;
     PAPERLESS_OCR_ARCHIVE)       echo /Users/mac/paperless-ocr/originals ;;
     PAPERLESS_OCR_ERRORS)        echo /Users/mac/paperless-ocr/errors ;;
@@ -455,6 +457,7 @@ config_hint() {
     PAPERLESS_OCR_FONT)          echo "Path to a Unicode/Cyrillic-capable TTF embedded for the invisible text layer (default: macOS 'Arial Unicode.ttf')" ;;
     PAPERLESS_OCR_DPI)           echo "Render DPI for OCR (higher = better on small text, slower; default 200)" ;;
     PAPERLESS_OCR_JPEG_Q)        echo "JPEG quality (1-100) of the embedded page image in the output PDF (default 75)" ;;
+    PAPERLESS_OCR_TEXT_MIN_CHARS) echo "Digital-born detection: a PDF with at least this many text chars/page is passed through UNTOUCHED (no re-OCR); below it = treated as a scan and OCR'd. Default 50" ;;
     PAPERLESS_OCR_INBOX)         echo "Gateway watch folder: drop PDFs/images here -> OCR'd + uploaded to paperless" ;;
     PAPERLESS_OCR_ARCHIVE)       echo "Where pristine originals are kept after the gateway processes them" ;;
     PAPERLESS_OCR_ERRORS)        echo "Where the gateway moves files it failed to OCR/upload" ;;

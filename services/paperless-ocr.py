@@ -10,7 +10,12 @@ core and a small paperless-ngx REST client:
                into one interleaved document — for simplex ADFs scanning both sides.
   * retrofix — poll paperless for documents carrying PAPERLESS_OCR_TRIGGER_TAG;
                download the original, OCR it, re-upload as a new (searchable) copy,
-               then retag the old document PAPERLESS_OCR_SUPERSEDED_TAG.
+               then retag the old document PAPERLESS_OCR_SUPERSEDED_TAG. A doc that
+               already has a good text layer (digital-born) is left alone — only the
+               trigger tag is cleared — so a whole mail source can be auto-tagged safely.
+
+Digital-born PDFs (already carry a text layer, e.g. an emailed report/invoice) are
+passed through UNTOUCHED; only scans/images (no text) are rasterized + Apple-Vision-OCR'd.
 
 OCR core (`ocr_pdf`): PyMuPDF renders each page to an image, `ocrmac` runs Apple
 Vision (VNRecognizeTextRequest, "accurate") returning Unicode text + bounding boxes,
@@ -49,6 +54,11 @@ RECMODE = os.environ.get("PAPERLESS_OCR_RECMODE", "accurate")  # accurate|fast (
 FONT = os.environ.get("PAPERLESS_OCR_FONT", "/System/Library/Fonts/Supplemental/Arial Unicode.ttf")
 DPI = int(os.environ.get("PAPERLESS_OCR_DPI", "200"))
 JPEG_Q = int(os.environ.get("PAPERLESS_OCR_JPEG_Q", "75"))  # embedded page-image JPEG quality
+# A PDF that ALREADY has a good text layer (digital-born, e.g. an emailed invoice from a
+# report generator) is passed through untouched — rasterizing + re-OCRing it would only
+# degrade perfect text. A scan (no text layer) gets Apple Vision OCR. This is the average
+# stripped text chars/page above which a PDF counts as digital-born.
+TEXT_MIN_CHARS = int(os.environ.get("PAPERLESS_OCR_TEXT_MIN_CHARS", "50"))
 
 BASE = Path(os.environ.get("PAPERLESS_OCR_INBOX", "/Users/mac/paperless-ocr/inbox")).parent
 INBOX = Path(os.environ.get("PAPERLESS_OCR_INBOX", str(BASE / "inbox")))
@@ -120,6 +130,33 @@ def _overlay(page, pix):
         except Exception:
             pass  # a single bad glyph/box must not fail the page
     return placed
+
+
+def _already_has_text(pdf_path):
+    """True if a PDF already carries a usable text layer (digital-born) — averaged over
+    pages, so a blank scan (~0 chars) is OCR'd but a real text PDF is left alone."""
+    try:
+        d = fitz.open(str(pdf_path))
+    except Exception:
+        return False
+    try:
+        if not d.is_pdf:
+            return False
+        pages = d.page_count or 1
+        total = sum(len(p.get_text().strip()) for p in d)
+        return (total / pages) >= TEXT_MIN_CHARS
+    finally:
+        d.close()
+
+
+def make_searchable(src, dst):
+    """Produce a searchable PDF at `dst`. Digital-born PDFs (already have text) are copied
+    through untouched; scans/images are OCR'd with Apple Vision. Returns (mode, boxes)."""
+    src, dst = Path(src), Path(dst)
+    if src.suffix.lower() == ".pdf" and _already_has_text(src):
+        shutil.copy2(str(src), str(dst))
+        return ("passthrough", 0)
+    return ("ocr", ocr_pdf(src, dst))
 
 
 def _open_as_pdf(path):
@@ -261,9 +298,10 @@ def gateway_once():
             ARCHIVE.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(p), str(ARCHIVE / p.name))
             out = WORK / (p.stem + ".ocr.pdf")
-            n = ocr_pdf(p, out)
+            mode, n = make_searchable(p, out)
             _upload(out, title=p.stem)
-            log(f"gateway: {p.name} -> uploaded ({n} boxes); original archived")
+            detail = "passed through (already had text)" if mode == "passthrough" else f"OCR'd ({n} boxes)"
+            log(f"gateway: {p.name} -> uploaded, {detail}; original archived")
             p.unlink()
             out.unlink(missing_ok=True)
         except Exception as e:
@@ -276,10 +314,10 @@ def gateway_once():
 
 
 def _process_and_upload(src_pdf, title, archive_names):
-    """OCR `src_pdf`, upload to paperless, archive the listed original files."""
+    """Make `src_pdf` searchable, upload to paperless. Returns boxes placed."""
     ARCHIVE.mkdir(parents=True, exist_ok=True)
     out = WORK / (Path(title).stem + ".ocr.pdf")
-    n = ocr_pdf(src_pdf, out)
+    _mode, n = make_searchable(src_pdf, out)
     _upload(out, title=title)
     out.unlink(missing_ok=True)
     return n
@@ -347,16 +385,27 @@ def retrofix_once():
                 resp.raise_for_status()
                 src.write_bytes(resp.content)
             out = WORK / f"{did}.ocr.pdf"
-            n = ocr_pdf(src, out)
-            new_tags = [t for t in doc.get("tags", []) if t != tid] + [_tag_id(DONE_TAG)]
-            _upload(out, title=doc.get("title"), tags=new_tags,
-                    created=doc.get("created"), correspondent=doc.get("correspondent"))
-            # Retag the OLD doc so it is not reprocessed: drop trigger, add superseded.
-            old_tags = [t for t in doc.get("tags", []) if t != tid] + [_tag_id(SUPERSEDED_TAG)]
-            _session.patch(f"{URL}/api/documents/{did}/", json={"tags": old_tags}).raise_for_status()
-            if DELETE_ORIGINAL:
-                _session.delete(f"{URL}/api/documents/{did}/")
-            log(f"retrofix: doc {did} -> searchable copy ({n} boxes); old retagged")
+            mode, n = make_searchable(src, out)
+            if mode == "passthrough":
+                # Already has a good text layer (digital-born) — nothing to re-OCR.
+                # Just clear the trigger tag; no duplicate upload. This makes it safe
+                # to auto-tag a whole mail source ocr:apple — scans get re-OCR'd,
+                # digital-born ones are simply released.
+                keep = [t for t in doc.get("tags", []) if t != tid]
+                _session.patch(f"{URL}/api/documents/{did}/",
+                               json={"tags": keep}).raise_for_status()
+                log(f"retrofix: doc {did} already has text -> skipped (trigger cleared)")
+            else:
+                new_tags = [t for t in doc.get("tags", []) if t != tid] + [_tag_id(DONE_TAG)]
+                _upload(out, title=doc.get("title"), tags=new_tags,
+                        created=doc.get("created"), correspondent=doc.get("correspondent"))
+                # Retag the OLD doc so it is not reprocessed: drop trigger, add superseded.
+                old_tags = [t for t in doc.get("tags", []) if t != tid] + [_tag_id(SUPERSEDED_TAG)]
+                _session.patch(f"{URL}/api/documents/{did}/",
+                               json={"tags": old_tags}).raise_for_status()
+                if DELETE_ORIGINAL:
+                    _session.delete(f"{URL}/api/documents/{did}/")
+                log(f"retrofix: doc {did} -> searchable copy ({n} boxes); old retagged")
             src.unlink(missing_ok=True)
             out.unlink(missing_ok=True)
         except Exception as e:

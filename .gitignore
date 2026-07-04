@@ -16,6 +16,6 @@ __pycache__/
 /var/log/macstudio/
 
 # Local test documents (may contain private data — never commit)
-/test.pdf
-*.test.pdf
+# All root-level PDFs are treated as private test scans, never shipped in this repo.
+/*.pdf
 

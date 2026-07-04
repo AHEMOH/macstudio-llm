@@ -281,6 +281,19 @@ Two workflows run together:
   `ocr:done`, metadata preserved), and retags the old one `ocr:superseded` (kept unless
   `PAPERLESS_OCR_DELETE_ORIGINAL=1`).
 
+**Digital-born vs scan (important).** Both loops are smart: a PDF that **already has a good
+text layer** (digital-born — e.g. an emailed invoice from a report generator) is **passed
+through untouched** — never rasterized or re-OCR'd, so perfect text is preserved. Only
+**scans/images without a text layer** get Apple-Vision OCR. The threshold is
+`PAPERLESS_OCR_TEXT_MIN_CHARS` (avg chars/page, default 50).
+
+**E-mail attachments.** paperless-ngx reads mail and ingests attachments **itself** — those
+never pass through this worker. Digital-born attachments (most) already have text, so paperless
+indexes them fine. For the rare **scanned** attachment (no text, e.g. Cyrillic → Tesseract
+mojibake), tag it `ocr:apple` (manually, or via a paperless **Workflow** that auto-tags a whole
+mail source): retro-fix then re-OCRs scans with Apple Vision and simply releases the
+already-text ones (no duplicates).
+
 **Scan straight into the inbox (SMB).** A network scanner (e.g. Canon MAXIFY GX2050 →
 "Scan to shared folder / SMB") can drop files directly into `PAPERLESS_OCR_INBOX`:
 1. macOS **System Settings → General → Sharing → File Sharing** on; add the inbox folder;
