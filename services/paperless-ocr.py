@@ -6,6 +6,8 @@ core and a small paperless-ngx REST client:
 
   * gateway  — watch PAPERLESS_OCR_INBOX; OCR each new file; upload the searchable
                PDF to paperless; keep the pristine original in PAPERLESS_OCR_ARCHIVE.
+               A `<INBOX>/<DUPLEX_SUBDIR>` folder pairs two scans (fronts + backs)
+               into one interleaved document — for simplex ADFs scanning both sides.
   * retrofix — poll paperless for documents carrying PAPERLESS_OCR_TRIGGER_TAG;
                download the original, OCR it, re-upload as a new (searchable) copy,
                then retag the old document PAPERLESS_OCR_SUPERSEDED_TAG.
@@ -64,6 +66,14 @@ GATEWAY_POLL = min(10, POLL)
 # we touch it. A file counts as "settled" only when it has not been modified for
 # STABLE_SEC seconds AND no process still holds it open (e.g. smbd mid-transfer).
 STABLE_SEC = int(os.environ.get("PAPERLESS_OCR_STABLE_SEC", "30"))
+# Double-sided (duplex) support for simplex ADFs (e.g. Canon MAXIFY GX2050): scan the
+# fronts, then flip the stack and scan the backs — both passes into the INBOX/<subdir>
+# folder. The two files are interleaved here into ONE document (backs reversed, like
+# paperless-ngx' collate), then OCR'd + uploaded. Needed because paperless' own collate
+# is a consume-directory feature, unavailable over the API.
+DUPLEX_SUBDIR = os.environ.get("PAPERLESS_OCR_DUPLEX_SUBDIR", "duplex")
+DUPLEX_TIMEOUT = int(os.environ.get("PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC", "1800"))
+DUPLEX_REVERSE = os.environ.get("PAPERLESS_OCR_DUPLEX_REVERSE", "1") == "1"
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".webp"}
 ACCEPT_EXTS = {".pdf"} | IMAGE_EXTS
@@ -110,6 +120,34 @@ def _overlay(page, pix):
         except Exception:
             pass  # a single bad glyph/box must not fail the page
     return placed
+
+
+def _open_as_pdf(path):
+    """Open a PDF or image as a PyMuPDF PDF document."""
+    d = fitz.open(str(path))
+    if d.is_pdf:
+        return d
+    pdfbytes = d.convert_to_pdf()
+    d.close()
+    return fitz.open("pdf", pdfbytes)
+
+
+def interleave(front, back, dst):
+    """Merge a fronts file and a backs file (backs reversed unless DUPLEX_REVERSE=0)
+    into one page-ordered PDF at `dst`, the way a duplex document reads."""
+    f = _open_as_pdf(front)
+    b = _open_as_pdf(back)
+    out = fitz.open()
+    backs = list(range(b.page_count - 1, -1, -1)) if DUPLEX_REVERSE else list(range(b.page_count))
+    for i in range(max(f.page_count, len(backs))):
+        if i < f.page_count:
+            out.insert_pdf(f, from_page=i, to_page=i)
+        if i < len(backs):
+            out.insert_pdf(b, from_page=backs[i], to_page=backs[i])
+    out.save(str(dst))
+    out.close()
+    f.close()
+    b.close()
 
 
 def ocr_pdf(src, dst):
@@ -237,6 +275,62 @@ def gateway_once():
                 pass
 
 
+def _process_and_upload(src_pdf, title, archive_names):
+    """OCR `src_pdf`, upload to paperless, archive the listed original files."""
+    ARCHIVE.mkdir(parents=True, exist_ok=True)
+    out = WORK / (Path(title).stem + ".ocr.pdf")
+    n = ocr_pdf(src_pdf, out)
+    _upload(out, title=title)
+    out.unlink(missing_ok=True)
+    return n
+
+
+def duplex_once():
+    """Pair up the two oldest settled files in INBOX/<DUPLEX_SUBDIR> as fronts+backs,
+    interleave into one document, OCR + upload. A lone file older than DUPLEX_TIMEOUT
+    is treated as single-sided (the backs pass never came)."""
+    ddir = INBOX / DUPLEX_SUBDIR
+    if not ddir.exists():
+        return
+    files = [p for p in sorted(ddir.iterdir(), key=lambda x: x.stat().st_mtime)
+             if not p.is_dir() and not p.name.startswith(".")
+             and p.suffix.lower() in ACCEPT_EXTS and _is_settled(p)]
+    if len(files) >= 2:
+        front, back = files[0], files[1]
+        try:
+            for s in (front, back):
+                shutil.copy2(str(s), str((ARCHIVE / s.name)))
+            combined = WORK / "duplex_combined.pdf"
+            interleave(front, back, combined)
+            n = _process_and_upload(combined, front.stem, [front, back])
+            combined.unlink(missing_ok=True)
+            log(f"duplex: {front.name} + {back.name} -> 1 document ({n} boxes)")
+            front.unlink(); back.unlink()
+        except Exception as e:
+            log(f"duplex ERROR {front.name}+{back.name}: {e}")
+            ERRORS.mkdir(parents=True, exist_ok=True)
+            for s in (front, back):
+                try:
+                    shutil.move(str(s), str(ERRORS / s.name))
+                except Exception:
+                    pass
+    elif len(files) == 1:
+        p = files[0]
+        if time.time() - p.stat().st_mtime > DUPLEX_TIMEOUT:
+            try:
+                shutil.copy2(str(p), str(ARCHIVE / p.name))
+                n = _process_and_upload(p, p.stem, [p])
+                log(f"duplex: lone {p.name} timed out -> uploaded single-sided ({n} boxes)")
+                p.unlink()
+            except Exception as e:
+                log(f"duplex lone ERROR {p.name}: {e}")
+
+
+def gateway_tick():
+    gateway_once()
+    duplex_once()
+
+
 def retrofix_once():
     tid = _tag_id(TRIGGER_TAG, create=False)
     if not tid:
@@ -279,7 +373,7 @@ def _loop(fn, interval, name):
 
 
 def main():
-    for d in (INBOX, ARCHIVE, ERRORS, WORK):
+    for d in (INBOX, INBOX / DUPLEX_SUBDIR, ARCHIVE, ERRORS, WORK):
         d.mkdir(parents=True, exist_ok=True)
     if not URL or not TOKEN:
         log("PAPERLESS_OCR_URL / PAPERLESS_OCR_TOKEN not set — idling. "
@@ -287,8 +381,8 @@ def main():
         while True:
             time.sleep(3600)
     log(f"starting: url={URL} langs={LANGS} recmode={RECMODE} dpi={DPI} "
-        f"inbox={INBOX} trigger='{TRIGGER_TAG}' poll={POLL}s")
-    threading.Thread(target=_loop, args=(gateway_once, GATEWAY_POLL, "gateway"), daemon=True).start()
+        f"inbox={INBOX} duplex={INBOX / DUPLEX_SUBDIR} trigger='{TRIGGER_TAG}' poll={POLL}s")
+    threading.Thread(target=_loop, args=(gateway_tick, GATEWAY_POLL, "gateway"), daemon=True).start()
     threading.Thread(target=_loop, args=(retrofix_once, POLL, "retrofix"), daemon=True).start()
     while True:
         time.sleep(60)

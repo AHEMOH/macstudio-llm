@@ -204,6 +204,9 @@ CONFIG_KEYS=(
   PAPERLESS_OCR_DELETE_ORIGINAL
   PAPERLESS_OCR_POLL_SEC
   PAPERLESS_OCR_STABLE_SEC
+  PAPERLESS_OCR_DUPLEX_SUBDIR
+  PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC
+  PAPERLESS_OCR_DUPLEX_REVERSE
   AUTO_ACCEPT
 )
 # Bash-3.2 safe (macOS ships /bin/bash 3.2): lookup functions instead of
@@ -348,6 +351,9 @@ config_default() {
     PAPERLESS_OCR_DELETE_ORIGINAL) echo 0 ;;
     PAPERLESS_OCR_POLL_SEC)      echo 60 ;;
     PAPERLESS_OCR_STABLE_SEC)    echo 30 ;;
+    PAPERLESS_OCR_DUPLEX_SUBDIR) echo duplex ;;
+    PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC) echo 1800 ;;
+    PAPERLESS_OCR_DUPLEX_REVERSE) echo 1 ;;
     AUTO_ACCEPT)                 echo 0 ;;
     *)                           echo "" ;;
   esac
@@ -458,6 +464,9 @@ config_hint() {
     PAPERLESS_OCR_DELETE_ORIGINAL) echo "1 = delete the old paperless doc after retro-fix (default 0 = keep it, tagged superseded)" ;;
     PAPERLESS_OCR_POLL_SEC)      echo "Retro-fix poll interval in seconds (gateway polls every min(10,this))" ;;
     PAPERLESS_OCR_STABLE_SEC)    echo "Gateway waits until an inbox file is unmodified AND not held open (SMB) for this many seconds before OCR — prevents processing half-scanned files. Raise if your scanner pauses long between pages (default 30)" ;;
+    PAPERLESS_OCR_DUPLEX_SUBDIR) echo "Inbox subfolder for double-sided jobs: scan fronts then backs here; the two files are interleaved into one document (for simplex ADFs). Default 'duplex'" ;;
+    PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC) echo "If only one file waits in the duplex folder this long, treat it as single-sided (the backs pass never came). Default 1800 (30 min)" ;;
+    PAPERLESS_OCR_DUPLEX_REVERSE) echo "1 = reverse the 2nd (backs) file when interleaving (normal after flipping the stack). Set 0 if pages come out mis-ordered" ;;
     *)                           echo "" ;;
   esac
 }
