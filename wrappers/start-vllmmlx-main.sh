@@ -59,15 +59,18 @@ ARGS=( serve "$REPO"
   --host 127.0.0.1
   --port "${VLLM_BACKEND_PORT:-18000}" )
 [ "${VLLMMLX_CONTINUOUS_BATCHING:-1}" = 1 ] && ARGS+=( --continuous-batching )
-# KV-cache quant: v0.4.0's flag name differs across docs (--kv-bits vs --use-paged-cache).
-# VLLMMLX_KV_BITS drives --kv-bits when set; VLLMMLX_PAGED_CACHE=1 adds --use-paged-cache.
-# Verify the accepted flags with `vllm-mlx serve --help` on the Mac and adjust if needed.
-[ -n "${VLLMMLX_KV_BITS:-}" ]    && ARGS+=( --kv-bits "$VLLMMLX_KV_BITS" )
-[ "${VLLMMLX_PAGED_CACHE:-0}" = 1 ] && ARGS+=( --use-paged-cache )
-[ -n "${VLLMMLX_MAX_TOKENS:-}" ] && ARGS+=( --max-tokens "$VLLMMLX_MAX_TOKENS" )
-[ -n "${VLLMMLX_MAX_KV_SIZE:-}" ] && ARGS+=( --max-request-tokens "$VLLMMLX_MAX_KV_SIZE" )
+# vllm-mlx has NO --kv-bits (verified via `vllm-mlx serve --help`, v0.4.0). KV memory
+# efficiency is --use-paged-cache; --max-kv-size is the real context cap (memory-critical
+# on 32 GB). --mllm force-loads the model as multimodal (guarantees the Gemma-4 vision path
+# even if name auto-detection misses). --reasoning-parser gemma4 splits thinking into the
+# reasoning_content field (matches the model; helps clients hide thinking).
+[ "${VLLMMLX_PAGED_CACHE:-1}" = 1 ]  && ARGS+=( --use-paged-cache )
+[ "${VLLMMLX_FORCE_MLLM:-1}" = 1 ]   && ARGS+=( --mllm )
+[ -n "${VLLMMLX_REASONING_PARSER:-}" ] && ARGS+=( --reasoning-parser "$VLLMMLX_REASONING_PARSER" )
+[ -n "${VLLMMLX_MAX_TOKENS:-}" ]     && ARGS+=( --max-tokens "$VLLMMLX_MAX_TOKENS" )
+[ -n "${VLLMMLX_MAX_KV_SIZE:-}" ]    && ARGS+=( --max-kv-size "$VLLMMLX_MAX_KV_SIZE" )
 
 echo "[start-vllmmlx-main] serving UNIFIED main='$MODEL_ID' repo='$REPO' (text+image, vllm-mlx) on 127.0.0.1:${VLLM_BACKEND_PORT:-18000}"
-echo "[start-vllmmlx-main] continuous_batching='${VLLMMLX_CONTINUOUS_BATCHING:-1}' kv_bits='${VLLMMLX_KV_BITS:-off}' paged_cache='${VLLMMLX_PAGED_CACHE:-0}' max_tokens='${VLLMMLX_MAX_TOKENS:-default}'"
+echo "[start-vllmmlx-main] continuous_batching='${VLLMMLX_CONTINUOUS_BATCHING:-1}' paged_cache='${VLLMMLX_PAGED_CACHE:-1}' mllm='${VLLMMLX_FORCE_MLLM:-1}' reasoning_parser='${VLLMMLX_REASONING_PARSER:-off}' max_tokens='${VLLMMLX_MAX_TOKENS:-default}' max_kv_size='${VLLMMLX_MAX_KV_SIZE:-default}'"
 
 exec "$VENV_DIR/vllmmlx/bin/vllm-mlx" "${ARGS[@]}"
