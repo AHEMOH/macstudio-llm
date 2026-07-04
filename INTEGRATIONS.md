@@ -292,6 +292,18 @@ The gateway only picks up a file once it is **fully written** — unchanged for
 50-page scan is never OCR'd half-finished. If your scanner pauses longer than 30 s between
 pages, raise `PAPERLESS_OCR_STABLE_SEC`.
 
+**Host the inbox on the Mac itself** (not on a NAS): the worker runs on the Mac and reads
+the folder locally, and the "still being written" guard uses `lsof`, which only sees writes
+on the Mac. An inbox on a NAS would need mounting on the Mac and would fall back to the
+weaker mtime-only settle. Files here are temporary (deleted after upload), so disk use is nil.
+
+**Double-sided originals (simplex ADF, e.g. GX2050).** The GX2050's ADF scans one side per
+pass. Scan the fronts, flip the stack, scan the backs — send **both passes to the
+`<inbox>/duplex/` subfolder**. The gateway interleaves them (backs reversed) into one
+page-ordered document, then OCRs + uploads it. If pages come out mis-ordered (depends on how
+you flip), set `PAPERLESS_OCR_DUPLEX_REVERSE=0`. A single file left alone in `duplex/` for
+`PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC` (30 min) is treated as single-sided.
+
 **Ad-hoc CLI:** `paperless-ocr in.pdf out.pdf -l ru-RU,en-US` (also accepts images).
 Verify with `pdftotext out.pdf -` → clean Unicode text.
 
