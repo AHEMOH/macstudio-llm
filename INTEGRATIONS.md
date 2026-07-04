@@ -281,6 +281,17 @@ Two workflows run together:
   `ocr:done`, metadata preserved), and retags the old one `ocr:superseded` (kept unless
   `PAPERLESS_OCR_DELETE_ORIGINAL=1`).
 
+**Scan straight into the inbox (SMB).** A network scanner (e.g. Canon MAXIFY GX2050 →
+"Scan to shared folder / SMB") can drop files directly into `PAPERLESS_OCR_INBOX`:
+1. macOS **System Settings → General → Sharing → File Sharing** on; add the inbox folder;
+   give the scanner's SMB login (ideally the same `mac` user) read/write.
+2. Point the scanner at `smb://<mac>/…/paperless-ocr/inbox` and scan a **multi-page PDF**
+   (one job = one file).
+The gateway only picks up a file once it is **fully written** — unchanged for
+`PAPERLESS_OCR_STABLE_SEC` (default 30 s) **and** no longer held open by `smbd`. So a slow
+50-page scan is never OCR'd half-finished. If your scanner pauses longer than 30 s between
+pages, raise `PAPERLESS_OCR_STABLE_SEC`.
+
 **Ad-hoc CLI:** `paperless-ocr in.pdf out.pdf -l ru-RU,en-US` (also accepts images).
 Verify with `pdftotext out.pdf -` → clean Unicode text.
 

@@ -203,6 +203,7 @@ CONFIG_KEYS=(
   PAPERLESS_OCR_SUPERSEDED_TAG
   PAPERLESS_OCR_DELETE_ORIGINAL
   PAPERLESS_OCR_POLL_SEC
+  PAPERLESS_OCR_STABLE_SEC
   AUTO_ACCEPT
 )
 # Bash-3.2 safe (macOS ships /bin/bash 3.2): lookup functions instead of
@@ -346,6 +347,7 @@ config_default() {
     PAPERLESS_OCR_SUPERSEDED_TAG) echo ocr:superseded ;;
     PAPERLESS_OCR_DELETE_ORIGINAL) echo 0 ;;
     PAPERLESS_OCR_POLL_SEC)      echo 60 ;;
+    PAPERLESS_OCR_STABLE_SEC)    echo 30 ;;
     AUTO_ACCEPT)                 echo 0 ;;
     *)                           echo "" ;;
   esac
@@ -455,6 +457,7 @@ config_hint() {
     PAPERLESS_OCR_SUPERSEDED_TAG) echo "Tag applied to the OLD document after a retro-fix copy is created" ;;
     PAPERLESS_OCR_DELETE_ORIGINAL) echo "1 = delete the old paperless doc after retro-fix (default 0 = keep it, tagged superseded)" ;;
     PAPERLESS_OCR_POLL_SEC)      echo "Retro-fix poll interval in seconds (gateway polls every min(10,this))" ;;
+    PAPERLESS_OCR_STABLE_SEC)    echo "Gateway waits until an inbox file is unmodified AND not held open (SMB) for this many seconds before OCR — prevents processing half-scanned files. Raise if your scanner pauses long between pages (default 30)" ;;
     *)                           echo "" ;;
   esac
 }

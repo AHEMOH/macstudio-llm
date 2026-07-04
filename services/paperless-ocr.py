@@ -27,6 +27,7 @@ macstudio.conf via the wrapper's environment. Also usable as a one-shot CLI:
 import io
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -59,8 +60,13 @@ SUPERSEDED_TAG = os.environ.get("PAPERLESS_OCR_SUPERSEDED_TAG", "ocr:superseded"
 DELETE_ORIGINAL = os.environ.get("PAPERLESS_OCR_DELETE_ORIGINAL", "0") == "1"
 POLL = int(os.environ.get("PAPERLESS_OCR_POLL_SEC", "60"))
 GATEWAY_POLL = min(10, POLL)
+# A scanned file (esp. a slow 50-page scan over SMB) must be FULLY written before
+# we touch it. A file counts as "settled" only when it has not been modified for
+# STABLE_SEC seconds AND no process still holds it open (e.g. smbd mid-transfer).
+STABLE_SEC = int(os.environ.get("PAPERLESS_OCR_STABLE_SEC", "30"))
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".webp"}
+ACCEPT_EXTS = {".pdf"} | IMAGE_EXTS
 
 
 def log(msg):
@@ -178,12 +184,41 @@ def _upload(path, title=None, tags=None, created=None, correspondent=None):
 
 
 # --------------------------------------------------------------------------- loops
+def _is_open(path):
+    """True if any process still holds `path` open (e.g. smbd writing a scan)."""
+    try:
+        r = subprocess.run(["/usr/sbin/lsof", "--", str(path)],
+                           capture_output=True, text=True, timeout=15)
+        return bool(r.stdout.strip())
+    except Exception:
+        return False  # lsof missing/slow -> fall back to the mtime-quiet check
+
+
+def _is_settled(path):
+    """True once a file is safe to process: non-empty, quiet for STABLE_SEC, not
+    held open. This is what prevents a half-transferred 50-page scan from being
+    OCR'd mid-write."""
+    try:
+        st = path.stat()
+    except OSError:
+        return False
+    if st.st_size == 0:
+        return False
+    if time.time() - st.st_mtime < STABLE_SEC:
+        return False
+    return not _is_open(path)
+
+
 def gateway_once():
     if not INBOX.exists():
         return
     for p in sorted(INBOX.iterdir()):
         if p.is_dir() or p.name.startswith("."):
             continue
+        if p.suffix.lower() not in ACCEPT_EXTS:
+            continue  # ignore scanner temp/partial files with other extensions
+        if not _is_settled(p):
+            continue  # still being written (or too fresh) — try again next poll
         try:
             ARCHIVE.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(p), str(ARCHIVE / p.name))
