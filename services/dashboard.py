@@ -913,6 +913,30 @@ _ui_cache = {"mtime": 0.0, "body": b""}
 _ui_lock = threading.Lock()
 
 
+def api_links():
+    """Useful endpoints/links, computed from the live config. The browser builds the
+    hrefs from its own hostname so they point at the same Mac the dashboard is on."""
+    c = conf()
+
+    def port(k, d):
+        try:
+            return int(c.get(k, d))
+        except ValueError:
+            return int(d)
+
+    return {
+        "litellm_port": port("LITELLM_PORT", 11434),
+        "docling_port": port("DOCLING_PUBLIC_PORT", 5001) if c.get("INSTALL_DOCLING", "1") == "1" else 0,
+        "infinity_port": port("INFINITY_PUBLIC_PORT", 5004) if c.get("INSTALL_EMBED", "1") == "1" else 0,
+        "paperless_ocr": c.get("INSTALL_PAPERLESS_OCR", "0") == "1",
+        "smb_shared": c.get("PAPERLESS_OCR_SMB_SHARE", "0") == "1",
+        "smb_name": c.get("PAPERLESS_OCR_SMB_NAME", "inbox"),
+        "duplex_sub": c.get("PAPERLESS_OCR_DUPLEX_SUBDIR", "duplex"),
+        "paperless_url": c.get("PAPERLESS_OCR_URL", ""),
+        "repo": "https://github.com/AHEMOH/macstudio-llm",
+    }
+
+
 def _po_dirs():
     c = conf()
     inbox = c.get("PAPERLESS_OCR_INBOX", "/Users/mac/paperless-ocr/inbox")
@@ -961,6 +985,9 @@ def api_paperless_ocr():
         "configured": bool(c.get("PAPERLESS_OCR_URL", "")) and bool(c.get("PAPERLESS_OCR_TOKEN", "")),
         "langs": c.get("PAPERLESS_OCR_LANGS", "").replace("\\", ""),
         "stable_sec": stable,
+        "smb_shared": c.get("PAPERLESS_OCR_SMB_SHARE", "0") == "1",
+        "smb_name": c.get("PAPERLESS_OCR_SMB_NAME", "inbox"),
+        "duplex_sub": c.get("PAPERLESS_OCR_DUPLEX_SUBDIR", "duplex"),
         "folders": {
             "inbox": _po_list(d["inbox"], stable, True),
             "duplex": _po_list(d["duplex"], stable, True),
@@ -1116,6 +1143,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(api_telemetry())
         elif path == "/api/paperless-ocr":
             self.send_json(api_paperless_ocr())
+        elif path == "/api/links":
+            self.send_json(api_links())
         elif path == "/api/config":
             self.send_json({"schema": config_schema(), "apply_pending": apply_pending()})
         elif path == "/api/jobs":

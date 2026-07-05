@@ -784,6 +784,30 @@ function renderChart(el, cfg) {
 /* =========================================================================
    Ansicht: Übersicht
    ========================================================================= */
+async function renderLinks() {
+  let L; try { L = await api("/api/links"); } catch (e) { return; }
+  const H = location.hostname || "mac.home.arpa";
+  const copyBtn = t => `<button class="small" data-copy="${esc(t)}">Kopieren</button>`;
+  const copyCard = (label, text, sub) => `<div class="card"><div class="label">${esc(label)}</div>
+    <div class="value" style="font-size:14px;word-break:break-all"><code>${esc(text)}</code></div>
+    <div class="sub">${copyBtn(text)}${sub ? " · " + esc(sub) : ""}</div></div>`;
+  const linkCard = (label, href, sub) => `<div class="card"><div class="label">${esc(label)}</div>
+    <div class="value" style="font-size:15px;word-break:break-all"><a href="${esc(href)}" target="_blank" rel="noopener">${esc(href)}</a></div>
+    ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}</div>`;
+  const cards = [];
+  cards.push(copyCard("OpenAI-API (LiteLLM)", `http://${H}:${L.litellm_port}/v1`, "main · main-fast · ocr · embed · rerank"));
+  cards.push(copyCard("Anthropic-API", `http://${H}:${L.litellm_port}`, "/v1/messages"));
+  if (L.docling_port) cards.push(linkCard("docling (OCR / RAG)", `http://${H}:${L.docling_port}`, "UI + REST /v1/convert · /v1/chunk"));
+  if (L.paperless_ocr && L.smb_shared) cards.push(copyCard("Paperless-OCR Inbox (SMB)", `\\\\${H}\\${L.smb_name}`, `Duplex: \\\\${H}\\${L.smb_name}\\${L.duplex_sub}`));
+  if (L.paperless_url) cards.push(linkCard("paperless-ngx", L.paperless_url, "Dokumentenarchiv"));
+  cards.push(linkCard("Dokumentation (GitHub)", L.repo, "README · INTEGRATIONS.md · docs/rag-pipeline.md"));
+  $("#links").innerHTML = cards.join("");
+  $$("#links [data-copy]").forEach(b => b.onclick = async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); toast("kopiert"); }
+    catch (e) { toast("Kopieren nicht möglich", true); }
+  });
+}
+
 function viewUebersicht() {
   $("#view").innerHTML = `
     <div class="cards" id="tiles"></div>
@@ -792,7 +816,11 @@ function viewUebersicht() {
       <div class="chart"><h3>Temperaturen (°C)</h3><div id="chTemp"></div></div>
       <div class="chart"><h3>GPU-Auslastung (%)</h3><div id="chGpu"></div></div>
       <div class="chart"><h3>Speicher (GB)</h3><div id="chMem"></div></div>
-    </div>`;
+    </div>
+    <div class="section-title" style="margin-top:20px"><h2>Endpunkte &amp; Links</h2></div>
+    <div class="cards" id="links"></div>`;
+
+  renderLinks();
 
   const renderTiles = st => {
     if (!st) return;
@@ -1156,7 +1184,14 @@ function viewPaperless() {
     }
     $("#poMeta").textContent = (d.configured ? "aktiv" : "wartet auf URL/Token")
       + " · Sprachen: " + (d.langs || "–") + " · Ruhezeit: " + d.stable_sec + " s";
-    $("#poBody").innerHTML = Object.keys(FOLDERS).map(key => {
+    const H = location.hostname || "mac.home.arpa";
+    const smbCard = d.smb_shared ? `<div class="card" style="margin-bottom:14px">
+      <div class="label">SMB-Freigabe für den Scanner (Anmeldung: Benutzer <code>mac</code>)</div>
+      <div class="value" style="font-size:15px;word-break:break-all"><code>\\\\${esc(H)}\\${esc(d.smb_name)}</code>
+        <button class="small" data-copy="\\\\${esc(H)}\\${esc(d.smb_name)}">Kopieren</button></div>
+      <div class="sub">Doppelseitig in den Unterordner <code>\\\\${esc(H)}\\${esc(d.smb_name)}\\${esc(d.duplex_sub)}</code></div></div>`
+      : `<div class="card" style="margin-bottom:14px"><div class="sub">SMB-Freigabe aus. In den Einstellungen <code>PAPERLESS_OCR_SMB_SHARE=1</code> setzen und anwenden, um den Inbox-Ordner fürs Netzwerk freizugeben.</div></div>`;
+    $("#poBody").innerHTML = smbCard + Object.keys(FOLDERS).map(key => {
       const [title, isInbox] = FOLDERS[key];
       const files = d.folders[key] || [];
       const rows = files.length ? files.map(f => {
@@ -1174,7 +1209,7 @@ function viewPaperless() {
           <thead><tr><th>Datei</th><th>Größe</th><th>Alter</th><th>Status</th><th>Aktionen</th></tr></thead>
           <tbody>${rows}</tbody></table></div></div>`;
     }).join("");
-    $$("#poBody button").forEach(btn => {
+    $$("#poBody button[data-act]").forEach(btn => {
       btn.onclick = async () => {
         const act = btn.dataset.act, folder = btn.dataset.f, name = btn.dataset.n;
         if (act === "delete" && !await confirmDlg("Datei löschen?", "„"+name+"“ wird endgültig gelöscht.", "Ja, löschen")) return;
@@ -1184,6 +1219,10 @@ function viewPaperless() {
           poRefresh();
         } catch (e) { toast(e.message, true); }
       };
+    });
+    $$("#poBody [data-copy]").forEach(b => b.onclick = async () => {
+      try { await navigator.clipboard.writeText(b.dataset.copy); toast("kopiert"); }
+      catch (e) { toast("Kopieren nicht möglich", true); }
     });
   };
 
