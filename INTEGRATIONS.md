@@ -120,6 +120,50 @@ curl -s -H "Authorization: Bearer $TOKEN" -X POST http://mac.home.arpa:8090/api/
 
 ---
 
+## Remote desktop (VNC + browser) — `INSTALL_REMOTE` / `INSTALL_NOVNC`
+
+The Mac is headless, but sometimes you need the **graphical desktop** — a GUI app,
+System Settings, a login prompt. `INSTALL_REMOTE` (default **on**) turns on macOS'
+built-in **Screen Sharing** (VNC on `:5900`); `INSTALL_NOVNC` (default **on**) adds a
+tiny browser bridge so you don't even need a client. Both use the **same password**,
+auto-generated once into `VNC_PASSWORD` in `/usr/local/etc/macstudio.conf`
+(plaintext, LAN-only — like `DASHBOARD_TOKEN`/`MQTT_PASS`). Read it with:
+
+```bash
+sudo sed -n "s/^VNC_PASSWORD=//p" /usr/local/etc/macstudio.conf | tr -d "'"
+```
+
+**From Windows (VNC client):** install RealVNC Viewer or TightVNC Viewer, connect to
+**`mac.home.arpa:5900`**, enter the `VNC_PASSWORD`. (macOS Screen Sharing / RealVNC also
+speak Apple auth; the legacy VNC password is what lets *any* client — incl. TightVNC and
+noVNC — in.)
+
+**From a browser (no client):** open **`http://mac.home.arpa:6080/vnc.html`**
+(`NOVNC_PORT`, default 6080) → **Connect** → enter the `VNC_PASSWORD`. This is
+[noVNC](https://novnc.com) served by `websockify` (~30 MB, always-on) bridging to `:5900`;
+`screensharingd` itself only spawns while a session is open, so the RAM cost is negligible
+and never touches the model budget.
+
+**RAM:** websockify ~30 MB idle; Screen Sharing ~0 idle (on-demand). It does **not**
+count against the "one big model" / 30 GB-wired budget.
+
+**Headless notes:**
+- **Resolution:** attach an **HDMI dummy plug** (or a real monitor) so macOS renders a
+  usable framebuffer — a fully displayless Mac defaults to a tiny resolution over VNC.
+- **Login window vs desktop:** without auto-login, VNC shows the **login window** after a
+  reboot; log in over VNC to reach the desktop. To land straight on the desktop, enable
+  auto-login manually (System Settings → Users & Groups → *Automatically log in as* — note
+  it stores the login password locally).
+- **FileVault:** Screen Sharing only starts **after** boot reaches the macOS login window,
+  so with FileVault on you can't do the pre-boot disk unlock over VNC — unlock it locally
+  (or keep FileVault off on a headless LAN server) so it can boot to the login window.
+- **Turning it off:** toggling `INSTALL_REMOTE=0` stops the noVNC bridge but does **not**
+  disable macOS Screen Sharing (one-way, like the SMB share). Turn it off in
+  System Settings → General → Sharing → Screen Sharing, or run
+  `sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -deactivate -configure -access -off`.
+
+---
+
 ## Mac Studio in Home Assistant (MQTT)
 
 Besides serving LLMs, the Mac can publish its **runtime telemetry** to your MQTT

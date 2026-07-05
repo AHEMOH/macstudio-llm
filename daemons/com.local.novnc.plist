@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.local.novnc</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/libexec/start-novnc.sh</string>
+  </array>
+  <!-- websockify needs no root: it binds a high port and connects to the local
+       VNC server on :5900. Run as the user so it never holds elevated privileges. -->
+  <key>UserName</key><string>@TARGET_USER@</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <!-- Port in the plist (not just the wrapper/conf) so a NOVNC_PORT change
+       produces a plist diff -> automatic bootout+bootstrap. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NOVNC_PORT</key><string>@NOVNC_PORT@</string>
+  </dict>
+  <key>StandardOutPath</key><string>/var/log/macstudio/novnc.log</string>
+  <key>StandardErrorPath</key><string>/var/log/macstudio/novnc.log</string>
+</dict>
+</plist>

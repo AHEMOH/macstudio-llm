@@ -111,6 +111,12 @@ raise a couple of config keys.
   tails, and power/thermal/GPU/RAM charts. Token-protected (auto-generated
   `DASHBOARD_TOKEN` in `macstudio.conf`). The SSH TUI stays fully authoritative
   — the dashboard only calls the same `setup.sh` verbs.
+- **Remote desktop** (on by default, `INSTALL_REMOTE=1` + `INSTALL_NOVNC=1`):
+  control the headless macOS **desktop** over the LAN — macOS Screen Sharing (VNC
+  on `:5900`) for a Windows client (RealVNC/TightVNC), plus a browser bridge at
+  `http://mac.home.arpa:6080/vnc.html` (noVNC, no client needed). One
+  auto-generated `VNC_PASSWORD`; ~30 MB idle, so it never touches the model
+  budget. See [INTEGRATIONS.md](INTEGRATIONS.md#remote-desktop-vnc--browser--install_remote--install_novnc).
 - **One script** (`setup.sh`): install, update, settings, **model manager**,
   service control, clean-up, uninstall. TUI by default, `--apply` for
   non-interactive runs. Idempotent — re-run safely any time.
