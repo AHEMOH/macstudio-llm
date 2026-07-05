@@ -247,6 +247,7 @@
   <a href="#uebersicht" data-view="uebersicht">Übersicht</a>
   <a href="#modelle" data-view="modelle">Modelle</a>
   <a href="#dienste" data-view="dienste">Dienste</a>
+  <a href="#paperless" data-view="paperless">Paperless-OCR</a>
   <a href="#einstellungen" data-view="einstellungen">Einstellungen</a>
   <a href="#logs" data-view="logs">Logs</a>
 </nav>
@@ -556,7 +557,7 @@ $("#logoutBtn").onclick = async () => {
    Router & Polling-Verwaltung
    ========================================================================= */
 const VIEWS = { uebersicht: viewUebersicht, modelle: viewModelle, dienste: viewDienste,
-                einstellungen: viewEinstellungen, logs: viewLogs };
+                paperless: viewPaperless, einstellungen: viewEinstellungen, logs: viewLogs };
 
 function clearViewTimers() {
   state.timers.forEach(t => clearInterval(t));
@@ -1129,6 +1130,68 @@ function viewDienste() {
 }
 
 /* =========================================================================
+   Ansicht: Paperless-OCR (Ordner-Steuerung)
+   ========================================================================= */
+function viewPaperless() {
+  $("#view").innerHTML = `
+    <div class="section-title"><h2>Paperless-OCR</h2><div class="spacer"></div>
+      <span class="muted" id="poMeta"></span></div>
+    <div id="poBody" class="skeleton">Lade…</div>`;
+
+  const FOLDERS = {
+    inbox:     ["Inbox – neue Scans", true],
+    duplex:    ["Duplex – Vorder-/Rückseiten", true],
+    originals: ["Originale – Archiv", false],
+    errors:    ["Fehler", false],
+  };
+  const fmtSize = b => b >= 1048576 ? (b/1048576).toFixed(1)+" MB" : Math.max(1,Math.round(b/1024))+" KB";
+  const fmtAge = s => s >= 3600 ? Math.floor(s/3600)+" h" : s >= 60 ? Math.floor(s/60)+" min" : s+" s";
+
+  const render = d => {
+    if (!d) return;
+    if (!d.enabled) {
+      $("#poMeta").textContent = "";
+      $("#poBody").innerHTML = `<div class="card">Dienst nicht aktiviert. Unter <b>Einstellungen</b> <code>INSTALL_PAPERLESS_OCR=1</code> setzen, URL + Token eintragen und anwenden.</div>`;
+      return;
+    }
+    $("#poMeta").textContent = (d.configured ? "aktiv" : "wartet auf URL/Token")
+      + " · Sprachen: " + (d.langs || "–") + " · Ruhezeit: " + d.stable_sec + " s";
+    $("#poBody").innerHTML = Object.keys(FOLDERS).map(key => {
+      const [title, isInbox] = FOLDERS[key];
+      const files = d.folders[key] || [];
+      const rows = files.length ? files.map(f => {
+        const st = f.status === "pending" ? `<span class="state sleeping"><span class="dot"></span>wird geschrieben</span>`
+                 : f.status === "ready"   ? `<span class="state running"><span class="dot"></span>bereit</span>` : "–";
+        const acts = [];
+        if (key === "errors")    acts.push(`<button class="small" data-act="requeue" data-f="${esc(key)}" data-n="${esc(f.name)}">Erneut versuchen</button>`);
+        if (key === "originals") acts.push(`<button class="small" data-act="requeue" data-f="${esc(key)}" data-n="${esc(f.name)}">Neu OCR</button>`);
+        acts.push(`<button class="small danger" data-act="delete" data-f="${esc(key)}" data-n="${esc(f.name)}">Löschen</button>`);
+        return `<tr><td>${esc(f.name)}</td><td class="num">${fmtSize(f.size)}</td><td class="num">${fmtAge(f.age)}</td><td>${st}</td><td><div class="actions">${acts.join("")}</div></td></tr>`;
+      }).join("") : `<tr><td colspan="5" class="muted">leer</td></tr>`;
+      return `<div class="card" style="margin-bottom:14px">
+        <div class="section-title" style="margin:0 0 8px"><h3 style="margin:0">${esc(title)} <span class="muted">(${files.length})</span></h3></div>
+        <div class="tablewrap"><table>
+          <thead><tr><th>Datei</th><th>Größe</th><th>Alter</th><th>Status</th><th>Aktionen</th></tr></thead>
+          <tbody>${rows}</tbody></table></div></div>`;
+    }).join("");
+    $$("#poBody button").forEach(btn => {
+      btn.onclick = async () => {
+        const act = btn.dataset.act, folder = btn.dataset.f, name = btn.dataset.n;
+        if (act === "delete" && !await confirmDlg("Datei löschen?", "„"+name+"“ wird endgültig gelöscht.", "Ja, löschen")) return;
+        try {
+          const r = await api("/api/paperless-ocr/action", { method:"POST", body:{ folder, name, action:act } });
+          toast(name + ": " + (r.msg || "ok"));
+          poRefresh();
+        } catch (e) { toast(e.message, true); }
+      };
+    });
+  };
+
+  async function poRefresh() { try { render(await api("/api/paperless-ocr")); } catch (e) { /* leer */ } }
+  every(5000, poRefresh);
+}
+
+/* =========================================================================
    Ansicht: Einstellungen
    ========================================================================= */
 const SET_GROUPS = [
@@ -1145,6 +1208,7 @@ const SET_GROUPS = [
   ["Exporter & MQTT", k => k.includes("EXPORTER") || k.startsWith("MQTT_") || k === "SILICON_SAMPLE_INTERVAL_MS"],
   ["Watchdog & Wartung", k => k.startsWith("WATCHDOG_") || k.startsWith("INFERENCE_") || k.startsWith("AUTOUPDATE_")],
   ["Dashboard", k => k.startsWith("DASHBOARD_")],
+  ["Paperless-OCR", k => k.startsWith("PAPERLESS_OCR")],
   ["System & Pfade", k => true],
 ];
 

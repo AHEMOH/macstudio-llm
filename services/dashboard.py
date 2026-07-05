@@ -913,6 +913,86 @@ _ui_cache = {"mtime": 0.0, "body": b""}
 _ui_lock = threading.Lock()
 
 
+def _po_dirs():
+    c = conf()
+    inbox = c.get("PAPERLESS_OCR_INBOX", "/Users/mac/paperless-ocr/inbox")
+    parent = os.path.dirname(inbox)
+    return {
+        "inbox": inbox,
+        "duplex": os.path.join(inbox, c.get("PAPERLESS_OCR_DUPLEX_SUBDIR", "duplex")),
+        "originals": c.get("PAPERLESS_OCR_ARCHIVE", os.path.join(parent, "originals")),
+        "errors": c.get("PAPERLESS_OCR_ERRORS", os.path.join(parent, "errors")),
+    }
+
+
+def _po_list(path, stable_sec, mark_pending):
+    out = []
+    try:
+        names = sorted(os.listdir(path))
+    except OSError:
+        return out
+    now = time.time()
+    for n in names:
+        if n.startswith("."):
+            continue
+        fp = os.path.join(path, n)
+        if not os.path.isfile(fp):
+            continue
+        try:
+            st = os.stat(fp)
+        except OSError:
+            continue
+        item = {"name": n, "size": st.st_size, "age": int(now - st.st_mtime)}
+        if mark_pending:
+            item["status"] = "pending" if item["age"] < stable_sec else "ready"
+        out.append(item)
+    return out
+
+
+def api_paperless_ocr():
+    c = conf()
+    try:
+        stable = int(c.get("PAPERLESS_OCR_STABLE_SEC", "30"))
+    except ValueError:
+        stable = 30
+    d = _po_dirs()
+    return {
+        "enabled": c.get("INSTALL_PAPERLESS_OCR", "0") == "1",
+        "configured": bool(c.get("PAPERLESS_OCR_URL", "")) and bool(c.get("PAPERLESS_OCR_TOKEN", "")),
+        "langs": c.get("PAPERLESS_OCR_LANGS", "").replace("\\", ""),
+        "stable_sec": stable,
+        "folders": {
+            "inbox": _po_list(d["inbox"], stable, True),
+            "duplex": _po_list(d["duplex"], stable, True),
+            "originals": _po_list(d["originals"], stable, False),
+            "errors": _po_list(d["errors"], stable, False),
+        },
+    }
+
+
+def po_action(folder, name, action):
+    """Delete or re-queue a single paperless-ocr file. Path-traversal-safe: the target
+    must be a regular file whose parent is exactly the configured folder."""
+    dirs = _po_dirs()
+    if folder not in dirs:
+        return (False, "unbekannter Ordner")
+    base = os.path.realpath(dirs[folder])
+    target = os.path.realpath(os.path.join(base, os.path.basename(name or "")))
+    if os.path.dirname(target) != base or not os.path.isfile(target):
+        return (False, "ungültige Datei")
+    try:
+        if action == "delete":
+            os.remove(target)
+            return (True, "gelöscht")
+        if action == "requeue":
+            inbox = os.path.realpath(dirs["inbox"])
+            os.rename(target, os.path.join(inbox, os.path.basename(name)))
+            return (True, "in Inbox verschoben")
+    except OSError as e:
+        return (False, str(e))
+    return (False, "unbekannte Aktion")
+
+
 def ui_body():
     with _ui_lock:
         try:
@@ -1034,6 +1114,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(api_models())
         elif path == "/api/telemetry":
             self.send_json(api_telemetry())
+        elif path == "/api/paperless-ocr":
+            self.send_json(api_paperless_ocr())
         elif path == "/api/config":
             self.send_json({"schema": config_schema(), "apply_pending": apply_pending()})
         elif path == "/api/jobs":
@@ -1133,6 +1215,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": err}, code=400)
         elif path.startswith("/api/services/"):
             self.handle_service_action(path)
+        elif path == "/api/paperless-ocr/action":
+            ok, msg = po_action(body.get("folder"), body.get("name"), body.get("action"))
+            self.send_json({"ok": ok, "msg": msg}, code=200 if ok else 400)
         else:
             self.send_json({"error": "not found"}, code=404)
 
