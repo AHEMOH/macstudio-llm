@@ -205,6 +205,8 @@ CONFIG_KEYS=(
   PAPERLESS_OCR_DELETE_ORIGINAL
   PAPERLESS_OCR_POLL_SEC
   PAPERLESS_OCR_STABLE_SEC
+  PAPERLESS_OCR_SMB_SHARE
+  PAPERLESS_OCR_SMB_NAME
   PAPERLESS_OCR_DUPLEX_SUBDIR
   PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC
   PAPERLESS_OCR_DUPLEX_REVERSE
@@ -353,6 +355,8 @@ config_default() {
     PAPERLESS_OCR_DELETE_ORIGINAL) echo 0 ;;
     PAPERLESS_OCR_POLL_SEC)      echo 60 ;;
     PAPERLESS_OCR_STABLE_SEC)    echo 30 ;;
+    PAPERLESS_OCR_SMB_SHARE)     echo 0 ;;
+    PAPERLESS_OCR_SMB_NAME)      echo inbox ;;
     PAPERLESS_OCR_DUPLEX_SUBDIR) echo duplex ;;
     PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC) echo 1800 ;;
     PAPERLESS_OCR_DUPLEX_REVERSE) echo 1 ;;
@@ -467,6 +471,8 @@ config_hint() {
     PAPERLESS_OCR_DELETE_ORIGINAL) echo "1 = delete the old paperless doc after retro-fix (default 0 = keep it, tagged superseded)" ;;
     PAPERLESS_OCR_POLL_SEC)      echo "Retro-fix poll interval in seconds (gateway polls every min(10,this))" ;;
     PAPERLESS_OCR_STABLE_SEC)    echo "Gateway waits until an inbox file is unmodified AND not held open (SMB) for this many seconds before OCR — prevents processing half-scanned files. Raise if your scanner pauses long between pages (default 30)" ;;
+    PAPERLESS_OCR_SMB_SHARE)     echo "1 = --apply enables macOS File Sharing (smbd) and shares the inbox folder over SMB (no guest) so a network scanner can drop files in. Default 0 (off). Toggling back to 0 does NOT remove the share (do that with 'sudo sharing -r <name>')" ;;
+    PAPERLESS_OCR_SMB_NAME)      echo "SMB share name for the inbox folder (Windows: \\\\<mac>\\<name>). Default 'inbox'" ;;
     PAPERLESS_OCR_DUPLEX_SUBDIR) echo "Inbox subfolder for double-sided jobs: scan fronts then backs here; the two files are interleaved into one document (for simplex ADFs). Default 'duplex'" ;;
     PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC) echo "If only one file waits in the duplex folder this long, treat it as single-sided (the backs pass never came). Default 1800 (30 min)" ;;
     PAPERLESS_OCR_DUPLEX_REVERSE) echo "1 = reverse the 2nd (backs) file when interleaving (normal after flipping the stack). Set 0 if pages come out mis-ordered" ;;
@@ -971,6 +977,28 @@ ensure_paperless_ocr_venv() {
   else
     warn "paperless-ocr pip install succeeded but ocrmac/pymupdf/requests won't import"
     return 1
+  fi
+}
+
+ensure_paperless_ocr_share() {
+  # Opt-in: enable macOS File Sharing (smbd) and share the inbox folder over SMB so a
+  # network scanner (e.g. Canon MAXIFY) can drop files straight into the gateway. Only
+  # ADDS the share; never removes it (toggling SMB_SHARE=0 leaves it — remove manually
+  # with `sudo sharing -r <name>`). Idempotent.
+  { [ "${INSTALL_PAPERLESS_OCR:-0}" = 1 ] && [ "${PAPERLESS_OCR_SMB_SHARE:-0}" = 1 ]; } || return 0
+  local inbox name
+  inbox="${PAPERLESS_OCR_INBOX:-$TARGET_HOME/paperless-ocr/inbox}"
+  name="${PAPERLESS_OCR_SMB_NAME:-inbox}"
+  /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$inbox" 2>/dev/null || true
+  # Enable + start the SMB service (harmless if already on).
+  /bin/launchctl enable system/com.apple.smbd 2>/dev/null || true
+  /bin/launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.smbd.plist 2>/dev/null || true
+  if /usr/sbin/sharing -l 2>/dev/null | grep -qF "$inbox"; then
+    ok "SMB share for inbox already present ($inbox)"
+  elif /usr/sbin/sharing -a "$inbox" -S "$name" -n "$name" -s 001 -g 000 >/dev/null 2>&1; then
+    ok "SMB share '$name' → $inbox (SMB only, no guest)"
+  else
+    warn "could not add SMB share; run manually: sudo /usr/sbin/sharing -a '$inbox' -S $name -s 001 -g 000"
   fi
 }
 
@@ -1686,6 +1714,7 @@ apply_everything() {
   dbg "step: ensure_immich_venv";      ensure_immich_venv
   dbg "step: ensure_docling_venv";     ensure_docling_venv
   dbg "step: ensure_paperless_ocr_venv"; ensure_paperless_ocr_venv || true
+  dbg "step: ensure_paperless_ocr_share"; ensure_paperless_ocr_share || true
   dbg "step: ensure_python_venvs";     ensure_python_venvs || true
   dbg "step: ensure_ollama_dist";      ensure_ollama_dist || true
   dbg "step: ensure_model_catalog";    ensure_model_catalog
