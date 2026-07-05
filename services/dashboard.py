@@ -115,6 +115,7 @@ SERVICES = [
     ("com.local.weekly.autoupdate", "Wöchentliches Update",        "scheduled"),
     ("com.local.mqtt.bridge",       "MQTT-Bridge",                 "always"),
     ("com.local.dashboard",         "Web-Dashboard",               "always"),
+    ("com.local.novnc",             "Remote Desktop (noVNC)",      "always"),
     ("com.local.paperless.ocr",     "Paperless Apple-OCR",         "always"),
 ]
 ALL_LABELS = {lbl for lbl, _n, _k in SERVICES}
@@ -149,6 +150,7 @@ LABEL_LOG = {
     "com.local.weekly.autoupdate": "autoupdate.log",
     "com.local.mqtt.bridge": "mqtt-bridge.log",
     "com.local.dashboard": "dashboard.log",
+    "com.local.novnc": "novnc.log",
     "com.local.paperless.ocr": "paperless-ocr.log",
 }
 
@@ -248,6 +250,8 @@ def active_labels():
             keep = c.get("INSTALL_MQTT", "0") == "1"
         elif lbl == "com.local.dashboard":
             keep = c.get("INSTALL_DASHBOARD", "1") == "1"
+        elif lbl == "com.local.novnc":
+            keep = c.get("INSTALL_NOVNC", "1") == "1" and c.get("INSTALL_REMOTE", "1") == "1"
         elif lbl == "com.local.paperless.ocr":
             keep = c.get("INSTALL_PAPERLESS_OCR", "0") == "1"
         else:
@@ -928,6 +932,8 @@ def api_links():
         "litellm_port": port("LITELLM_PORT", 11434),
         "docling_port": port("DOCLING_PUBLIC_PORT", 5001) if c.get("INSTALL_DOCLING", "1") == "1" else 0,
         "infinity_port": port("INFINITY_PUBLIC_PORT", 5004) if c.get("INSTALL_EMBED", "1") == "1" else 0,
+        "vnc_enabled": c.get("INSTALL_REMOTE", "1") == "1",
+        "novnc_port": port("NOVNC_PORT", 6080) if (c.get("INSTALL_REMOTE", "1") == "1" and c.get("INSTALL_NOVNC", "1") == "1") else 0,
         "paperless_ocr": c.get("INSTALL_PAPERLESS_OCR", "0") == "1",
         "smb_shared": c.get("PAPERLESS_OCR_SMB_SHARE", "0") == "1",
         "smb_name": c.get("PAPERLESS_OCR_SMB_NAME", "inbox"),

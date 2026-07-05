@@ -798,6 +798,8 @@ async function renderLinks() {
   cards.push(copyCard("OpenAI-API (LiteLLM)", `http://${H}:${L.litellm_port}/v1`, "main · main-fast · ocr · embed · rerank"));
   cards.push(copyCard("Anthropic-API", `http://${H}:${L.litellm_port}`, "/v1/messages"));
   if (L.docling_port) cards.push(linkCard("docling (OCR / RAG)", `http://${H}:${L.docling_port}`, "UI + REST /v1/convert · /v1/chunk"));
+  if (L.novnc_port) cards.push(linkCard("Remote Desktop (Browser)", `http://${H}:${L.novnc_port}/vnc.html`, "noVNC · Passwort: VNC_PASSWORD"));
+  if (L.vnc_enabled) cards.push(copyCard("Remote Desktop (VNC-Client)", `${H}:5900`, "RealVNC / TightVNC · Passwort: VNC_PASSWORD"));
   if (L.paperless_ocr && L.smb_shared) cards.push(copyCard("Paperless-OCR Inbox (SMB)", `\\\\${H}\\${L.smb_name}`, `Duplex: \\\\${H}\\${L.smb_name}\\${L.duplex_sub}`));
   if (L.paperless_url) cards.push(linkCard("paperless-ngx", L.paperless_url, "Dokumentenarchiv"));
   cards.push(linkCard("Dokumentation (GitHub)", L.repo, "README · INTEGRATIONS.md · docs/rag-pipeline.md"));

@@ -52,6 +52,7 @@ ALWAYS_ON_LABELS=(
   com.local.weekly.autoupdate
   com.local.mqtt.bridge
   com.local.dashboard
+  com.local.novnc
   com.local.paperless.ocr
 )
 # On-demand backends (KeepAlive=false, RunAtLoad=false)
@@ -187,6 +188,10 @@ CONFIG_KEYS=(
   INSTALL_DASHBOARD
   DASHBOARD_PORT
   DASHBOARD_TOKEN
+  INSTALL_REMOTE
+  INSTALL_NOVNC
+  NOVNC_PORT
+  VNC_PASSWORD
   INSTALL_PAPERLESS_OCR
   PAPERLESS_OCR_URL
   PAPERLESS_OCR_TOKEN
@@ -337,6 +342,10 @@ config_default() {
     INSTALL_DASHBOARD)           echo 1 ;;
     DASHBOARD_PORT)              echo 8090 ;;
     DASHBOARD_TOKEN)             echo "" ;;
+    INSTALL_REMOTE)              echo 1 ;;
+    INSTALL_NOVNC)               echo 1 ;;
+    NOVNC_PORT)                  echo 6080 ;;
+    VNC_PASSWORD)                echo "" ;;
     INSTALL_PAPERLESS_OCR)       echo 0 ;;
     PAPERLESS_OCR_URL)           echo "" ;;
     PAPERLESS_OCR_TOKEN)         echo "" ;;
@@ -453,6 +462,10 @@ config_hint() {
     INSTALL_DASHBOARD)           echo "1 = run the web dashboard (browser control of models / services / settings / logs / telemetry) on :8090. Token-protected; the SSH TUI stays fully authoritative" ;;
     DASHBOARD_PORT)              echo "Public port the web dashboard binds (default 8090)" ;;
     DASHBOARD_TOKEN)             echo "Web-dashboard access token (browser login + 'Authorization: Bearer' for curl). Plaintext in this 644 conf — LAN-only, like MQTT_PASS. Empty = auto-generated on the next --apply; clear it + --apply to rotate (logs out all browsers)" ;;
+    INSTALL_REMOTE)              echo "1 = enable macOS built-in Screen Sharing (VNC on :5900) so you can control the headless desktop from a VNC client (Windows: RealVNC/TightVNC -> mac.home.arpa:5900). Sets a legacy VNC password (VNC_PASSWORD). One-way: toggling to 0 does NOT disable Screen Sharing (turn it off in System Settings, or 'kickstart -deactivate')" ;;
+    INSTALL_NOVNC)               echo "1 = also run the tiny browser VNC bridge (noVNC via websockify, ~30 MB) on NOVNC_PORT, so you can control the desktop from any browser at http://<mac>:<port>/vnc.html with NO client install. Needs INSTALL_REMOTE=1 (it bridges to the same :5900). Uses the same VNC_PASSWORD" ;;
+    NOVNC_PORT)                  echo "Public HTTP port the noVNC browser bridge binds (default 6080). Open http://<mac>:6080/vnc.html" ;;
+    VNC_PASSWORD)                echo "Screen Sharing / VNC password (max 8 chars — legacy VNC/DES limit). Plaintext in this 644 conf — LAN-only, like MQTT_PASS. Empty = auto-generated (8 random chars) on the next --apply; used by both the Windows VNC client and the browser (noVNC)" ;;
     INSTALL_PAPERLESS_OCR)       echo "1 = run the Apple-Vision searchable-PDF worker for paperless-ngx (gateway inbox + tag-triggered retro-fix). Opt-in (default 0): needs PAPERLESS_OCR_URL + _TOKEN" ;;
     PAPERLESS_OCR_URL)           echo "Base URL of your paperless-ngx (e.g. http://paperless.home.arpa:8000). Empty = worker idles" ;;
     PAPERLESS_OCR_TOKEN)         echo "paperless-ngx API token (Settings -> API token). Plaintext in this 644 conf — LAN-only, like MQTT_PASS. Empty = worker idles" ;;
@@ -677,6 +690,8 @@ load_config() {
         [ "${INSTALL_MQTT:-0}" = 1 ] || continue ;;
       com.local.dashboard)
         [ "${INSTALL_DASHBOARD:-1}" = 1 ] || continue ;;
+      com.local.novnc)
+        { [ "${INSTALL_NOVNC:-1}" = 1 ] && [ "${INSTALL_REMOTE:-1}" = 1 ]; } || continue ;;
       com.local.paperless.ocr)
         [ "${INSTALL_PAPERLESS_OCR:-0}" = 1 ] || continue ;;
     esac
@@ -737,6 +752,7 @@ label_log() {
     com.local.weekly.autoupdate) echo "$LOG_DIR/autoupdate.log" ;;
     com.local.mqtt.bridge)       echo "$LOG_DIR/mqtt-bridge.log" ;;
     com.local.dashboard)         echo "$LOG_DIR/dashboard.log" ;;
+    com.local.novnc)             echo "$LOG_DIR/novnc.log" ;;
     com.local.paperless.ocr)     echo "$LOG_DIR/paperless-ocr.log" ;;
     *) echo "$LOG_DIR/${1#com.local.}.log" ;;
   esac
@@ -1000,6 +1016,117 @@ ensure_paperless_ocr_share() {
   else
     warn "could not add SMB share; run manually: sudo /usr/sbin/sharing -a '$inbox' -S $name -s 001 -g 000"
   fi
+}
+
+# --- Remote desktop: Screen Sharing (VNC) + browser bridge (noVNC) ---------
+ensure_vnc_password() {
+  # Generate the Screen Sharing / VNC password ONCE (empty = not yet generated).
+  # Legacy VNC (DES) caps the password at 8 chars, so we generate exactly 8.
+  # Plaintext in the 644 conf on purpose (LAN-only), like DASHBOARD_TOKEN/MQTT_PASS.
+  # Idempotent: an existing password is never touched (rotate by clearing it + --apply,
+  # then re-run so ensure_screensharing_enabled pushes the new one into ARD).
+  [ "${INSTALL_REMOTE:-1}" = 1 ] || return 0
+  if [ -n "${VNC_PASSWORD:-}" ]; then
+    ok "VNC password present"
+    return 0
+  fi
+  local p
+  p=$(/usr/bin/openssl rand -base64 12 2>/dev/null | /usr/bin/tr -dc 'A-Za-z0-9' | /usr/bin/cut -c1-8)
+  if [ -z "$p" ] || [ "${#p}" -lt 8 ]; then
+    warn "openssl rand failed — VNC password NOT generated (Screen Sharing enable will be skipped)"
+    return 0
+  fi
+  save_config_key VNC_PASSWORD "$p"
+  export VNC_PASSWORD="$p"
+  ok "VNC password generated: $p  (also in $CONF_FILE)"
+}
+
+ensure_screensharing_enabled() {
+  # Opt-in: turn on macOS' built-in Screen Sharing (VNC on :5900) and set a legacy
+  # VNC password so non-Apple VNC clients (Windows RealVNC/TightVNC) — and the noVNC
+  # browser bridge — can authenticate. One-way like the SMB share: toggling
+  # INSTALL_REMOTE=0 does NOT disable it (turn it off in System Settings > General >
+  # Sharing, or run `.../kickstart -deactivate -configure -access -off`). Idempotent —
+  # re-running just re-pushes the same config/password.
+  [ "${INSTALL_REMOTE:-1}" = 1 ] || return 0
+  local ks=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
+  if [ ! -x "$ks" ]; then
+    warn "ARD kickstart not found at $ks — cannot enable Screen Sharing automatically."
+    warn "  Enable it manually: System Settings > General > Sharing > Screen Sharing."
+    return 1
+  fi
+  if [ -z "${VNC_PASSWORD:-}" ]; then
+    warn "VNC_PASSWORD empty — skipping Screen Sharing enable (set it in menu 4 + --apply)."
+    return 0
+  fi
+  if "$ks" -activate -configure -access -on \
+        -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "$VNC_PASSWORD" \
+        -restart -agent -privs -all >/dev/null 2>&1; then
+    ok "Screen Sharing (VNC :5900) enabled with legacy VNC password"
+  else
+    warn "kickstart returned non-zero enabling Screen Sharing; verify in System Settings > Sharing"
+  fi
+}
+
+ensure_novnc_venv() {
+  # Tiny venv for the browser VNC bridge (com.local.novnc): just websockify, which
+  # proxies the browser's WebSocket connection to the local VNC server on :5900.
+  { [ "${INSTALL_NOVNC:-1}" = 1 ] && [ "${INSTALL_REMOTE:-1}" = 1 ]; } || return 0
+  local venv="${VENV_DIR:-/Users/mac/.macstudio-venvs}/novnc"
+  if [ -x "$venv/bin/python" ] && "$venv/bin/python" -c 'import websockify' >/dev/null 2>&1; then
+    ok "novnc venv present at $venv"
+    return 0
+  fi
+  if [ ! -x /opt/homebrew/bin/python3.12 ]; then
+    warn "novnc bridge needs python@3.12, which is not installed yet."
+    warn "Re-run 'sudo bash setup.sh --apply' after Homebrew is available."
+    return 1
+  fi
+  log "Building novnc venv at $venv (websockify)"
+  /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$venv"
+  if [ ! -x "$venv/bin/python" ]; then
+    /usr/bin/sudo -u "$TARGET_USER" -H /opt/homebrew/bin/python3.12 -m venv "$venv"
+  fi
+  /usr/bin/sudo -u "$TARGET_USER" -H "$venv/bin/pip" install --upgrade pip wheel >/dev/null 2>&1 \
+    || warn "pip upgrade inside novnc venv returned non-zero"
+  if ! /usr/bin/sudo -u "$TARGET_USER" -H "$venv/bin/pip" install \
+        websockify >/var/log/macstudio/novnc-venv-install.log 2>&1; then
+    warn "novnc pip install failed; see /var/log/macstudio/novnc-venv-install.log"
+    return 1
+  fi
+  if "$venv/bin/python" -c 'import websockify' >/dev/null 2>&1; then
+    ok "novnc venv built at $venv"
+  else
+    warn "novnc pip install succeeded but websockify won't import"
+    return 1
+  fi
+}
+
+ensure_novnc_assets() {
+  # Download the noVNC HTML5 client (static files) once — websockify serves these as
+  # its --web root so the browser gets a full VNC UI at /vnc.html. Pinned release,
+  # fetched at --apply time (not vendored in git). Idempotent: skips if vnc.html exists.
+  { [ "${INSTALL_NOVNC:-1}" = 1 ] && [ "${INSTALL_REMOTE:-1}" = 1 ]; } || return 0
+  local ver=1.5.0 dir=/usr/local/share/novnc
+  if [ -f "$dir/vnc.html" ]; then
+    ok "noVNC web assets present at $dir"
+    return 0
+  fi
+  log "Downloading noVNC $ver web assets -> $dir"
+  /bin/mkdir -p "$dir"
+  local tgz; tgz=$(/usr/bin/mktemp)
+  if ! /usr/bin/curl -fsSL "https://github.com/novnc/noVNC/archive/refs/tags/v${ver}.tar.gz" -o "$tgz"; then
+    warn "could not download noVNC $ver (browser VNC will 404). Check network; re-run --apply."
+    /bin/rm -f "$tgz"; return 1
+  fi
+  if /usr/bin/tar -xzf "$tgz" -C "$dir" --strip-components=1 >/dev/null 2>&1; then
+    /bin/chmod -R a+rX "$dir"
+    ok "noVNC $ver extracted to $dir"
+  else
+    warn "noVNC tarball extraction failed"
+    /bin/rm -f "$tgz"; return 1
+  fi
+  /bin/rm -f "$tgz"
 }
 
 # --- MLX stack: venvs, model catalog, LiteLLM routing ----------------------
@@ -1484,6 +1611,10 @@ render_all_plists() {
       com.local.dashboard)
         # Web dashboard (browser control). Root daemon like the MQTT bridge.
         [ "${INSTALL_DASHBOARD:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
+      com.local.novnc)
+        # Browser VNC bridge (websockify -> :5900). Runs as TARGET_USER; needs the
+        # novnc venv + Screen Sharing enabled (INSTALL_REMOTE).
+        { [ "${INSTALL_NOVNC:-1}" = 1 ] && [ "${INSTALL_REMOTE:-1}" = 1 ]; } || { remove_plist "$label"; continue; } ;;
       com.local.paperless.ocr)
         # Apple-Vision searchable-PDF worker for paperless-ngx. Runs as TARGET_USER
         # (Vision needs a user context); needs its own venv (ocrmac/pymupdf/requests).
@@ -1715,6 +1846,10 @@ apply_everything() {
   dbg "step: ensure_docling_venv";     ensure_docling_venv
   dbg "step: ensure_paperless_ocr_venv"; ensure_paperless_ocr_venv || true
   dbg "step: ensure_paperless_ocr_share"; ensure_paperless_ocr_share || true
+  dbg "step: ensure_vnc_password";     ensure_vnc_password
+  dbg "step: ensure_screensharing";    ensure_screensharing_enabled || true
+  dbg "step: ensure_novnc_venv";       ensure_novnc_venv || true
+  dbg "step: ensure_novnc_assets";     ensure_novnc_assets || true
   dbg "step: ensure_python_venvs";     ensure_python_venvs || true
   dbg "step: ensure_ollama_dist";      ensure_ollama_dist || true
   dbg "step: ensure_model_catalog";    ensure_model_catalog
@@ -1802,6 +1937,14 @@ verify_and_summary() {
       "$(/bin/hostname 2>/dev/null || echo localhost)" "${DASHBOARD_PORT:-8090}" "$CONF_FILE"
   fi
 
+  if [ "${INSTALL_REMOTE:-1}" = 1 ]; then
+    local _host; _host=$(/bin/hostname 2>/dev/null || echo localhost)
+    printf "Remote desktop (VNC): %s:5900  (password: VNC_PASSWORD in %s)\n" "$_host" "$CONF_FILE"
+    if [ "${INSTALL_NOVNC:-1}" = 1 ]; then
+      printf "Remote desktop (browser): http://%s:%s/vnc.html\n" "$_host" "${NOVNC_PORT:-6080}"
+    fi
+  fi
+
   echo
 }
 
@@ -1853,13 +1996,17 @@ menu_select_services() {
       INSTALL_MQTT      "$(onoff_label "${INSTALL_MQTT:-0}")" "${MQTT_HOST:-<unset>}"
     printf "  8) %-18s [%s]   Web dashboard (browser control: models/services/settings/logs) :%s\n" \
       INSTALL_DASHBOARD "$(onoff_label "${INSTALL_DASHBOARD:-1}")" "${DASHBOARD_PORT:-8090}"
+    printf "  9) %-18s [%s]   Remote desktop: macOS Screen Sharing / VNC on :5900 (Windows client)\n" \
+      INSTALL_REMOTE    "$(onoff_label "${INSTALL_REMOTE:-1}")"
+    printf " 10) %-18s [%s]   Browser VNC bridge (noVNC) :%s/vnc.html — needs #9\n" \
+      INSTALL_NOVNC     "$(onoff_label "${INSTALL_NOVNC:-1}")" "${NOVNC_PORT:-6080}"
     echo
     if [ "${INSTALL_MLX:-1}" = 1 ] && [ "${INSTALL_OLLAMA:-0}" = 1 ] \
        && [ "${LITELLM_PORT:-11434}" = "${OLLAMA_PORT:-11434}" ]; then
       warn "MLX and Ollama are both on but share port ${LITELLM_PORT:-11434} — change OLLAMA_PORT in settings."
     fi
     echo "   a) Apply these choices now     q) Back (don't apply)"
-    read -r -p "Toggle which? [1-8 / a / q]: " c
+    read -r -p "Toggle which? [1-10 / a / q]: " c
     case "$c" in
       1) toggle_install_flag INSTALL_MLX       ;;
       2) toggle_install_flag INSTALL_OLLAMA    ;;
@@ -1869,6 +2016,8 @@ menu_select_services() {
       6) toggle_install_flag INSTALL_WATCHDOG  ;;
       7) toggle_install_flag INSTALL_MQTT      ;;
       8) toggle_install_flag INSTALL_DASHBOARD ;;
+      9) toggle_install_flag INSTALL_REMOTE    ;;
+      10) toggle_install_flag INSTALL_NOVNC    ;;
       a|A) apply_everything; pause_enter; return 0 ;;
       q|Q|"") return 0 ;;
       *) warn "unknown: $c"; sleep 1 ;;
