@@ -248,6 +248,85 @@ the idle timeout, freeing RAM for the main model.
 
 ---
 
+## paperless-ngx — Apple-Vision searchable-PDF OCR (`INSTALL_PAPERLESS_OCR`)
+
+A Mac-side worker (`com.local.paperless.ocr`, opt-in `INSTALL_PAPERLESS_OCR=1`) that
+produces **genuinely searchable PDFs** using **Apple Vision** OCR — the engine that, in
+testing, cleanly transcribed dense Russian/Cyrillic documents that Tesseract (paperless's
+built-in OCR) turns into mojibake and that GLM-OCR truncates. It adds an *invisible*,
+correctly-Unicode-encoded text layer (via `ocrmac` + PyMuPDF) without changing how the page
+looks. Runs on the Mac because Apple Vision is macOS-only; paperless-ngx can live anywhere
+reachable over HTTP.
+
+**Enable it** (edit `/usr/local/etc/macstudio.conf`, then `sudo bash setup.sh --apply`):
+```sh
+INSTALL_PAPERLESS_OCR=1
+PAPERLESS_OCR_URL=http://paperless.home.arpa:8000      # your paperless-ngx
+PAPERLESS_OCR_TOKEN=<paperless API token>              # Settings → API token
+PAPERLESS_OCR_LANGS=ru-RU,en-US                        # Apple Vision locales (multiple OK)
+# optional: PAPERLESS_OCR_RECMODE=accurate  PAPERLESS_OCR_DPI=200
+```
+
+**On the paperless-ngx side:** keep the default `PAPERLESS_OCR_MODE=skip` so paperless
+**indexes the text layer we provide** instead of re-running Tesseract, and create two tags:
+`ocr:apple` (trigger) and `ocr:done`.
+
+Two workflows run together:
+
+- **Gateway (new documents):** drop PDFs/images into `PAPERLESS_OCR_INBOX`
+  (`~/paperless-ocr/inbox`). Each is OCR'd, uploaded to paperless (searchable), and the
+  pristine original is kept in `PAPERLESS_OCR_ARCHIVE`.
+- **Retro-fix (existing documents):** tag any paperless document **`ocr:apple`**. The worker
+  downloads the original, re-OCRs it with Apple Vision, uploads a new searchable copy (tagged
+  `ocr:done`, metadata preserved), and retags the old one `ocr:superseded` (kept unless
+  `PAPERLESS_OCR_DELETE_ORIGINAL=1`).
+
+**Digital-born vs scan (important).** Both loops are smart: a PDF that **already has a good
+text layer** (digital-born — e.g. an emailed invoice from a report generator) is **passed
+through untouched** — never rasterized or re-OCR'd, so perfect text is preserved. Only
+**scans/images without a text layer** get Apple-Vision OCR. The threshold is
+`PAPERLESS_OCR_TEXT_MIN_CHARS` (avg chars/page, default 50).
+
+**E-mail attachments.** paperless-ngx reads mail and ingests attachments **itself** — those
+never pass through this worker. Digital-born attachments (most) already have text, so paperless
+indexes them fine. For the rare **scanned** attachment (no text, e.g. Cyrillic → Tesseract
+mojibake), tag it `ocr:apple` (manually, or via a paperless **Workflow** that auto-tags a whole
+mail source): retro-fix then re-OCRs scans with Apple Vision and simply releases the
+already-text ones (no duplicates).
+
+**Scan straight into the inbox (SMB).** A network scanner (e.g. Canon MAXIFY GX2050 →
+"Scan to shared folder / SMB") can drop files directly into `PAPERLESS_OCR_INBOX`:
+1. macOS **System Settings → General → Sharing → File Sharing** on; add the inbox folder;
+   give the scanner's SMB login (ideally the same `mac` user) read/write.
+2. Point the scanner at `smb://<mac>/…/paperless-ocr/inbox` and scan a **multi-page PDF**
+   (one job = one file).
+The gateway only picks up a file once it is **fully written** — unchanged for
+`PAPERLESS_OCR_STABLE_SEC` (default 30 s) **and** no longer held open by `smbd`. So a slow
+50-page scan is never OCR'd half-finished. If your scanner pauses longer than 30 s between
+pages, raise `PAPERLESS_OCR_STABLE_SEC`.
+
+**Host the inbox on the Mac itself** (not on a NAS): the worker runs on the Mac and reads
+the folder locally, and the "still being written" guard uses `lsof`, which only sees writes
+on the Mac. An inbox on a NAS would need mounting on the Mac and would fall back to the
+weaker mtime-only settle. Files here are temporary (deleted after upload), so disk use is nil.
+
+**Double-sided originals (simplex ADF, e.g. GX2050).** The GX2050's ADF scans one side per
+pass. Scan the fronts, flip the stack, scan the backs — send **both passes to the
+`<inbox>/duplex/` subfolder**. The gateway interleaves them (backs reversed) into one
+page-ordered document, then OCRs + uploads it. If pages come out mis-ordered (depends on how
+you flip), set `PAPERLESS_OCR_DUPLEX_REVERSE=0`. A single file left alone in `duplex/` for
+`PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC` (30 min) is treated as single-sided.
+
+**Ad-hoc CLI:** `paperless-ocr in.pdf out.pdf -l ru-RU,en-US` (also accepts images).
+Verify with `pdftotext out.pdf -` → clean Unicode text.
+
+Notes: `PAPERLESS_OCR_RECMODE` must be `accurate` or `fast` — **not** `livetext` (VisionKit,
+crashes headless). This supersedes the `OCR_PROVIDER=llm` path above for OCR quality; keep
+paperless-gpt only if you also want LLM-generated titles/tags. The API token sits in the
+644 conf (LAN-only, same precedent as `MQTT_PASS`/`DASHBOARD_TOKEN`).
+
+---
+
 ## OpenAI SDK (Python / JS / anything OpenAI-compatible)
 
 ```python

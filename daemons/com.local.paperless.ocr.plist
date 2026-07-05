@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.local.paperless.ocr</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/libexec/start-paperless-ocr.sh</string>
+  </array>
+  <key>UserName</key><string>@TARGET_USER@</string>
+  <key>WorkingDirectory</key><string>@TARGET_HOME@</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>/var/log/macstudio/paperless-ocr.log</string>
+  <key>StandardErrorPath</key><string>/var/log/macstudio/paperless-ocr.log</string>
+</dict>
+</plist>

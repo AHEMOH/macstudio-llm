@@ -52,6 +52,7 @@ ALWAYS_ON_LABELS=(
   com.local.weekly.autoupdate
   com.local.mqtt.bridge
   com.local.dashboard
+  com.local.paperless.ocr
 )
 # On-demand backends (KeepAlive=false, RunAtLoad=false)
 ONDEMAND_LABELS=(
@@ -186,6 +187,27 @@ CONFIG_KEYS=(
   INSTALL_DASHBOARD
   DASHBOARD_PORT
   DASHBOARD_TOKEN
+  INSTALL_PAPERLESS_OCR
+  PAPERLESS_OCR_URL
+  PAPERLESS_OCR_TOKEN
+  PAPERLESS_OCR_LANGS
+  PAPERLESS_OCR_RECMODE
+  PAPERLESS_OCR_FONT
+  PAPERLESS_OCR_DPI
+  PAPERLESS_OCR_JPEG_Q
+  PAPERLESS_OCR_TEXT_MIN_CHARS
+  PAPERLESS_OCR_INBOX
+  PAPERLESS_OCR_ARCHIVE
+  PAPERLESS_OCR_ERRORS
+  PAPERLESS_OCR_TRIGGER_TAG
+  PAPERLESS_OCR_DONE_TAG
+  PAPERLESS_OCR_SUPERSEDED_TAG
+  PAPERLESS_OCR_DELETE_ORIGINAL
+  PAPERLESS_OCR_POLL_SEC
+  PAPERLESS_OCR_STABLE_SEC
+  PAPERLESS_OCR_DUPLEX_SUBDIR
+  PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC
+  PAPERLESS_OCR_DUPLEX_REVERSE
   AUTO_ACCEPT
 )
 # Bash-3.2 safe (macOS ships /bin/bash 3.2): lookup functions instead of
@@ -313,6 +335,27 @@ config_default() {
     INSTALL_DASHBOARD)           echo 1 ;;
     DASHBOARD_PORT)              echo 8090 ;;
     DASHBOARD_TOKEN)             echo "" ;;
+    INSTALL_PAPERLESS_OCR)       echo 0 ;;
+    PAPERLESS_OCR_URL)           echo "" ;;
+    PAPERLESS_OCR_TOKEN)         echo "" ;;
+    PAPERLESS_OCR_LANGS)         echo ru-RU,en-US ;;
+    PAPERLESS_OCR_RECMODE)       echo accurate ;;
+    PAPERLESS_OCR_FONT)          echo "/System/Library/Fonts/Supplemental/Arial Unicode.ttf" ;;
+    PAPERLESS_OCR_DPI)           echo 200 ;;
+    PAPERLESS_OCR_JPEG_Q)        echo 75 ;;
+    PAPERLESS_OCR_TEXT_MIN_CHARS) echo 50 ;;
+    PAPERLESS_OCR_INBOX)         echo /Users/mac/paperless-ocr/inbox ;;
+    PAPERLESS_OCR_ARCHIVE)       echo /Users/mac/paperless-ocr/originals ;;
+    PAPERLESS_OCR_ERRORS)        echo /Users/mac/paperless-ocr/errors ;;
+    PAPERLESS_OCR_TRIGGER_TAG)   echo ocr:apple ;;
+    PAPERLESS_OCR_DONE_TAG)      echo ocr:done ;;
+    PAPERLESS_OCR_SUPERSEDED_TAG) echo ocr:superseded ;;
+    PAPERLESS_OCR_DELETE_ORIGINAL) echo 0 ;;
+    PAPERLESS_OCR_POLL_SEC)      echo 60 ;;
+    PAPERLESS_OCR_STABLE_SEC)    echo 30 ;;
+    PAPERLESS_OCR_DUPLEX_SUBDIR) echo duplex ;;
+    PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC) echo 1800 ;;
+    PAPERLESS_OCR_DUPLEX_REVERSE) echo 1 ;;
     AUTO_ACCEPT)                 echo 0 ;;
     *)                           echo "" ;;
   esac
@@ -406,6 +449,27 @@ config_hint() {
     INSTALL_DASHBOARD)           echo "1 = run the web dashboard (browser control of models / services / settings / logs / telemetry) on :8090. Token-protected; the SSH TUI stays fully authoritative" ;;
     DASHBOARD_PORT)              echo "Public port the web dashboard binds (default 8090)" ;;
     DASHBOARD_TOKEN)             echo "Web-dashboard access token (browser login + 'Authorization: Bearer' for curl). Plaintext in this 644 conf — LAN-only, like MQTT_PASS. Empty = auto-generated on the next --apply; clear it + --apply to rotate (logs out all browsers)" ;;
+    INSTALL_PAPERLESS_OCR)       echo "1 = run the Apple-Vision searchable-PDF worker for paperless-ngx (gateway inbox + tag-triggered retro-fix). Opt-in (default 0): needs PAPERLESS_OCR_URL + _TOKEN" ;;
+    PAPERLESS_OCR_URL)           echo "Base URL of your paperless-ngx (e.g. http://paperless.home.arpa:8000). Empty = worker idles" ;;
+    PAPERLESS_OCR_TOKEN)         echo "paperless-ngx API token (Settings -> API token). Plaintext in this 644 conf — LAN-only, like MQTT_PASS. Empty = worker idles" ;;
+    PAPERLESS_OCR_LANGS)         echo "Apple Vision recognition languages, comma-separated BCP-47 (e.g. ru-RU,en-US). Multiple allowed (unlike ocrmypdf-appleocr)" ;;
+    PAPERLESS_OCR_RECMODE)       echo "Vision recognition level: accurate (default) or fast. NOT 'livetext' (VisionKit, crashes headless under launchd)" ;;
+    PAPERLESS_OCR_FONT)          echo "Path to a Unicode/Cyrillic-capable TTF embedded for the invisible text layer (default: macOS 'Arial Unicode.ttf')" ;;
+    PAPERLESS_OCR_DPI)           echo "Render DPI for OCR (higher = better on small text, slower; default 200)" ;;
+    PAPERLESS_OCR_JPEG_Q)        echo "JPEG quality (1-100) of the embedded page image in the output PDF (default 75)" ;;
+    PAPERLESS_OCR_TEXT_MIN_CHARS) echo "Digital-born detection: a PDF with at least this many text chars/page is passed through UNTOUCHED (no re-OCR); below it = treated as a scan and OCR'd. Default 50" ;;
+    PAPERLESS_OCR_INBOX)         echo "Gateway watch folder: drop PDFs/images here -> OCR'd + uploaded to paperless" ;;
+    PAPERLESS_OCR_ARCHIVE)       echo "Where pristine originals are kept after the gateway processes them" ;;
+    PAPERLESS_OCR_ERRORS)        echo "Where the gateway moves files it failed to OCR/upload" ;;
+    PAPERLESS_OCR_TRIGGER_TAG)   echo "Retro-fix trigger tag: existing paperless docs with this tag get re-OCR'd with Apple Vision" ;;
+    PAPERLESS_OCR_DONE_TAG)      echo "Tag applied to the new searchable copy after retro-fix" ;;
+    PAPERLESS_OCR_SUPERSEDED_TAG) echo "Tag applied to the OLD document after a retro-fix copy is created" ;;
+    PAPERLESS_OCR_DELETE_ORIGINAL) echo "1 = delete the old paperless doc after retro-fix (default 0 = keep it, tagged superseded)" ;;
+    PAPERLESS_OCR_POLL_SEC)      echo "Retro-fix poll interval in seconds (gateway polls every min(10,this))" ;;
+    PAPERLESS_OCR_STABLE_SEC)    echo "Gateway waits until an inbox file is unmodified AND not held open (SMB) for this many seconds before OCR — prevents processing half-scanned files. Raise if your scanner pauses long between pages (default 30)" ;;
+    PAPERLESS_OCR_DUPLEX_SUBDIR) echo "Inbox subfolder for double-sided jobs: scan fronts then backs here; the two files are interleaved into one document (for simplex ADFs). Default 'duplex'" ;;
+    PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC) echo "If only one file waits in the duplex folder this long, treat it as single-sided (the backs pass never came). Default 1800 (30 min)" ;;
+    PAPERLESS_OCR_DUPLEX_REVERSE) echo "1 = reverse the 2nd (backs) file when interleaving (normal after flipping the stack). Set 0 if pages come out mis-ordered" ;;
     *)                           echo "" ;;
   esac
 }
@@ -607,6 +671,8 @@ load_config() {
         [ "${INSTALL_MQTT:-0}" = 1 ] || continue ;;
       com.local.dashboard)
         [ "${INSTALL_DASHBOARD:-1}" = 1 ] || continue ;;
+      com.local.paperless.ocr)
+        [ "${INSTALL_PAPERLESS_OCR:-0}" = 1 ] || continue ;;
     esac
     ACTIVE_LABELS+=("$_lbl")
   done
@@ -665,6 +731,7 @@ label_log() {
     com.local.weekly.autoupdate) echo "$LOG_DIR/autoupdate.log" ;;
     com.local.mqtt.bridge)       echo "$LOG_DIR/mqtt-bridge.log" ;;
     com.local.dashboard)         echo "$LOG_DIR/dashboard.log" ;;
+    com.local.paperless.ocr)     echo "$LOG_DIR/paperless-ocr.log" ;;
     *) echo "$LOG_DIR/${1#com.local.}.log" ;;
   esac
 }
@@ -868,6 +935,41 @@ ensure_docling_venv() {
     ok "docling-serve venv built at $pydir (first backend wake will also fetch ~1 GB of models from HuggingFace)"
   else
     warn "docling pip install succeeded but .venv/bin/docling-serve is missing"
+    return 1
+  fi
+}
+
+ensure_paperless_ocr_venv() {
+  # Small venv for the Apple-Vision searchable-PDF worker (com.local.paperless.ocr).
+  # ocrmac drives Apple Vision; pymupdf builds the invisible Unicode text layer;
+  # requests talks to paperless-ngx. No brew deps (pymupdf bundles its rendering).
+  [ "${INSTALL_PAPERLESS_OCR:-0}" = 1 ] || return 0
+  local venv="${VENV_DIR:-/Users/mac/.macstudio-venvs}/paperlessocr"
+  if [ -x "$venv/bin/python" ] && "$venv/bin/python" -c 'import ocrmac, fitz, requests, fontTools' >/dev/null 2>&1; then
+    ok "paperless-ocr venv present at $venv"
+    return 0
+  fi
+  if [ ! -x /opt/homebrew/bin/python3.12 ]; then
+    warn "paperless-ocr needs python@3.12, which is not installed yet."
+    warn "Re-run 'sudo bash setup.sh --apply' after Homebrew is available."
+    return 1
+  fi
+  log "Building paperless-ocr venv at $venv (ocrmac + pymupdf + requests)"
+  /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$venv"
+  if [ ! -x "$venv/bin/python" ]; then
+    /usr/bin/sudo -u "$TARGET_USER" -H /opt/homebrew/bin/python3.12 -m venv "$venv"
+  fi
+  /usr/bin/sudo -u "$TARGET_USER" -H "$venv/bin/pip" install --upgrade pip wheel >/dev/null 2>&1 \
+    || warn "pip upgrade inside paperless-ocr venv returned non-zero"
+  if ! /usr/bin/sudo -u "$TARGET_USER" -H "$venv/bin/pip" install \
+        ocrmac pymupdf requests fonttools >/var/log/macstudio/paperless-ocr-venv-install.log 2>&1; then
+    warn "paperless-ocr pip install failed; see /var/log/macstudio/paperless-ocr-venv-install.log"
+    return 1
+  fi
+  if "$venv/bin/python" -c 'import ocrmac, fitz, requests, fontTools' >/dev/null 2>&1; then
+    ok "paperless-ocr venv built at $venv"
+  else
+    warn "paperless-ocr pip install succeeded but ocrmac/pymupdf/requests won't import"
     return 1
   fi
 }
@@ -1252,6 +1354,7 @@ service_py_label() {
     ondemand-exporter.py)  echo com.local.ondemand.exporter ;;
     ollama-exporter.py)    echo com.local.ollama.exporter ;;
     inference-watchdog.py) echo com.local.inference.watchdog ;;
+    paperless-ocr.py)      echo com.local.paperless.ocr ;;
     *) echo "" ;;
   esac
 }
@@ -1353,6 +1456,10 @@ render_all_plists() {
       com.local.dashboard)
         # Web dashboard (browser control). Root daemon like the MQTT bridge.
         [ "${INSTALL_DASHBOARD:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
+      com.local.paperless.ocr)
+        # Apple-Vision searchable-PDF worker for paperless-ngx. Runs as TARGET_USER
+        # (Vision needs a user context); needs its own venv (ocrmac/pymupdf/requests).
+        [ "${INSTALL_PAPERLESS_OCR:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
     esac
     local before_hash; before_hash=$(hash_file "$dst")
     render_template "$src" "$dst" 644 root:wheel || true
@@ -1578,6 +1685,7 @@ apply_everything() {
   dbg "step: ensure_modern_python";    ensure_modern_python || true
   dbg "step: ensure_immich_venv";      ensure_immich_venv
   dbg "step: ensure_docling_venv";     ensure_docling_venv
+  dbg "step: ensure_paperless_ocr_venv"; ensure_paperless_ocr_venv || true
   dbg "step: ensure_python_venvs";     ensure_python_venvs || true
   dbg "step: ensure_ollama_dist";      ensure_ollama_dist || true
   dbg "step: ensure_model_catalog";    ensure_model_catalog
@@ -2519,7 +2627,7 @@ menu_uninstall() {
               "$LIBEXEC_DIR"/ondemand-exporter.py "$LIBEXEC_DIR"/llm-watchdog.sh \
               "$LIBEXEC_DIR"/inference-watchdog.py \
               "$LIBEXEC_DIR"/mqtt-bridge.py "$LIBEXEC_DIR"/dashboard.py \
-              "$LIBEXEC_DIR"/dashboard-ui.html
+              "$LIBEXEC_DIR"/dashboard-ui.html "$LIBEXEC_DIR"/paperless-ocr.py
   /bin/rm -rf /usr/local/etc/macstudio-models
   /bin/rm -f /usr/local/etc/litellm.config.yaml
   /bin/rm -f "$SBIN_DIR/set-iogpu-wired-limit.sh" "$SBIN_DIR/weekly-autoupdate.sh"
