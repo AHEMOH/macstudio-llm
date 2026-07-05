@@ -133,16 +133,25 @@ auto-generated once into `VNC_PASSWORD` in `/usr/local/etc/macstudio.conf`
 sudo sed -n "s/^VNC_PASSWORD=//p" /usr/local/etc/macstudio.conf | tr -d "'"
 ```
 
+> **Use `:5901`, not `:5900`, for password-only login.** macOS' Screen Sharing on `:5900`
+> offers its own Apple/ARD account authentication (real macOS username + password) *before*
+> plain VNC-password auth, and most clients (including the browser) pick whichever the
+> server prefers — so connecting straight to `:5900` gets you a macOS username/password
+> prompt instead of the shared `VNC_PASSWORD`, and noVNC crashes outright (Apple's auth needs
+> WebCrypto, which browsers only expose over HTTPS/localhost, not plain LAN HTTP). A tiny
+> proxy, `com.local.vncfilter` on **`VNC_FILTER_PORT`** (default **5901**), sits in front of
+> `:5900` and strips that offer down to VNC-password auth only. Both entry points below
+> already go through it.
+
 **From Windows (VNC client):** install RealVNC Viewer or TightVNC Viewer, connect to
-**`mac.home.arpa:5900`**, enter the `VNC_PASSWORD`. (macOS Screen Sharing / RealVNC also
-speak Apple auth; the legacy VNC password is what lets *any* client — incl. TightVNC and
-noVNC — in.)
+**`mac.home.arpa:5901`** (`VNC_FILTER_PORT` — **not** `:5900`), enter the `VNC_PASSWORD`
+only (no username field, or leave it blank).
 
 **From a browser (no client):** open **`http://mac.home.arpa:6080/vnc.html`**
 (`NOVNC_PORT`, default 6080) → **Connect** → enter the `VNC_PASSWORD`. This is
-[noVNC](https://novnc.com) served by `websockify` (~30 MB, always-on) bridging to `:5900`;
-`screensharingd` itself only spawns while a session is open, so the RAM cost is negligible
-and never touches the model budget.
+[noVNC](https://novnc.com) served by `websockify` (~30 MB, always-on) bridging through
+`com.local.vncfilter` to `:5900`; `screensharingd` itself only spawns while a session is
+open, so the RAM cost is negligible and never touches the model budget.
 
 **RAM:** websockify ~30 MB idle; Screen Sharing ~0 idle (on-demand). It does **not**
 count against the "one big model" / 30 GB-wired budget.

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.local.vncfilter</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/libexec/start-vncfilter.sh</string>
+  </array>
+  <!-- Pure TCP proxy, no privileges needed. -->
+  <key>UserName</key><string>@TARGET_USER@</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <!-- Port in the plist (not just the wrapper/conf) so a VNC_FILTER_PORT
+       change produces a plist diff -> automatic bootout+bootstrap. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>VNC_FILTER_PORT</key><string>@VNC_FILTER_PORT@</string>
+  </dict>
+  <key>StandardOutPath</key><string>/var/log/macstudio/vncfilter.log</string>
+  <key>StandardErrorPath</key><string>/var/log/macstudio/vncfilter.log</string>
+</dict>
+</plist>
