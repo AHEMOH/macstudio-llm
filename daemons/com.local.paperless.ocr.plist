@@ -7,7 +7,12 @@
   <array>
     <string>/usr/local/libexec/start-paperless-ocr.sh</string>
   </array>
-  <key>UserName</key><string>@TARGET_USER@</string>
+  <!-- Runs as ROOT (no UserName), not TARGET_USER. macOS 15+/26 "Local Network Privacy"
+       blocks non-Apple binaries (our venv python) from LAN access when the daemon runs as a
+       user, causing "No route to host" reaching paperless-ngx — while /usr/bin/curl and ROOT
+       daemons are exempt. Verified on macOS 26: Apple Vision (ocrmac/VNRecognizeTextRequest)
+       works fine in a pure root daemon context, and root reaches the LAN. The wrapper still
+       exports HOME/USER=TARGET_USER so caches/paths stay under the user's home. -->
   <key>WorkingDirectory</key><string>@TARGET_HOME@</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>

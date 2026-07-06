@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Launched by com.local.paperless.ocr — Apple-Vision searchable-PDF worker for
-# paperless-ngx (gateway inbox + tag-triggered retro-fix). Runs as TARGET_USER
-# because Apple Vision (VNRecognizeTextRequest) needs a user context. Uses its own
-# venv (ocrmac/pymupdf/requests) — the stdlib-only daemon rule does NOT apply here,
-# exactly like the MLX backends run from venvs.
+# paperless-ngx (gateway inbox + tag-triggered retro-fix). Runs as ROOT (see the plist):
+# macOS 15+/26 "Local Network Privacy" blocks our non-Apple venv python from LAN access
+# when the daemon runs as a user (→ "No route to host" reaching paperless-ngx), while root
+# is exempt; Apple Vision (VNRecognizeTextRequest) still works fine as root. We export
+# HOME/USER=TARGET_USER below so caches/paths stay under the user's home. Uses its own venv
+# (ocrmac/pymupdf/requests) — the stdlib-only daemon rule does NOT apply here, like the MLX
+# backends run from venvs.
 set -eu
 
 CONF=/usr/local/etc/macstudio.conf
