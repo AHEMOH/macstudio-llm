@@ -43,6 +43,7 @@ import base64
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -69,6 +70,12 @@ JPEG_Q = int(os.environ.get("PAPERLESS_OCR_JPEG_Q", "75"))  # embedded page-imag
 # degrade perfect text. A scan (no text layer) gets Apple Vision OCR. This is the average
 # stripped text chars/page above which a PDF counts as digital-born.
 TEXT_MIN_CHARS = int(os.environ.get("PAPERLESS_OCR_TEXT_MIN_CHARS", "50"))
+# After OCR, ask the LLM for a short descriptive name from the text and use it as BOTH the
+# paperless title and the archived-original filename (instead of the scanner's "SCN_0001").
+SMART_NAME = os.environ.get("PAPERLESS_OCR_SMART_NAME", "1") == "1"
+# Delete archived originals older than this many days (0 = keep forever). The searchable
+# copy already lives in paperless; the pristine scan is only kept locally as a safety net.
+ARCHIVE_RETENTION_DAYS = int(os.environ.get("PAPERLESS_OCR_ARCHIVE_RETENTION_DAYS", "30"))
 
 BASE = Path(os.environ.get("PAPERLESS_OCR_INBOX", "/Users/mac/paperless-ocr/inbox")).parent
 INBOX = Path(os.environ.get("PAPERLESS_OCR_INBOX", str(BASE / "inbox")))
@@ -357,6 +364,85 @@ def vlm_ocr_pdf(src, dst):
     return total
 
 
+# --------------------------------------------------------------- naming + housekeeping
+def _safe_filename(s):
+    """Sanitize an LLM-proposed name into a safe, single-line filename stem (no extension)."""
+    s = (s or "").strip()
+    if s:
+        s = s.splitlines()[0].strip().strip("\"'`").strip()
+    s = re.sub(r'[\\/:*?"<>|\t\r\n]+', " ", s)   # drop path-unsafe chars
+    s = re.sub(r"\s+", " ", s).strip().rstrip(".")
+    return s[:60].strip()
+
+
+def _smart_name(pdf_path, fallback):
+    """Ask the LLM for a short, human-readable name from the document's text. Falls back to
+    `fallback` (the scanner's stem) if disabled, the text is too short, or the call fails."""
+    if not SMART_NAME or not VLM_URL:
+        return fallback
+    try:
+        d = fitz.open(str(pdf_path))
+        txt = "\n".join(d[i].get_text() for i in range(min(2, d.page_count)))
+        d.close()
+    except Exception:
+        return fallback
+    if len(txt.strip()) < 20:
+        return fallback  # near-empty page — nothing to name it after
+    prompt = ("Schlage einen kurzen, sprechenden Dateinamen fuer dieses Dokument vor: "
+              "3-6 Woerter, moeglichst mit Typ/Absender/Datum, KEINE Dateiendung, keine "
+              "Anfuehrungszeichen, keine Erklaerung — NUR der Name. Beispiele: "
+              "'Rechnung Airbrush City Juni 2026', 'Kfz-Versicherung Police 2026'.\n\n"
+              "Dokumenttext:\n" + txt[:1500])
+    try:
+        payload = {"model": VLM_MODEL, "temperature": 0, "max_tokens": 40,
+                   "messages": [{"role": "user", "content": prompt}]}
+        r = requests.post(VLM_URL, data=json.dumps(payload),
+                          headers={"Content-Type": "application/json"}, timeout=90)
+        r.raise_for_status()
+        name = _safe_filename(r.json()["choices"][0]["message"]["content"])
+        return name or fallback
+    except Exception as e:
+        log(f"smart-name failed ({e}); keeping '{fallback}'")
+        return fallback
+
+
+def _unique_path(folder, stem, suffix):
+    """A non-clobbering path in `folder` for <stem><suffix>, appending ' (2)', ' (3)'… ."""
+    p = folder / f"{stem}{suffix}"
+    i = 2
+    while p.exists():
+        p = folder / f"{stem} ({i}){suffix}"
+        i += 1
+    return p
+
+
+_last_prune = 0.0
+
+
+def prune_archive():
+    """Delete archived originals older than ARCHIVE_RETENTION_DAYS (0 = keep forever).
+    Runs at most hourly. The searchable copy is safe in paperless; this only trims the
+    local pristine-scan safety net."""
+    global _last_prune
+    if ARCHIVE_RETENTION_DAYS <= 0 or not ARCHIVE.exists():
+        return
+    now = time.time()
+    if now - _last_prune < 3600:
+        return
+    _last_prune = now
+    cutoff = now - ARCHIVE_RETENTION_DAYS * 86400
+    removed = 0
+    try:
+        for f in ARCHIVE.iterdir():
+            if f.is_file() and not f.name.startswith(".") and f.stat().st_mtime < cutoff:
+                f.unlink()
+                removed += 1
+    except Exception as e:
+        log(f"archive prune error: {e}")
+    if removed:
+        log(f"archive: pruned {removed} original(s) older than {ARCHIVE_RETENTION_DAYS} days")
+
+
 # ------------------------------------------------------------------- paperless client
 _session = requests.Session()
 if TOKEN:
@@ -431,15 +517,17 @@ def gateway_once():
         if not _is_settled(p):
             continue  # still being written (or too fresh) — try again next poll
         try:
-            ARCHIVE.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(str(p), str(ARCHIVE / p.name))
             out = WORK / (p.stem + ".ocr.pdf")
             # naming an inbox file with "_vlm" forces the Gemma-4 route (handwriting/math).
             mode, n = make_searchable(p, out, force_vlm="_vlm" in p.stem.lower())
-            _upload(out, title=p.stem)
+            name = _smart_name(out, p.stem)  # short descriptive name from the OCR text
+            _upload(out, title=name)
+            # archive the pristine original under the descriptive name (retention prunes it).
+            ARCHIVE.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(p), str(_unique_path(ARCHIVE, name, p.suffix)))
             detail = {"passthrough": "passed through (already had text)",
                       "vlm": f"VLM-OCR'd ({n} chars)"}.get(mode, f"OCR'd ({n} boxes)")
-            log(f"gateway: {p.name} -> uploaded, {detail}; original archived")
+            log(f"gateway: {p.name} -> '{name}' uploaded, {detail}; original archived")
             p.unlink()
             out.unlink(missing_ok=True)
         except Exception as e:
@@ -452,13 +540,13 @@ def gateway_once():
 
 
 def _process_and_upload(src_pdf, title, archive_names):
-    """Make `src_pdf` searchable, upload to paperless. Returns boxes placed."""
-    ARCHIVE.mkdir(parents=True, exist_ok=True)
+    """Make `src_pdf` searchable, upload with a short descriptive title. Returns (boxes, name)."""
     out = WORK / (Path(title).stem + ".ocr.pdf")
     _mode, n = make_searchable(src_pdf, out)
-    _upload(out, title=title)
+    name = _smart_name(out, Path(title).stem)
+    _upload(out, title=name)
     out.unlink(missing_ok=True)
-    return n
+    return n, name
 
 
 def duplex_once():
@@ -478,9 +566,9 @@ def duplex_once():
                 shutil.copy2(str(s), str((ARCHIVE / s.name)))
             combined = WORK / "duplex_combined.pdf"
             interleave(front, back, combined)
-            n = _process_and_upload(combined, front.stem, [front, back])
+            n, name = _process_and_upload(combined, front.stem, [front, back])
             combined.unlink(missing_ok=True)
-            log(f"duplex: {front.name} + {back.name} -> 1 document ({n} boxes)")
+            log(f"duplex: {front.name} + {back.name} -> '{name}' ({n} boxes)")
             front.unlink(); back.unlink()
         except Exception as e:
             log(f"duplex ERROR {front.name}+{back.name}: {e}")
@@ -495,8 +583,8 @@ def duplex_once():
         if time.time() - p.stat().st_mtime > DUPLEX_TIMEOUT:
             try:
                 shutil.copy2(str(p), str(ARCHIVE / p.name))
-                n = _process_and_upload(p, p.stem, [p])
-                log(f"duplex: lone {p.name} timed out -> uploaded single-sided ({n} boxes)")
+                n, name = _process_and_upload(p, p.stem, [p])
+                log(f"duplex: lone {p.name} timed out -> '{name}' single-sided ({n} boxes)")
                 p.unlink()
             except Exception as e:
                 log(f"duplex lone ERROR {p.name}: {e}")
@@ -505,6 +593,7 @@ def duplex_once():
 def gateway_tick():
     gateway_once()
     duplex_once()
+    prune_archive()  # delete archived originals older than the retention window (hourly)
 
 
 def retrofix_once():
@@ -576,9 +665,11 @@ def main():
         while True:
             time.sleep(3600)
     vlm = f"{VLM_MODEL} (auto<{VLM_MIN_CHARS}ch, tag '{VLM_TAG}')" if (VLM_AUTO or VLM_URL) else "off"
+    ret = f"{ARCHIVE_RETENTION_DAYS}d" if ARCHIVE_RETENTION_DAYS > 0 else "keep-forever"
     log(f"starting: url={URL} langs={LANGS} recmode={RECMODE} dpi={DPI} "
         f"inbox={INBOX} duplex={INBOX / DUPLEX_SUBDIR} trigger='{TRIGGER_TAG}' "
-        f"vlm-fallback={vlm} poll={POLL}s")
+        f"vlm-fallback={vlm} smart-name={'on' if SMART_NAME else 'off'} "
+        f"archive-retention={ret} poll={POLL}s")
     threading.Thread(target=_loop, args=(gateway_tick, GATEWAY_POLL, "gateway"), daemon=True).start()
     threading.Thread(target=_loop, args=(retrofix_once, POLL, "retrofix"), daemon=True).start()
     while True:
