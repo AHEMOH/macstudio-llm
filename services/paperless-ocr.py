@@ -186,20 +186,24 @@ def _already_has_text(pdf_path):
 
 
 def make_searchable(src, dst, force_vlm=False):
-    """Produce a searchable PDF at `dst`. Digital-born PDFs (already have text) are copied
-    through untouched. Otherwise Apple Vision OCRs the scan; if `force_vlm` (a tag/filename
-    hint) OR the Vision pass is sparse (< VLM_MIN_CHARS chars/page — a form/handwriting doc
-    Vision couldn't read) and VLM_AUTO is on, re-do with the Gemma-4 vision route. Returns
-    (mode, count) where mode is 'passthrough' | 'ocr' | 'vlm'."""
+    """Produce a searchable PDF at `dst`. Returns (mode, count) where mode is
+    'passthrough' | 'ocr' | 'vlm'.
+
+    `force_vlm` (an explicit `ocr:vlm` tag / `_vlm` filename) is an OVERRIDE and wins over
+    everything — including the digital-born passthrough — so re-tagging an already-OCR'd
+    doc `ocr:vlm` really re-runs Gemma on the page images (e.g. to fix handwriting Vision
+    missed). Otherwise: digital-born PDFs (already have text) are passed through untouched;
+    scans get Apple Vision, and if the Vision pass is sparse (< VLM_MIN_CHARS chars/page)
+    and VLM_AUTO is on, it escalates to the Gemma-4 route."""
     src, dst = Path(src), Path(dst)
-    if src.suffix.lower() == ".pdf" and _already_has_text(src):
-        shutil.copy2(str(src), str(dst))
-        return ("passthrough", 0)
     if force_vlm and VLM_URL:
         try:
             return ("vlm", vlm_ocr_pdf(src, dst))
         except Exception as e:
-            log(f"forced VLM route failed ({e}); falling back to Apple Vision")
+            log(f"forced VLM route failed ({e}); falling back to normal handling")
+    if src.suffix.lower() == ".pdf" and _already_has_text(src):
+        shutil.copy2(str(src), str(dst))
+        return ("passthrough", 0)
     n = ocr_pdf(src, dst)  # Apple Vision (fast, always run first as the printed-text pass)
     if VLM_AUTO and VLM_URL and not force_vlm and _avg_chars(dst) < VLM_MIN_CHARS:
         try:
