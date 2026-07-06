@@ -203,6 +203,8 @@ CONFIG_KEYS=(
   PAPERLESS_OCR_DPI
   PAPERLESS_OCR_JPEG_Q
   PAPERLESS_OCR_TEXT_MIN_CHARS
+  PAPERLESS_OCR_SMART_NAME
+  PAPERLESS_OCR_ARCHIVE_RETENTION_DAYS
   PAPERLESS_OCR_INBOX
   PAPERLESS_OCR_ARCHIVE
   PAPERLESS_OCR_ERRORS
@@ -365,6 +367,8 @@ config_default() {
     PAPERLESS_OCR_DPI)           echo 300 ;;
     PAPERLESS_OCR_JPEG_Q)        echo 75 ;;
     PAPERLESS_OCR_TEXT_MIN_CHARS) echo 50 ;;
+    PAPERLESS_OCR_SMART_NAME)    echo 1 ;;
+    PAPERLESS_OCR_ARCHIVE_RETENTION_DAYS) echo 30 ;;
     PAPERLESS_OCR_INBOX)         echo /Users/mac/paperless-ocr/inbox ;;
     PAPERLESS_OCR_ARCHIVE)       echo /Users/mac/paperless-ocr/originals ;;
     PAPERLESS_OCR_ERRORS)        echo /Users/mac/paperless-ocr/errors ;;
@@ -493,6 +497,8 @@ config_hint() {
     PAPERLESS_OCR_DPI)           echo "Render DPI for OCR (default 300 = match a typical scanner; verified: 300 fixes small-text errors that 200 misses, same speed). Above the scan's native DPI only bloats the file — no quality gain" ;;
     PAPERLESS_OCR_JPEG_Q)        echo "JPEG quality (1-100) of the embedded page image in the output PDF (default 75)" ;;
     PAPERLESS_OCR_TEXT_MIN_CHARS) echo "Digital-born detection: a PDF with at least this many text chars/page is passed through UNTOUCHED (no re-OCR); below it = treated as a scan and OCR'd. Default 50" ;;
+    PAPERLESS_OCR_SMART_NAME)    echo "1 = after OCR, ask the LLM for a short descriptive name from the text and use it as the paperless title AND the archived-original filename (instead of 'SCN_0001'). 0 = keep the scanner's filename. Adds one quick LLM call per document" ;;
+    PAPERLESS_OCR_ARCHIVE_RETENTION_DAYS) echo "Delete archived original scans older than this many days (default 30; 0 = keep forever). The searchable copy already lives in paperless — this only trims the local pristine-scan safety net" ;;
     PAPERLESS_OCR_INBOX)         echo "Gateway watch folder: drop PDFs/images here -> OCR'd + uploaded to paperless" ;;
     PAPERLESS_OCR_ARCHIVE)       echo "Where pristine originals are kept after the gateway processes them" ;;
     PAPERLESS_OCR_ERRORS)        echo "Where the gateway moves files it failed to OCR/upload" ;;

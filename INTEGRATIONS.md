@@ -328,7 +328,12 @@ Two workflows run together:
 
 - **Gateway (new documents):** drop PDFs/images into `PAPERLESS_OCR_INBOX`
   (`~/paperless-ocr/inbox`). Each is OCR'd, uploaded to paperless (searchable), and the
-  pristine original is kept in `PAPERLESS_OCR_ARCHIVE`.
+  pristine original is kept in `PAPERLESS_OCR_ARCHIVE`. After OCR the worker asks the LLM
+  for a **short descriptive name** from the text (e.g. `Rechnung Airbrush City Juni 2026`
+  instead of `SCN_0001`) and uses it as the paperless title **and** the archived-original
+  filename (`PAPERLESS_OCR_SMART_NAME=0` to keep the scanner's name). Archived originals are
+  auto-deleted after **`PAPERLESS_OCR_ARCHIVE_RETENTION_DAYS`** (default 30; `0` = keep
+  forever) — the searchable copy already lives in paperless.
 - **Retro-fix (existing documents):** tag any paperless document **`ocr:apple`**. The worker
   downloads the original, re-OCRs it with Apple Vision, uploads a new searchable copy (tagged
   `ocr:done`, metadata preserved), and retags the old one `ocr:superseded` (kept unless
