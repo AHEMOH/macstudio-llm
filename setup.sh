@@ -217,6 +217,13 @@ CONFIG_KEYS=(
   PAPERLESS_OCR_DUPLEX_SUBDIR
   PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC
   PAPERLESS_OCR_DUPLEX_REVERSE
+  PAPERLESS_OCR_VLM_AUTO
+  PAPERLESS_OCR_VLM_MODEL
+  PAPERLESS_OCR_VLM_URL
+  PAPERLESS_OCR_VLM_TAG
+  PAPERLESS_OCR_VLM_MIN_CHARS
+  PAPERLESS_OCR_VLM_MAX_TOKENS
+  PAPERLESS_OCR_VLM_TIMEOUT_SEC
   AUTO_ACCEPT
 )
 # Bash-3.2 safe (macOS ships /bin/bash 3.2): lookup functions instead of
@@ -372,6 +379,13 @@ config_default() {
     PAPERLESS_OCR_DUPLEX_SUBDIR) echo duplex ;;
     PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC) echo 1800 ;;
     PAPERLESS_OCR_DUPLEX_REVERSE) echo 1 ;;
+    PAPERLESS_OCR_VLM_AUTO)      echo 1 ;;
+    PAPERLESS_OCR_VLM_MODEL)     echo main-fast ;;
+    PAPERLESS_OCR_VLM_URL)       echo "http://127.0.0.1:11434/v1/chat/completions" ;;
+    PAPERLESS_OCR_VLM_TAG)       echo ocr:vlm ;;
+    PAPERLESS_OCR_VLM_MIN_CHARS) echo 80 ;;
+    PAPERLESS_OCR_VLM_MAX_TOKENS) echo 4000 ;;
+    PAPERLESS_OCR_VLM_TIMEOUT_SEC) echo 300 ;;
     AUTO_ACCEPT)                 echo 0 ;;
     *)                           echo "" ;;
   esac
@@ -493,6 +507,13 @@ config_hint() {
     PAPERLESS_OCR_DUPLEX_SUBDIR) echo "Inbox subfolder for double-sided jobs: scan fronts then backs here; the two files are interleaved into one document (for simplex ADFs). Default 'duplex'" ;;
     PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC) echo "If only one file waits in the duplex folder this long, treat it as single-sided (the backs pass never came). Default 1800 (30 min)" ;;
     PAPERLESS_OCR_DUPLEX_REVERSE) echo "1 = reverse the 2nd (backs) file when interleaving (normal after flipping the stack). Set 0 if pages come out mis-ordered" ;;
+    PAPERLESS_OCR_VLM_AUTO)      echo "1 = auto-fallback to the vision LLM when Apple Vision reads suspiciously little (handwriting/forms). 0 = only the '$(config_default PAPERLESS_OCR_VLM_TAG)' tag / '_vlm' filename force it. Benchmark: Vision wins on print, VLM on handwriting/math, VLMs loop on dense tables (docs/ocr-benchmark.md)" ;;
+    PAPERLESS_OCR_VLM_MODEL)     echo "Gateway model alias for the VLM fallback route (default main-fast = Gemma-4, thinking-off). Reads handwriting/math; no per-word boxes (full-page invisible layer)" ;;
+    PAPERLESS_OCR_VLM_URL)       echo "LiteLLM gateway chat-completions URL for the VLM route (default http://127.0.0.1:11434/v1/chat/completions). Empty = VLM route off" ;;
+    PAPERLESS_OCR_VLM_TAG)       echo "paperless tag that FORCES the VLM route on retro-fix (default ocr:vlm). Inbox files can force it too via '_vlm' in the filename" ;;
+    PAPERLESS_OCR_VLM_MIN_CHARS) echo "Auto-fallback threshold: if Apple Vision yields fewer than this many text chars/page, re-OCR with the VLM (default 80). Raise if blank/near-blank scans wrongly trigger the VLM" ;;
+    PAPERLESS_OCR_VLM_MAX_TOKENS) echo "Max tokens for the VLM transcription per page (default 4000)" ;;
+    PAPERLESS_OCR_VLM_TIMEOUT_SEC) echo "HTTP timeout (seconds) for a VLM page request (default 300; a big model can be slow)" ;;
     *)                           echo "" ;;
   esac
 }

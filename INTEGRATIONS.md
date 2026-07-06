@@ -340,6 +340,23 @@ through untouched** — never rasterized or re-OCR'd, so perfect text is preserv
 **scans/images without a text layer** get Apple-Vision OCR. The threshold is
 `PAPERLESS_OCR_TEXT_MIN_CHARS` (avg chars/page, default 50).
 
+**Handwriting / math → VLM fallback route.** An OCR benchmark on real documents (see
+[`docs/ocr-benchmark.md`](docs/ocr-benchmark.md)) found a clean split: **Apple Vision wins on
+printed text** (fast, exact, tiny RAM) but is **blind to faint pencil handwriting and breaks
+math symbols** (∀→"Kk", ℕ→"IN"); the large vision model **Gemma-4** (`main`) reads handwriting
+and emits correct **LaTeX** — but *loops* on dense tables, so it is a **fallback, not a
+replacement**. So handwriting/math docs are routed to the VLM (`PAPERLESS_OCR_VLM_MODEL`,
+default `main-fast`), which lays its transcription down as one **invisible full-page** searchable
+layer (no per-word boxes). Two ways to trigger it:
+- **Manual (reliable):** tag a paperless doc **`ocr:vlm`** (retro-fix), or put **`_vlm`** in an
+  inbox filename (gateway) — forces the Gemma-4 route.
+- **Auto (best-effort):** if Apple Vision reads fewer than `PAPERLESS_OCR_VLM_MIN_CHARS`
+  chars/page (default 80 — a near-empty scan), the worker re-OCRs with the VLM. This only fires
+  on *sparse* pages; a printed form whose labels alone exceed the threshold won't auto-escalate,
+  so use the tag for known-handwriting docs. Set `PAPERLESS_OCR_VLM_AUTO=0` to disable auto.
+The VLM route reuses the already-loaded `main` (no second model — the "one big model" rule holds)
+but a full-page Gemma pass takes ~1–2 min, versus ~2 s for Apple Vision.
+
 **E-mail attachments.** paperless-ngx reads mail and ingests attachments **itself** — those
 never pass through this worker. Digital-born attachments (most) already have text, so paperless
 indexes them fine. For the rare **scanned** attachment (no text, e.g. Cyrillic → Tesseract
