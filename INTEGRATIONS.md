@@ -321,8 +321,9 @@ PAPERLESS_OCR_LANGS=ru-RU,en-US                        # Apple Vision locales (m
 ```
 
 **On the paperless-ngx side:** keep the default `PAPERLESS_OCR_MODE=skip` so paperless
-**indexes the text layer we provide** instead of re-running Tesseract, and create two tags:
-`ocr:apple` (trigger) and `ocr:done`.
+**indexes the text layer we provide** instead of re-running Tesseract. Create the trigger tags
+you want to use — `ocr:apple`, `ocr:apple-force`, `ocr:vlm`, `ocr:vlm-force` (see the retro-fix
+table below) — plus `ocr:done` / `ocr:superseded` (the worker creates the latter two on demand).
 
 Two workflows run together:
 
@@ -334,16 +335,29 @@ Two workflows run together:
   filename (`PAPERLESS_OCR_SMART_NAME=0` to keep the scanner's name). Archived originals are
   auto-deleted after **`PAPERLESS_OCR_ARCHIVE_RETENTION_DAYS`** (default 30; `0` = keep
   forever) — the searchable copy already lives in paperless.
-- **Retro-fix (existing documents):** tag any paperless document **`ocr:apple`**. The worker
-  downloads the original, re-OCRs it with Apple Vision, uploads a new searchable copy (tagged
+- **Retro-fix (existing documents):** tag any paperless document with one of **four** tags.
+  The worker downloads the original, re-OCRs it, uploads a new searchable copy (tagged
   `ocr:done`, metadata preserved), and retags the old one `ocr:superseded` (kept unless
-  `PAPERLESS_OCR_DELETE_ORIGINAL=1`).
+  `PAPERLESS_OCR_DELETE_ORIGINAL=1`). The tags differ on **engine** × **force**:
 
-**Digital-born vs scan (important).** Both loops are smart: a PDF that **already has a good
-text layer** (digital-born — e.g. an emailed invoice from a report generator) is **passed
+  | Tag | Engine | If the doc already has a text layer |
+  |---|---|---|
+  | `ocr:apple` | Apple Vision | **skipped** (safe to mass-tag; digital-born released) |
+  | `ocr:apple-force` | Apple Vision | **re-OCR'd anyway** (replace e.g. Tesseract mojibake) |
+  | `ocr:vlm` | Gemma-4 | skipped |
+  | `ocr:vlm-force` | Gemma-4 | re-OCR'd anyway (handwriting/math) |
+
+  > **Most existing paperless docs already have a Tesseract text layer** (from ingestion), so
+  > plain `ocr:apple` would just skip them. To actually replace that layer with Apple Vision,
+  > use **`ocr:apple-force`**. The plain tags stay useful for mass-tagging a mail source where
+  > digital-born docs should be left untouched.
+
+**Digital-born vs scan (important).** By default both loops are smart: a PDF that **already has
+a good text layer** (digital-born — e.g. an emailed invoice from a report generator) is **passed
 through untouched** — never rasterized or re-OCR'd, so perfect text is preserved. Only
 **scans/images without a text layer** get Apple-Vision OCR. The threshold is
-`PAPERLESS_OCR_TEXT_MIN_CHARS` (avg chars/page, default 50).
+`PAPERLESS_OCR_TEXT_MIN_CHARS` (avg chars/page, default 50). The **`*-force`** retro-fix tags
+override this — they re-OCR regardless of an existing layer.
 
 **Handwriting / math → VLM fallback route.** An OCR benchmark on real documents (see
 [`docs/ocr-benchmark.md`](docs/ocr-benchmark.md)) found a clean split: **Apple Vision wins on

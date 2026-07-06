@@ -209,6 +209,8 @@ CONFIG_KEYS=(
   PAPERLESS_OCR_ARCHIVE
   PAPERLESS_OCR_ERRORS
   PAPERLESS_OCR_TRIGGER_TAG
+  PAPERLESS_OCR_TRIGGER_FORCE_TAG
+  PAPERLESS_OCR_VLM_FORCE_TAG
   PAPERLESS_OCR_DONE_TAG
   PAPERLESS_OCR_SUPERSEDED_TAG
   PAPERLESS_OCR_DELETE_ORIGINAL
@@ -373,6 +375,8 @@ config_default() {
     PAPERLESS_OCR_ARCHIVE)       echo /Users/mac/paperless-ocr/originals ;;
     PAPERLESS_OCR_ERRORS)        echo /Users/mac/paperless-ocr/errors ;;
     PAPERLESS_OCR_TRIGGER_TAG)   echo ocr:apple ;;
+    PAPERLESS_OCR_TRIGGER_FORCE_TAG) echo ocr:apple-force ;;
+    PAPERLESS_OCR_VLM_FORCE_TAG) echo ocr:vlm-force ;;
     PAPERLESS_OCR_DONE_TAG)      echo ocr:done ;;
     PAPERLESS_OCR_SUPERSEDED_TAG) echo ocr:superseded ;;
     PAPERLESS_OCR_DELETE_ORIGINAL) echo 0 ;;
@@ -502,7 +506,9 @@ config_hint() {
     PAPERLESS_OCR_INBOX)         echo "Gateway watch folder: drop PDFs/images here -> OCR'd + uploaded to paperless" ;;
     PAPERLESS_OCR_ARCHIVE)       echo "Where pristine originals are kept after the gateway processes them" ;;
     PAPERLESS_OCR_ERRORS)        echo "Where the gateway moves files it failed to OCR/upload" ;;
-    PAPERLESS_OCR_TRIGGER_TAG)   echo "Retro-fix trigger tag: existing paperless docs with this tag get re-OCR'd with Apple Vision" ;;
+    PAPERLESS_OCR_TRIGGER_TAG)   echo "Retro-fix trigger: existing paperless docs with this tag get re-OCR'd with Apple Vision — but SKIPPED if they already have a text layer (safe to mass-tag). Use the -force tag to re-OCR anyway" ;;
+    PAPERLESS_OCR_TRIGGER_FORCE_TAG) echo "Retro-fix FORCE trigger (Apple Vision): re-OCR even if the doc already has text — the only way to replace an existing (e.g. Tesseract mojibake) layer. Default ocr:apple-force" ;;
+    PAPERLESS_OCR_VLM_FORCE_TAG) echo "Retro-fix FORCE trigger (Gemma-4 VLM): re-OCR with the VLM even if the doc already has text (handwriting/math). Default ocr:vlm-force" ;;
     PAPERLESS_OCR_DONE_TAG)      echo "Tag applied to the new searchable copy after retro-fix" ;;
     PAPERLESS_OCR_SUPERSEDED_TAG) echo "Tag applied to the OLD document after a retro-fix copy is created" ;;
     PAPERLESS_OCR_DELETE_ORIGINAL) echo "1 = delete the old paperless doc after retro-fix (default 0 = keep it, tagged superseded)" ;;
@@ -516,7 +522,7 @@ config_hint() {
     PAPERLESS_OCR_VLM_AUTO)      echo "1 = auto-fallback to the vision LLM when Apple Vision reads suspiciously little (handwriting/forms). 0 = only the '$(config_default PAPERLESS_OCR_VLM_TAG)' tag / '_vlm' filename force it. Benchmark: Vision wins on print, VLM on handwriting/math, VLMs loop on dense tables (docs/ocr-benchmark.md)" ;;
     PAPERLESS_OCR_VLM_MODEL)     echo "Gateway model alias for the VLM fallback route (default main-fast = Gemma-4, thinking-off). Reads handwriting/math; no per-word boxes (full-page invisible layer)" ;;
     PAPERLESS_OCR_VLM_URL)       echo "LiteLLM gateway chat-completions URL for the VLM route (default http://127.0.0.1:11434/v1/chat/completions). Empty = VLM route off" ;;
-    PAPERLESS_OCR_VLM_TAG)       echo "paperless tag that FORCES the VLM route on retro-fix (default ocr:vlm). Inbox files can force it too via '_vlm' in the filename" ;;
+    PAPERLESS_OCR_VLM_TAG)       echo "Retro-fix tag that routes a doc to the Gemma-4 VLM (default ocr:vlm) — but SKIPPED if it already has text; use ocr:vlm-force to re-OCR anyway. Inbox files: '_vlm' in the filename picks the VLM route" ;;
     PAPERLESS_OCR_VLM_MIN_CHARS) echo "Auto-fallback threshold: if Apple Vision yields fewer than this many text chars/page, re-OCR with the VLM (default 80). Raise if blank/near-blank scans wrongly trigger the VLM" ;;
     PAPERLESS_OCR_VLM_MAX_TOKENS) echo "Max tokens for the VLM transcription per page (default 4000)" ;;
     PAPERLESS_OCR_VLM_TIMEOUT_SEC) echo "HTTP timeout (seconds) for a VLM page request (default 300; a big model can be slow)" ;;
