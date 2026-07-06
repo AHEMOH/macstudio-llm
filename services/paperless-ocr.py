@@ -84,6 +84,10 @@ ERRORS = Path(os.environ.get("PAPERLESS_OCR_ERRORS", str(BASE / "errors")))
 WORK = BASE / "work"
 
 TRIGGER_TAG = os.environ.get("PAPERLESS_OCR_TRIGGER_TAG", "ocr:apple")
+# The `*-force` variants re-OCR even when the doc already has a text layer (override the
+# digital-born passthrough) — the only way to replace an existing (e.g. Tesseract) layer.
+TRIGGER_FORCE_TAG = os.environ.get("PAPERLESS_OCR_TRIGGER_FORCE_TAG", "ocr:apple-force")
+VLM_FORCE_TAG = os.environ.get("PAPERLESS_OCR_VLM_FORCE_TAG", "ocr:vlm-force")
 DONE_TAG = os.environ.get("PAPERLESS_OCR_DONE_TAG", "ocr:done")
 SUPERSEDED_TAG = os.environ.get("PAPERLESS_OCR_SUPERSEDED_TAG", "ocr:superseded")
 DELETE_ORIGINAL = os.environ.get("PAPERLESS_OCR_DELETE_ORIGINAL", "0") == "1"
@@ -192,27 +196,29 @@ def _already_has_text(pdf_path):
         d.close()
 
 
-def make_searchable(src, dst, force_vlm=False):
+def make_searchable(src, dst, use_vlm=False, force=False):
     """Produce a searchable PDF at `dst`. Returns (mode, count) where mode is
     'passthrough' | 'ocr' | 'vlm'.
 
-    `force_vlm` (an explicit `ocr:vlm` tag / `_vlm` filename) is an OVERRIDE and wins over
-    everything — including the digital-born passthrough — so re-tagging an already-OCR'd
-    doc `ocr:vlm` really re-runs Gemma on the page images (e.g. to fix handwriting Vision
-    missed). Otherwise: digital-born PDFs (already have text) are passed through untouched;
-    scans get Apple Vision, and if the Vision pass is sparse (< VLM_MIN_CHARS chars/page)
-    and VLM_AUTO is on, it escalates to the Gemma-4 route."""
+    Two independent controls:
+      * `use_vlm` — pick the engine: False = Apple Vision (fast; auto-escalates to the VLM
+        only when the Vision pass is sparse, < VLM_MIN_CHARS chars/page); True = go straight
+        to the Gemma-4 VLM route (handwriting/math).
+      * `force`   — if True, re-OCR even when the PDF ALREADY has a text layer (ignore the
+        digital-born passthrough). This is what the `*-force` tags set, so you can replace a
+        bad existing layer (e.g. Tesseract mojibake) with Apple Vision / Gemma. If False, a
+        digital-born PDF is passed through untouched (safe for mass-tagging)."""
     src, dst = Path(src), Path(dst)
-    if force_vlm and VLM_URL:
+    if not force and src.suffix.lower() == ".pdf" and _already_has_text(src):
+        shutil.copy2(str(src), str(dst))
+        return ("passthrough", 0)
+    if use_vlm and VLM_URL:
         try:
             return ("vlm", vlm_ocr_pdf(src, dst))
         except Exception as e:
-            log(f"forced VLM route failed ({e}); falling back to normal handling")
-    if src.suffix.lower() == ".pdf" and _already_has_text(src):
-        shutil.copy2(str(src), str(dst))
-        return ("passthrough", 0)
+            log(f"VLM route failed ({e}); falling back to Apple Vision")
     n = ocr_pdf(src, dst)  # Apple Vision (fast, always run first as the printed-text pass)
-    if VLM_AUTO and VLM_URL and not force_vlm and _avg_chars(dst) < VLM_MIN_CHARS:
+    if VLM_AUTO and VLM_URL and not use_vlm and _avg_chars(dst) < VLM_MIN_CHARS:
         try:
             log(f"Vision sparse (<{VLM_MIN_CHARS} chars/pg) — escalating to VLM {VLM_MODEL}")
             return ("vlm", vlm_ocr_pdf(src, dst))
@@ -518,8 +524,9 @@ def gateway_once():
             continue  # still being written (or too fresh) — try again next poll
         try:
             out = WORK / (p.stem + ".ocr.pdf")
-            # naming an inbox file with "_vlm" forces the Gemma-4 route (handwriting/math).
-            mode, n = make_searchable(p, out, force_vlm="_vlm" in p.stem.lower())
+            # inbox filename hints: "_vlm" -> Gemma route; "_force" -> re-OCR even if text exists.
+            stem_l = p.stem.lower()
+            mode, n = make_searchable(p, out, use_vlm="_vlm" in stem_l, force="_force" in stem_l)
             name = _smart_name(out, p.stem)  # short descriptive name from the OCR text
             _upload(out, title=name)
             # archive the pristine original under the descriptive name (retention prunes it).
@@ -597,13 +604,21 @@ def gateway_tick():
 
 
 def retrofix_once():
-    # Two triggers: TRIGGER_TAG (re-OCR with Apple Vision) and VLM_TAG (force the Gemma-4
-    # route — for handwriting/math docs). A doc carrying VLM_TAG takes the VLM route.
-    tid = _tag_id(TRIGGER_TAG, create=False)
-    vlm_tid = _tag_id(VLM_TAG, create=False)
-    trigger_ids = {t for t in (tid, vlm_tid) if t}
+    # Four triggers, two axes — engine (apple/vlm) x force (respect vs override the
+    # digital-born passthrough):
+    #   ocr:apple        -> Apple Vision, skip if the doc already has text (safe, mass-taggable)
+    #   ocr:apple-force  -> Apple Vision, re-OCR even if text exists (replace e.g. Tesseract)
+    #   ocr:vlm          -> Gemma-4, skip if the doc already has text
+    #   ocr:vlm-force    -> Gemma-4, re-OCR even if text exists
+    ids = {
+        "apple":       _tag_id(TRIGGER_TAG, create=False),
+        "apple_force": _tag_id(TRIGGER_FORCE_TAG, create=False),
+        "vlm":         _tag_id(VLM_TAG, create=False),
+        "vlm_force":   _tag_id(VLM_FORCE_TAG, create=False),
+    }
+    trigger_ids = {t for t in ids.values() if t}
     if not trigger_ids:
-        return  # nobody tagged anything yet
+        return  # none of the trigger tags exist yet (nobody tagged anything)
     docs = {}
     for qtid in trigger_ids:
         r = _session.get(f"{URL}/api/documents/", params={"tags__id__all": qtid})
@@ -611,7 +626,10 @@ def retrofix_once():
         for doc in r.json().get("results", []):
             docs[doc["id"]] = doc
     for did, doc in docs.items():
-        force_vlm = bool(vlm_tid) and vlm_tid in doc.get("tags", [])
+        dtags = doc.get("tags", [])
+        has = lambda k: bool(ids[k]) and ids[k] in dtags
+        use_vlm = has("vlm") or has("vlm_force")
+        force = has("apple_force") or has("vlm_force")
         try:
             src = WORK / f"{did}.orig.pdf"
             WORK.mkdir(parents=True, exist_ok=True)
@@ -620,16 +638,17 @@ def retrofix_once():
                 resp.raise_for_status()
                 src.write_bytes(resp.content)
             out = WORK / f"{did}.ocr.pdf"
-            mode, n = make_searchable(src, out, force_vlm=force_vlm)
-            base_tags = [t for t in doc.get("tags", []) if t not in trigger_ids]
+            mode, n = make_searchable(src, out, use_vlm=use_vlm, force=force)
+            base_tags = [t for t in dtags if t not in trigger_ids]
             if mode == "passthrough":
-                # Already has a good text layer (digital-born) — nothing to re-OCR.
-                # Just clear the trigger tag(s); no duplicate upload. This makes it safe
-                # to auto-tag a whole mail source ocr:apple — scans get re-OCR'd,
-                # digital-born ones are simply released.
+                # Already has a good text layer and NOT forced — nothing to re-OCR. Just
+                # clear the trigger tag(s); no duplicate upload. This makes it safe to
+                # auto-tag a whole mail source ocr:apple — scans get re-OCR'd, digital-born
+                # ones are simply released. (Use the *-force tags to re-OCR anyway.)
                 _session.patch(f"{URL}/api/documents/{did}/",
                                json={"tags": base_tags}).raise_for_status()
-                log(f"retrofix: doc {did} already has text -> skipped (triggers cleared)")
+                log(f"retrofix: doc {did} already has text -> skipped (triggers cleared; "
+                    f"use a *-force tag to re-OCR anyway)")
             else:
                 new_tags = base_tags + [_tag_id(DONE_TAG)]
                 _upload(out, title=doc.get("title"), tags=new_tags,
@@ -667,7 +686,8 @@ def main():
     vlm = f"{VLM_MODEL} (auto<{VLM_MIN_CHARS}ch, tag '{VLM_TAG}')" if (VLM_AUTO or VLM_URL) else "off"
     ret = f"{ARCHIVE_RETENTION_DAYS}d" if ARCHIVE_RETENTION_DAYS > 0 else "keep-forever"
     log(f"starting: url={URL} langs={LANGS} recmode={RECMODE} dpi={DPI} "
-        f"inbox={INBOX} duplex={INBOX / DUPLEX_SUBDIR} trigger='{TRIGGER_TAG}' "
+        f"inbox={INBOX} duplex={INBOX / DUPLEX_SUBDIR} "
+        f"tags=[{TRIGGER_TAG},{TRIGGER_FORCE_TAG},{VLM_TAG},{VLM_FORCE_TAG}] "
         f"vlm-fallback={vlm} smart-name={'on' if SMART_NAME else 'off'} "
         f"archive-retention={ret} poll={POLL}s")
     threading.Thread(target=_loop, args=(gateway_tick, GATEWAY_POLL, "gateway"), daemon=True).start()
