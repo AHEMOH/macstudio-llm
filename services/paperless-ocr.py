@@ -62,7 +62,7 @@ TOKEN = os.environ.get("PAPERLESS_OCR_TOKEN", "")
 LANGS = [s.strip() for s in os.environ.get("PAPERLESS_OCR_LANGS", "ru-RU,en-US").split(",") if s.strip()]
 RECMODE = os.environ.get("PAPERLESS_OCR_RECMODE", "accurate")  # accurate|fast (NOT livetext — headless-broken)
 FONT = os.environ.get("PAPERLESS_OCR_FONT", "/System/Library/Fonts/Supplemental/Arial Unicode.ttf")
-DPI = int(os.environ.get("PAPERLESS_OCR_DPI", "200"))
+DPI = int(os.environ.get("PAPERLESS_OCR_DPI", "300"))  # match a typical 300-dpi scan; 200 misses small text
 JPEG_Q = int(os.environ.get("PAPERLESS_OCR_JPEG_Q", "75"))  # embedded page-image JPEG quality
 # A PDF that ALREADY has a good text layer (digital-born, e.g. an emailed invoice from a
 # report generator) is passed through untouched — rasterizing + re-OCRing it would only

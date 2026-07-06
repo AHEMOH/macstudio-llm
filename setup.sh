@@ -362,7 +362,7 @@ config_default() {
     PAPERLESS_OCR_LANGS)         echo ru-RU,en-US ;;
     PAPERLESS_OCR_RECMODE)       echo accurate ;;
     PAPERLESS_OCR_FONT)          echo "/System/Library/Fonts/Supplemental/Arial Unicode.ttf" ;;
-    PAPERLESS_OCR_DPI)           echo 200 ;;
+    PAPERLESS_OCR_DPI)           echo 300 ;;
     PAPERLESS_OCR_JPEG_Q)        echo 75 ;;
     PAPERLESS_OCR_TEXT_MIN_CHARS) echo 50 ;;
     PAPERLESS_OCR_INBOX)         echo /Users/mac/paperless-ocr/inbox ;;
@@ -490,7 +490,7 @@ config_hint() {
     PAPERLESS_OCR_LANGS)         echo "Apple Vision recognition languages, comma-separated BCP-47 (e.g. ru-RU,en-US). Multiple allowed (unlike ocrmypdf-appleocr)" ;;
     PAPERLESS_OCR_RECMODE)       echo "Vision recognition level: accurate (default) or fast. NOT 'livetext' (VisionKit, crashes headless under launchd)" ;;
     PAPERLESS_OCR_FONT)          echo "Path to a Unicode/Cyrillic-capable TTF embedded for the invisible text layer (default: macOS 'Arial Unicode.ttf')" ;;
-    PAPERLESS_OCR_DPI)           echo "Render DPI for OCR (higher = better on small text, slower; default 200)" ;;
+    PAPERLESS_OCR_DPI)           echo "Render DPI for OCR (default 300 = match a typical scanner; verified: 300 fixes small-text errors that 200 misses, same speed). Above the scan's native DPI only bloats the file — no quality gain" ;;
     PAPERLESS_OCR_JPEG_Q)        echo "JPEG quality (1-100) of the embedded page image in the output PDF (default 75)" ;;
     PAPERLESS_OCR_TEXT_MIN_CHARS) echo "Digital-born detection: a PDF with at least this many text chars/page is passed through UNTOUCHED (no re-OCR); below it = treated as a scan and OCR'd. Default 50" ;;
     PAPERLESS_OCR_INBOX)         echo "Gateway watch folder: drop PDFs/images here -> OCR'd + uploaded to paperless" ;;
