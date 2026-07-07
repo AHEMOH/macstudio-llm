@@ -2,15 +2,11 @@
 # Launched by com.local.mlxvlm.main — the UNIFIED multimodal text engine
 # (Apple-Silicon mlx-vlm's mlx_vlm.server). Serves exactly ONE model that does
 # BOTH text and images on the same 'main' alias, internal-only; LiteLLM fronts it.
+# This is the ONE always-on text engine (TEXT_ENGINE=mlx-vlm).
 #
-# Active ONLY when TEXT_ENGINE=mlx-vlm. render_all_plists() then bootouts the
-# mlx_lm.server daemon so the two never fight over the internal text port — exactly
-# one text daemon runs. Flip TEXT_ENGINE=mlx-lm + `--apply` is a one-step rollback.
-#
-# Why this engine: it serves gemma-4 (incl. gemma4_unified, the 12B mlx_lm.server
-# can't load) and — unlike mlx_lm.server — exposes KV-cache quantization
-# (--kv-bits / --kv-quant-scheme) so a big model + large context stays in budget on
-# 32 GB, plus native vision. Tradeoff: single-stream (no batched concurrency).
+# Why this engine: it serves gemma-4 (incl. gemma4_unified) and exposes KV-cache
+# quantization (--kv-bits / --kv-quant-scheme) so a big model + large context stays
+# in budget on 32 GB, plus native vision. Tradeoff: single-stream (no batched concurrency).
 # Thinking is OFF by default here; set MLXVLM_MAIN_ENABLE_THINKING=1 to allow it.
 #
 # Only ONE big model loads at a time (GLM-OCR is the sole on-demand co-resident).
@@ -30,7 +26,7 @@ export PATH="$VENV_DIR/mlxvlm/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 export HF_HOME="${HF_CACHE_DIR:-$HOME/.cache/huggingface}"
 [ -n "${HF_TOKEN:-}" ] && export HF_TOKEN
 
-MODEL_ID="${ALIAS_MAIN:-gemma4-26b}"
+MODEL_ID="${ALIAS_MAIN:-gemma4-26b-qat}"
 field() { /usr/bin/awk -F'|' -v id="$MODEL_ID" -v n="$1" '!/^#/ && $1==id {print $n; exit}' "$CATALOG" 2>/dev/null; }
 REPO=$(field 2)
 if [ -z "${REPO:-}" ]; then
@@ -49,11 +45,11 @@ fi
 ARGS=( -m mlx_vlm.server
   --model "$REPO"
   --host 127.0.0.1
-  --port "${VLLM_BACKEND_PORT:-18000}" )
+  --port "${MAIN_BACKEND_PORT:-18000}" )
 [ -n "${MLXVLM_MAIN_KV_BITS:-}" ]     && ARGS+=( --kv-bits "$MLXVLM_MAIN_KV_BITS" )
 [ -n "${MLXVLM_MAIN_KV_SCHEME:-}" ]   && ARGS+=( --kv-quant-scheme "$MLXVLM_MAIN_KV_SCHEME" )
 [ -n "${MLXVLM_MAIN_MAX_KV_SIZE:-}" ] && ARGS+=( --max-kv-size "$MLXVLM_MAIN_MAX_KV_SIZE" )
-[ -n "${MLXLM_MAX_TOKENS:-}" ]        && ARGS+=( --max-tokens "$MLXLM_MAX_TOKENS" )
+[ -n "${MLXVLM_MAX_TOKENS:-}" ]       && ARGS+=( --max-tokens "$MLXVLM_MAX_TOKENS" )
 # Thinking is OFF by default on mlx_vlm.server; only opt in explicitly.
 [ "${MLXVLM_MAIN_ENABLE_THINKING:-0}" = 1 ] && ARGS+=( --enable-thinking )
 
@@ -73,7 +69,7 @@ if [ -n "${MLXVLM_DRAFT_MODEL:-}" ]; then
   fi
 fi
 
-echo "[start-mlxvlm-main] serving UNIFIED main='$MODEL_ID' repo='$REPO' (text+vision) on 127.0.0.1:${VLLM_BACKEND_PORT:-18000}"
-echo "[start-mlxvlm-main] kv_bits='${MLXVLM_MAIN_KV_BITS:-default}' kv_scheme='${MLXVLM_MAIN_KV_SCHEME:-default}' max_kv_size='${MLXVLM_MAIN_MAX_KV_SIZE:-default}' max_tokens='${MLXLM_MAX_TOKENS:-default}' thinking='${MLXVLM_MAIN_ENABLE_THINKING:-0}' mtp_drafter='${MLXVLM_DRAFT_MODEL:-off}'($([ "$DRAFT_OK" = 1 ] && echo active || echo off))"
+echo "[start-mlxvlm-main] serving UNIFIED main='$MODEL_ID' repo='$REPO' (text+vision) on 127.0.0.1:${MAIN_BACKEND_PORT:-18000}"
+echo "[start-mlxvlm-main] kv_bits='${MLXVLM_MAIN_KV_BITS:-default}' kv_scheme='${MLXVLM_MAIN_KV_SCHEME:-default}' max_kv_size='${MLXVLM_MAIN_MAX_KV_SIZE:-default}' max_tokens='${MLXVLM_MAX_TOKENS:-default}' thinking='${MLXVLM_MAIN_ENABLE_THINKING:-0}' mtp_drafter='${MLXVLM_DRAFT_MODEL:-off}'($([ "$DRAFT_OK" = 1 ] && echo active || echo off))"
 
 exec "$VENV_DIR/mlxvlm/bin/python" "${ARGS[@]}"

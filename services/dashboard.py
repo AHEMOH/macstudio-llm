@@ -87,26 +87,18 @@ JOB_RC_RE = re.compile(r"^__JOB_RC__=(\d+)\s*$", re.MULTILINE)
 # Service registry: label -> (German display name, kind). `kind` drives the UI
 # actions (always-on -> restart/stop; on-demand -> wake/stop; scheduled -> none).
 SERVICES = [
-    ("com.local.mlxlm.serve",       "Text-Engine (mlx-lm)",        "always"),
     ("com.local.mlxvlm.main",       "Text-Engine (mlx-vlm)",       "always"),
-    ("com.local.optiq.main",        "Text-Engine (optiq, main)",   "always"),
-    ("com.local.vllmmlx.main",      "Text-Engine (vllm-mlx)",      "always"),
     ("com.local.litellm.proxy",     "LiteLLM-Gateway",             "always"),
     ("com.local.glmocr.proxy",      "GLM-OCR Proxy",               "always"),
     ("com.local.glmocr.serve",      "GLM-OCR Backend",             "ondemand"),
-    ("com.local.vision.proxy",      "Vision Proxy",                "always"),
-    ("com.local.vision.serve",      "Vision Backend",              "ondemand"),
     ("com.local.infinity.proxy",    "Embed/Rerank Proxy",          "always"),
     ("com.local.infinity.serve",    "Embed/Rerank Backend",        "ondemand"),
-    ("com.local.ollama.headless",   "Ollama (Fallback)",           "always"),
-    ("com.local.optiq.agent",       "Agent-Modell (optiq)",        "always"),
     ("com.local.immich.proxy",      "immich-ml Proxy",             "always"),
     ("com.local.immich.ml",         "immich-ml Backend",           "ondemand"),
     ("com.local.docling.proxy",     "docling Proxy",               "always"),
     ("com.local.docling.serve",     "docling Backend",             "ondemand"),
     ("com.local.node.exporter",     "Node-Exporter",               "always"),
     ("com.local.silicon.exporter",  "Silicon-Exporter",            "always"),
-    ("com.local.ollama.exporter",   "Ollama-Exporter",             "always"),
     ("com.local.ondemand.exporter", "On-Demand-Exporter",          "always"),
     ("com.local.llm.watchdog",      "Speicher-Watchdog",           "always"),
     ("com.local.inference.watchdog","Inferenz-Watchdog",           "always"),
@@ -123,26 +115,18 @@ ALL_LABELS = {lbl for lbl, _n, _k in SERVICES}
 
 # label -> log file (mirror setup.sh label_log()).
 LABEL_LOG = {
-    "com.local.mlxlm.serve": "mlxlm.log",
     "com.local.mlxvlm.main": "mlxvlm-main.log",
-    "com.local.optiq.main": "optiq-main.log",
-    "com.local.vllmmlx.main": "vllmmlx-main.log",
     "com.local.litellm.proxy": "litellm.log",
     "com.local.glmocr.proxy": "glmocr-proxy.log",
     "com.local.glmocr.serve": "glmocr-serve.log",
     "com.local.infinity.proxy": "infinity-proxy.log",
     "com.local.infinity.serve": "infinity-serve.log",
-    "com.local.vision.proxy": "vision-proxy.log",
-    "com.local.vision.serve": "vision-serve.log",
-    "com.local.ollama.headless": "ollama.log",
-    "com.local.optiq.agent": "optiq-agent.log",
     "com.local.immich.proxy": "immich-proxy.log",
     "com.local.immich.ml": "immich-ml.log",
     "com.local.docling.proxy": "docling-proxy.log",
     "com.local.docling.serve": "docling-serve.log",
     "com.local.node.exporter": "node-exporter.log",
     "com.local.silicon.exporter": "silicon-exporter.log",
-    "com.local.ollama.exporter": "ollama-exporter.log",
     "com.local.ondemand.exporter": "ondemand-exporter.log",
     "com.local.llm.watchdog": "watchdog.log",
     "com.local.inference.watchdog": "inference-watchdog.log",
@@ -216,29 +200,14 @@ def active_labels():
     """Mirror load_config()'s ACTIVE_LABELS gates."""
     c = conf()
     mlx = c.get("INSTALL_MLX", "1") == "1"
-    engine = c.get("TEXT_ENGINE", "mlx-lm") or "mlx-lm"
     out = []
     for lbl, _name, _kind in SERVICES:
-        if lbl == "com.local.mlxlm.serve":
-            keep = mlx and engine == "mlx-lm"
-        elif lbl == "com.local.mlxvlm.main":
-            keep = mlx and engine == "mlx-vlm"
-        elif lbl == "com.local.optiq.main":
-            keep = mlx and engine == "optiq"
-        elif lbl == "com.local.vllmmlx.main":
-            keep = mlx and engine == "vllm-mlx"
+        if lbl == "com.local.mlxvlm.main":
+            keep = mlx
         elif lbl.startswith("com.local.litellm.") or lbl.startswith("com.local.glmocr."):
             keep = mlx
         elif lbl.startswith("com.local.infinity."):
             keep = c.get("INSTALL_EMBED", "1") == "1"
-        elif lbl.startswith("com.local.vision."):
-            keep = mlx and bool(c.get("ALIAS_VISION", ""))
-        elif lbl == "com.local.ollama.headless":
-            keep = c.get("INSTALL_OLLAMA", "0") == "1"
-        elif lbl == "com.local.optiq.agent":
-            keep = mlx and c.get("INSTALL_AGENT", "0") == "1"
-        elif lbl == "com.local.ollama.exporter":
-            keep = c.get("INSTALL_OLLAMA", "0") == "1" and c.get("INSTALL_EXPORTERS", "1") == "1"
         elif lbl.startswith("com.local.immich."):
             keep = c.get("INSTALL_IMMICH", "1") == "1"
         elif lbl.startswith("com.local.docling."):
@@ -806,11 +775,10 @@ def api_status():
         "hostname": host_name(),
         "time": int(time.time()),
         "boot_epoch": boot_time_epoch(),
-        "engine": c.get("TEXT_ENGINE", "mlx-lm"),
+        "engine": c.get("TEXT_ENGINE", "mlx-vlm"),
         "aliases": {
             "main": c.get("ALIAS_MAIN", ""),
             "main_fast": c.get("PRESET_ALIASES", "1") == "1",
-            "agent": c.get("AGENT_MODEL", "") if c.get("INSTALL_AGENT", "0") == "1" else "",
             "ocr": c.get("ALIAS_OCR", ""),
             "embed": c.get("ALIAS_EMBED", ""),
             "rerank": c.get("ALIAS_RERANK", ""),
@@ -836,8 +804,7 @@ def api_status():
 def api_models():
     c = conf()
     hf = c.get("HF_CACHE_DIR", DEFAULT_HF) or DEFAULT_HF
-    engine = c.get("TEXT_ENGINE", "mlx-lm") or "mlx-lm"
-    agent_on = c.get("INSTALL_AGENT", "0") == "1"
+    engine = c.get("TEXT_ENGINE", "mlx-vlm") or "mlx-vlm"
     rows = []
     for r in read_catalog():
         st = model_status(r["repo"], hf)
@@ -848,24 +815,21 @@ def api_models():
         # the catalog's gb column is unknown ("?"). Display-only; the TUI-owned
         # catalog is never rewritten.
         row["disk_bytes"] = model_downloaded_bytes(r["repo"], hf) if st in ("ok", "partial") else 0
-        row["broken_main"] = is_broken_for(notes, engine) if r["role"] == "text" else None
-        row["broken_agent"] = is_broken_for(notes, "optiq") if r["role"] == "text" else None
+        row["broken_main"] = is_broken_for(notes, "mlx-vlm") if r["role"] == "text" else None
         if r["role"] in ("embed", "rerank"):
             row["broken"] = is_broken_for(notes, "infinity")
-        elif r["role"] in ("ocr", "vision"):
+        elif r["role"] == "ocr":
             row["broken"] = is_broken_for(notes, "mlx-vlm")
         else:
             row["broken"] = row["broken_main"]
         row["slots"] = [s for s, key in (
-            ("main", "ALIAS_MAIN"), ("ocr", "ALIAS_OCR"), ("vision", "ALIAS_VISION"),
+            ("main", "ALIAS_MAIN"), ("ocr", "ALIAS_OCR"),
             ("embed", "ALIAS_EMBED"), ("rerank", "ALIAS_RERANK"),
         ) if c.get(key, "") == r["id"]]
-        if agent_on and c.get("AGENT_MODEL", "") == r["id"]:
-            row["slots"].append("agent")
         rows.append(row)
     hf_token = os.path.isfile(os.path.join(hf, "token"))
     return {
-        "engine": engine, "agent_enabled": agent_on,
+        "engine": engine,
         "hf_token_set": hf_token, "models": rows,
     }
 
@@ -1289,7 +1253,7 @@ class Handler(BaseHTTPRequestHandler):
     def handle_model_select(self, body):
         slot = str(body.get("slot", ""))
         mid = str(body.get("id", ""))
-        if slot not in ("main", "agent", "ocr", "embed", "rerank"):
+        if slot not in ("main", "ocr", "embed", "rerank"):
             self.send_json({"error": f"ungültiger Slot: {slot}"}, code=400)
             return
         setup = find_setup_sh()

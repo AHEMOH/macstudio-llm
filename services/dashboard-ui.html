@@ -312,13 +312,13 @@
       <div><label class="muted" style="font-size:12px">Rolle</label>
         <select id="edRole">
           <option value="text">text</option><option value="ocr">ocr</option>
-          <option value="vision">vision</option><option value="embed">embed</option>
+          <option value="embed">embed</option>
           <option value="rerank">rerank</option>
         </select></div>
       <div><label class="muted" style="font-size:12px">Engine</label>
         <select id="edEngine">
-          <option value="optiq">optiq</option><option value="mlxvlm">mlxvlm</option>
-          <option value="mlxlm">mlxlm</option><option value="infinity">infinity</option>
+          <option value="mlxvlm">mlxvlm</option>
+          <option value="infinity">infinity</option>
         </select></div>
       <div><label class="muted" style="font-size:12px">Quant</label>
         <input type="text" id="edQuant" placeholder="4bit" autocomplete="off"></div>
@@ -347,9 +347,9 @@
       <div><label class="muted" style="font-size:12px">presence_penalty</label>
         <input type="text" id="edPres" autocomplete="off"></div>
     </div>
-    <p class="muted" style="font-size:12px;margin-top:10px">Hinweis: Unter der optiq-Engine ist die
-      Kontextlänge informativ (kein Cap-Flag); KV-Quantisierung ist die globale Einstellung
-      <code>OPTIQ_KV_BITS</code>. Sampling-Änderungen an einem aktiven Modell greifen erst nach erneutem Aktivieren.</p>
+    <p class="muted" style="font-size:12px;margin-top:10px">Hinweis: Die Kontextlänge (max_kv_size)
+      wird über <code>MLXVLM_MAIN_MAX_KV_SIZE</code> gesetzt, KV-Quantisierung über
+      <code>MLXVLM_MAIN_KV_BITS</code>. Sampling-Änderungen an einem aktiven Modell greifen erst nach erneutem Aktivieren.</p>
     <div class="row">
       <button id="editCancel">Abbrechen</button>
       <button class="primary" id="editSave">Speichern</button>
@@ -362,28 +362,25 @@
   <div class="modal">
     <h2>Modell hinzufügen</h2>
     <p>Neuen Katalogeintrag anlegen (danach herunterladen). HF-Repo muss ein
-       fertiges MLX-Build sein — z. B. <code>mlx-community/…-OptiQ-4bit</code>.
+       fertiges MLX-Build sein — z. B. <code>mlx-community/gemma-4-…-qat-4bit</code>.
        Bearbeiten/Entfernen jetzt auch per Zeilenaktion.</p>
     <div style="display:grid;gap:10px">
       <div><label class="muted" style="font-size:12px">HF-Repo (org/name)</label>
-        <input type="text" id="addRepo" placeholder="mlx-community/gpt-oss-20b-OptiQ-4bit" autocomplete="off"></div>
+        <input type="text" id="addRepo" placeholder="mlx-community/gemma-4-26B-A4B-it-qat-4bit" autocomplete="off"></div>
       <div><label class="muted" style="font-size:12px">ID (Kurzname — leer = aus Repo)</label>
-        <input type="text" id="addId" placeholder="gpt-oss-20b-optiq" autocomplete="off"></div>
+        <input type="text" id="addId" placeholder="gemma4-26b-qat" autocomplete="off"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div><label class="muted" style="font-size:12px">Rolle</label>
           <select id="addRole">
-            <option value="text">text (main/agent)</option>
+            <option value="text">text (main)</option>
             <option value="ocr">ocr</option>
-            <option value="vision">vision</option>
             <option value="embed">embed</option>
             <option value="rerank">rerank</option>
           </select></div>
         <div><label class="muted" style="font-size:12px">Engine (leer = automatisch)</label>
           <select id="addEngine">
             <option value="">automatisch</option>
-            <option value="optiq">optiq</option>
             <option value="mlxvlm">mlxvlm</option>
-            <option value="mlxlm">mlxlm</option>
             <option value="infinity">infinity</option>
           </select></div>
       </div>
@@ -838,9 +835,9 @@ function viewUebersicht() {
       <div class="card"><div class="label">Hauptmodell (main)</div>
         <div class="value" title="${esc(a.main)}">${esc(a.main || "–")}</div>
         <div class="sub">Engine: ${esc(st.engine)}${a.main_fast ? " · main-fast aktiv" : ""}</div></div>
-      <div class="card"><div class="label">Agent</div>
-        <div class="value" title="${esc(a.agent)}">${esc(a.agent || "aus")}</div>
-        <div class="sub">ocr: ${esc(a.ocr || "aus")} · embed: ${a.embed ? "an" : "aus"}</div></div>
+      <div class="card"><div class="label">OCR / Embed</div>
+        <div class="value" title="${esc(a.ocr)}">${esc(a.ocr || "aus")}</div>
+        <div class="sub">embed: ${a.embed ? "an" : "aus"} · rerank: ${a.rerank ? "an" : "aus"}</div></div>
       <div class="card"><div class="label">RAM frei</div>
         <div class="value">${fmtMB(m.ram_free_mb)}</div>
         <div class="sub">von ${m.total_ram_gb != null ? m.total_ram_gb + " GB" : "–"} · Druck:
@@ -923,8 +920,8 @@ function viewModelle() {
       else if (isFinite(gbNum) && gbNum > 0) gbtxt = esc(m.gb);
       let flags = "";
       if (m.broken) flags += ` <span class="badge broken" title="${esc(m.notes)}">BROKEN</span>`;
-      else if (m.role === "text" && (m.broken_main || m.broken_agent)) {
-        flags += ` <span class="badge broken" title="${esc(m.notes)}">BROKEN[${m.broken_main ? "main" : "agent"}]</span>`;
+      else if (m.role === "text" && m.broken_main) {
+        flags += ` <span class="badge broken" title="${esc(m.notes)}">BROKEN[main]</span>`;
       }
       if (m.rating === "5") flags += ' <span class="badge rec">REC</span>';
       if (m.gated === "yes") flags += ' <span class="badge gated" title="Lizenz + HF-Token nötig">🔒 gated</span>';
@@ -937,8 +934,6 @@ function viewModelle() {
       if (m.status === "ok") {
         if (m.role === "text" && !(m.slots || []).includes("main"))
           acts.push(`<button class="small" data-act="main" data-id="${esc(m.id)}" ${m.broken_main ? "disabled title='BROKEN für die aktive Engine'" : ""}>→ main</button>`);
-        if (m.role === "text" && d.agent_enabled && !(m.slots || []).includes("agent"))
-          acts.push(`<button class="small" data-act="agent" data-id="${esc(m.id)}" ${m.broken_agent ? "disabled title='BROKEN für optiq'" : ""}>→ agent</button>`);
         if (m.role === "ocr" && !(m.slots || []).includes("ocr"))
           acts.push(`<button class="small" data-act="ocr" data-id="${esc(m.id)}" ${m.broken ? "disabled" : ""}>→ ocr</button>`);
         if (m.role === "embed" && !(m.slots || []).includes("embed"))
@@ -999,7 +994,6 @@ function viewModelle() {
         } else {
           const warnTxt = {
             main: "Das Text-Backend startet neu und lädt das Modell (~30–60 s, kein Hot-Swap).",
-            agent: "Der Agent-Daemon startet neu (~10–30 s).",
             ocr: "Das OCR-Backend wird gestoppt; die nächste Anfrage weckt es mit dem neuen Modell.",
             embed: "Das Embed/Rerank-Backend wird gestoppt und lädt beim nächsten Zugriff neu.",
             rerank: "Das Embed/Rerank-Backend wird gestoppt und lädt beim nächsten Zugriff neu.",
@@ -1028,7 +1022,7 @@ function openEditModal(m) {
   $("#editSub").textContent = m.id + " — " + m.repo;
   $("#edRepo").value = m.repo || "";
   $("#edRole").value = m.role || "text";
-  $("#edEngine").value = m.engine || "optiq";
+  $("#edEngine").value = m.engine || "mlxvlm";
   $("#edQuant").value = m.quant || "";
   $("#edGb").value = m.gb || "";
   $("#edKv").value = m.max_kv_size || "";
@@ -1237,14 +1231,12 @@ function viewPaperless() {
    ========================================================================= */
 const SET_GROUPS = [
   ["Dienste (Install-Schalter)", k => k.startsWith("INSTALL_")],
-  ["Modelle & Aliase", k => k.startsWith("ALIAS_") || k === "MODEL_PIN_MAIN" || k === "AGENT_MODEL"],
-  ["Text-Engine", k => k === "TEXT_ENGINE" || k.startsWith("VLLM_") || k === "LLM_REQUEST_TIMEOUT"
-      || k.startsWith("MLXLM_") || k.startsWith("MLXVLM_") || k.startsWith("OPTIQ_")
+  ["Modelle & Aliase", k => k.startsWith("ALIAS_") || k === "MODEL_PIN_MAIN"],
+  ["Text-Engine", k => k === "TEXT_ENGINE" || k.startsWith("MAIN_") || k === "LLM_REQUEST_TIMEOUT"
+      || k.startsWith("MLXVLM_")
       || k === "GEMMA_TOP_K" || k === "PRESET_ALIASES" || k === "LITELLM_PORT"],
-  ["Agent", k => k.startsWith("AGENT_")],
-  ["OCR & Vision", k => k.startsWith("GLMOCR_") || k.startsWith("VISION_") || k.includes("GLMOCR")],
+  ["OCR", k => k.startsWith("GLMOCR_") || k.includes("GLMOCR")],
   ["Embeddings & Rerank", k => k.startsWith("INFINITY_") || k.includes("INFINITY")],
-  ["Ollama (Fallback)", k => k.startsWith("OLLAMA_")],
   ["immich & docling", k => k.includes("IMMICH") || k.includes("DOCLING") || k.startsWith("ML_")],
   ["Exporter & MQTT", k => k.includes("EXPORTER") || k.startsWith("MQTT_") || k === "SILICON_SAMPLE_INTERVAL_MS"],
   ["Watchdog & Wartung", k => k.startsWith("WATCHDOG_") || k.startsWith("INFERENCE_") || k.startsWith("AUTOUPDATE_")],
@@ -1318,7 +1310,7 @@ function viewEinstellungen() {
                            || r.key === "WATCHDOG_AUTO_RESTORE" || r.key.endsWith("_FLASH_ATTENTION"));
         let input;
         if (r.key === "TEXT_ENGINE") {
-          input = `<select data-key="${esc(r.key)}">` + ["optiq", "mlx-vlm", "mlx-lm"].map(o =>
+          input = `<select data-key="${esc(r.key)}">` + ["mlx-vlm"].map(o =>
             `<option value="${o}" ${r.value === o ? "selected" : ""}>${o}</option>`).join("") + "</select>";
         } else if (isBool) {
           input = `<label class="switch"><input type="checkbox" data-key="${esc(r.key)}" ${r.value === "1" ? "checked" : ""}><span></span></label>`;
@@ -1397,7 +1389,7 @@ function viewLogs() {
     try { d = await api("/api/logs"); } catch (e) { return; }
     const sel = $("#logSelect");
     const names = d.logs.map(l => l.name);
-    if (!lv.name || !names.includes(lv.name)) lv.name = names.includes("optiq-main.log") ? "optiq-main.log" : names[0];
+    if (!lv.name || !names.includes(lv.name)) lv.name = names.includes("mlxvlm-main.log") ? "mlxvlm-main.log" : names[0];
     sel.innerHTML = d.logs.map(l =>
       `<option value="${esc(l.name)}" ${l.name === lv.name ? "selected" : ""}>${esc(l.name)} (${fmtBytes(l.size)})</option>`).join("");
     sel.onchange = () => { lv.name = sel.value; reload(); };

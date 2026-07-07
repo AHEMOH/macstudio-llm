@@ -2,7 +2,7 @@
   Mac Studio Headless LLM Server          (Apple Silicon, @TOTAL_RAM_GB@ GB)
 ══════════════════════════════════════════════════════════════════════
   Primary:    LiteLLM       :@LITELLM_PORT@   (public gateway; alias 'main' → one MLX model)
-              mlx_lm.server :@VLLM_BACKEND_PORT@   (internal; text engine)
+              mlx_vlm.server :@MAIN_BACKEND_PORT@   (internal; unified text+images engine)
   On-demand:  GLM-OCR       :@GLMOCR_PUBLIC_PORT@    (auto-wakes for OCR, only model run in parallel)
               immich-ml     :@ML_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_IMMICH@m)
               docling-serve :@DOCLING_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_DOCLING@m)
@@ -31,7 +31,7 @@
 
   Dashboard:    http://<this-mac>:@DASHBOARD_PORT@   (browser control — token: DASHBOARD_TOKEN in macstudio.conf)
   Settings:     sudo bash /opt/macstudio/setup.sh
-  Logs:         tail -F /var/log/macstudio/mlxlm.log    (or litellm.log / glmocr-serve.log)
+  Logs:         tail -F /var/log/macstudio/mlxvlm-main.log    (or litellm.log / glmocr-serve.log)
   Weekly auto:  @AUTOUPDATE_HUMAN@ → /var/log/macstudio/autoupdate.log
 
   Maintenance (FileVault is ON — reboot needs a key):
