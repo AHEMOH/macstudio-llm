@@ -54,6 +54,11 @@ ONDEMAND_LABELS=(
   com.local.docling.serve
 )
 ALL_LABELS=( "${ALWAYS_ON_LABELS[@]}" "${ONDEMAND_LABELS[@]}" )
+# Labels the dashboard/TUI may power off/on to free RAM. Whitelisted — these
+# are the only two daemons with KeepAlive=true that hold significant memory;
+# a plain `launchctl stop` on them is undone by launchd within a second, so
+# freeing memory for good requires the persistent disable+bootout below.
+POWER_LABELS=(com.local.mlxvlm.main com.local.infinity.proxy)
 
 # --- Config keys with defaults --------------------------------------------
 # (order preserved, used for save_config and menu_settings)
@@ -628,6 +633,10 @@ daemon_pid() {
 }
 daemon_loaded()  { /bin/launchctl print "system/$1" >/dev/null 2>&1; }
 daemon_running() { local p; p=$(daemon_pid "$1"); [ -n "$p" ] && [ "$p" != 0 ]; }
+label_disabled() {
+  /bin/launchctl print-disabled system 2>/dev/null \
+    | /usr/bin/grep -qE "\"$1\"[[:space:]]*=>[[:space:]]*true"
+}
 
 bootstrap_plist() {
   local label=$1 plist="$PLIST_DIR/$1.plist"
@@ -641,6 +650,18 @@ bootout_plist() {
   local label=$1
   daemon_loaded "$label" || return 0
   /bin/launchctl bootout "system/$label" 2>/dev/null || true
+}
+
+disable_plist() {
+  # Persistent override — survives reboot AND a later --apply/bootstrap.
+  # KeepAlive/RunAtLoad in the plist cannot override this; only enable_plist can.
+  local label=$1
+  /bin/launchctl disable "system/$label" 2>/dev/null || true
+}
+
+enable_plist() {
+  local label=$1
+  /bin/launchctl enable "system/$label" 2>/dev/null || true
 }
 
 reload_plist_if_changed() {
@@ -1914,6 +1935,38 @@ cli_set_config() {
   ok "saved $key=$value (not applied yet — run 'sudo bash setup.sh --apply' to activate)"
 }
 
+cli_set_service_power() {
+  # --set-service-power <label> <on|off> — persistently stop a KeepAlive
+  # daemon to free memory (off), or restore normal autorestart + reboot
+  # survival (on). Used by the web dashboard's "Stoppen & Freigeben" /
+  # "Einschalten" buttons; whitelisted to POWER_LABELS.
+  INTERACTIVE=0
+  load_config
+  [ "$#" -eq 2 ] || { err "usage: --set-service-power <label> <on|off>"; exit 2; }
+  local label=$1 want=$2 l found=0
+  for l in "${POWER_LABELS[@]}"; do
+    [ "$l" = "$label" ] && { found=1; break; }
+  done
+  [ "$found" = 1 ] || { err "unsupported label for power control: $label"; exit 2; }
+  case "$want" in
+    off)
+      disable_plist "$label"
+      bootout_plist "$label"
+      if [ "$label" = com.local.infinity.proxy ]; then
+        /bin/launchctl stop com.local.infinity.serve >/dev/null 2>&1 || true
+      fi
+      ok "powered off $label (disabled — survives --apply and reboot)"
+      ;;
+    on)
+      enable_plist "$label"
+      bootstrap_plist "$label"
+      ok "powered on $label (autorestart + reboot survival restored)"
+      ;;
+    *)
+      err "usage: --set-service-power <label> <on|off>"; exit 2 ;;
+  esac
+}
+
 cli_config_schema() {
   # --config-schema — dump KEY<TAB>current<TAB>default<TAB>hint, one line per
   # key. TAB-delimited on purpose: hints contain '|' (e.g. TEXT_ENGINE).
@@ -2343,6 +2396,7 @@ menu_service_ctl() {
       pid=$(daemon_pid "$label"); pid=${pid:-0}
       if daemon_loaded "$label"; then
         if [ "$pid" != 0 ]; then state="${C_GRN}running${C_RST}"; else state="${C_DIM}sleeping${C_RST}"; fi
+      elif label_disabled "$label"; then state="${C_RED}disabled${C_RST}"
       else state="${C_RED}absent${C_RST}"; fi
       printf "  %2d) %-36s %b  pid=%s\n" "$i" "$label" "$state" "$pid"
       menu_labels+=("$label")
@@ -2362,7 +2416,13 @@ menu_service_ctl() {
       *)
         if [ "$c" -ge 1 ] && [ "$c" -le "${#menu_labels[@]}" ]; then
           local label="${menu_labels[$((c-1))]}"
-          echo "  1) kickstart (restart)  2) stop  3) view logs  q) back"
+          local is_power=0 pl
+          for pl in "${POWER_LABELS[@]}"; do [ "$pl" = "$label" ] && is_power=1; done
+          if [ "$is_power" = 1 ]; then
+            echo "  1) kickstart (restart)  2) stop  3) view logs  4) power off (free memory permanently)  5) power on (restore autorestart)  q) back"
+          else
+            echo "  1) kickstart (restart)  2) stop  3) view logs  q) back"
+          fi
           read -r -p "Action: " a
           case "$a" in
             1) /bin/launchctl kickstart -k "system/$label" && ok "kickstarted $label" ;;
@@ -2372,6 +2432,8 @@ menu_service_ctl() {
                if [ -f "$logf" ]; then /usr/bin/tail -n 40 "$logf"; else warn "log not found: $logf"; fi
                pause_enter
                ;;
+            4) [ "$is_power" = 1 ] && { local _prev_ia="$INTERACTIVE"; cli_set_service_power "$label" off; INTERACTIVE="$_prev_ia"; } ;;
+            5) [ "$is_power" = 1 ] && { local _prev_ia="$INTERACTIVE"; cli_set_service_power "$label" on; INTERACTIVE="$_prev_ia"; } ;;
           esac
         fi
         ;;
@@ -2539,6 +2601,11 @@ MacStudio LLM Server — setup.sh v${SCRIPT_VERSION}
                                  and the web dashboard)
   sudo bash setup.sh --set-config KEY VALUE
                                  Save one config key (no apply; key must exist)
+  sudo bash setup.sh --set-service-power <label> <on|off>
+                                 Persistently power off/on the main LLM or the
+                                 Infinity proxy to free/restore memory (off =
+                                 disable+bootout, survives --apply and reboot;
+                                 on = enable+bootstrap, normal autorestart)
   sudo bash setup.sh --config-schema
                                  Dump KEY<TAB>current<TAB>default<TAB>hint
   sudo bash setup.sh --add-model id=<slug> repo=<org/name> [role=text] [engine=] [gb=] [gated=no]
@@ -2630,6 +2697,7 @@ case "${1:-}" in
   --models) need_root "$@"; menu_models ;;
   --set-model) need_root "$@"; shift; cli_set_model "$@" ;;
   --set-config) need_root "$@"; shift; cli_set_config "$@" ;;
+  --set-service-power) need_root "$@"; shift; cli_set_service_power "$@" ;;
   --config-schema) need_root "$@"; cli_config_schema ;;
   --download-model) need_root "$@"; shift; cli_download_model "$@" ;;
   --delete-model) need_root "$@"; shift; cli_delete_model "$@" ;;
