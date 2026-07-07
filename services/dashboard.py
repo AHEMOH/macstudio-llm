@@ -110,6 +110,11 @@ SERVICES = [
 ]
 ALL_LABELS = {lbl for lbl, _n, _k in SERVICES}
 
+# Services with a persistent power off/on control (frees memory for good vs.
+# a transient stop that KeepAlive respawns instantly). Mirrors setup.sh's
+# POWER_LABELS whitelist for --set-service-power.
+POWER_LABELS = {"com.local.mlxvlm.main", "com.local.infinity.proxy"}
+
 # label -> log file (mirror setup.sh label_log()).
 LABEL_LOG = {
     "com.local.mlxvlm.main": "mlxvlm-main.log",
@@ -253,6 +258,18 @@ def launchctl_state(label):
             pid = int(m.group(1))
             break
     return (pid > 0), pid  # loaded: running / sleeping
+
+
+_DISABLED_RE = re.compile(r'"([^"]+)"\s*=>\s*true')
+
+
+def disabled_labels():
+    """Labels with a persistent `launchctl disable` override (survives reboot
+    and --apply). Only POWER_LABELS ever carry this override in practice."""
+    out = run_out([LAUNCHCTL, "print-disabled", "system"], timeout=LAUNCHCTL_TIMEOUT)
+    if out is None:
+        return set()
+    return set(_DISABLED_RE.findall(out))
 
 
 def tcp_listening(port, host="127.0.0.1"):
@@ -748,6 +765,7 @@ def set_apply_pending(flag):
 def api_status():
     c = conf()
     labels = active_labels()
+    disabled = disabled_labels()
     services = []
     for lbl, name, kind in SERVICES:
         if lbl not in labels:
@@ -763,6 +781,8 @@ def api_status():
             "label": lbl, "name": name, "kind": kind,
             "state": state, "pid": pid,
             "log": LABEL_LOG.get(lbl, lbl.replace("com.local.", "") + ".log"),
+            "power": lbl in POWER_LABELS,
+            "disabled": lbl in disabled,
         })
     job = active_job()
     return {
@@ -1394,12 +1414,24 @@ class Handler(BaseHTTPRequestHandler):
         if label not in ALL_LABELS:
             self.send_json({"error": f"unbekanntes Label: {label}"}, code=400)
             return
-        if action not in ("restart", "stop", "wake"):
+        if action not in ("restart", "stop", "wake", "poweron", "poweroff"):
             self.send_json({"error": f"unbekannte Aktion: {action}"}, code=400)
+            return
+        if action in ("poweron", "poweroff") and label not in POWER_LABELS:
+            self.send_json({"error": f"Power-Steuerung nicht verfügbar für: {label}"}, code=400)
             return
         job = active_job()
         if job:
             self.busy_409(job)
+            return
+        if action in ("poweron", "poweroff"):
+            want = "on" if action == "poweron" else "off"
+            rc, out = setup_sync(["--set-service-power", label, want], timeout=30)
+            if rc == 0:
+                log(f"service {action}: {label}")
+                self.send_json({"ok": True})
+            else:
+                self.send_json({"error": out or f"setup.sh rc={rc}"}, code=500)
             return
         if action in ("restart", "wake"):
             cmd = [LAUNCHCTL, "kickstart", "-k", f"system/{label}"]

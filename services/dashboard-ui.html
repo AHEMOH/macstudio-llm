@@ -1106,10 +1106,18 @@ function viewDienste() {
   const render = st => {
     if (!st) return;
     $("#svcRows").innerHTML = st.services.map(s => {
-      const stateLbl = { running: "läuft", sleeping: s.kind === "ondemand" ? "schläft" : "gestoppt", absent: "fehlt" }[s.state];
+      const stateLbl = s.disabled ? "deaktiviert"
+        : { running: "läuft", sleeping: s.kind === "ondemand" ? "schläft" : "gestoppt", absent: "fehlt" }[s.state];
       const kindLbl = { always: "Always-on", ondemand: "On-Demand", scheduled: "Geplant" }[s.kind];
       const acts = [];
-      if (s.kind === "always") {
+      if (s.power) {
+        if (s.disabled) {
+          acts.push(`<button class="small" data-act="poweron" data-l="${esc(s.label)}" data-n="${esc(s.name)}">Einschalten</button>`);
+        } else {
+          acts.push(`<button class="small" data-act="restart" data-l="${esc(s.label)}" data-n="${esc(s.name)}">Neu starten</button>`);
+          acts.push(`<button class="small danger" data-act="poweroff" data-l="${esc(s.label)}" data-n="${esc(s.name)}">Stoppen &amp; Freigeben</button>`);
+        }
+      } else if (s.kind === "always") {
         acts.push(`<button class="small" data-act="restart" data-l="${esc(s.label)}" data-n="${esc(s.name)}">Neu starten</button>`);
         acts.push(`<button class="small danger" data-act="stop" data-l="${esc(s.label)}" data-n="${esc(s.name)}">Stoppen</button>`);
       } else if (s.kind === "ondemand") {
@@ -1134,6 +1142,8 @@ function viewDienste() {
           restart: ["„" + name + "“ neu starten?", "Der Dienst wird per kickstart neu gestartet; laufende Anfragen brechen ab."],
           stop: ["„" + name + "“ stoppen?", "Der Dienst wird gestoppt (launchctl stop). Always-on-Dienste startet launchd ggf. neu; On-Demand-Backends schlafen bis zur nächsten Anfrage."],
           wake: ["„" + name + "“ wecken?", "Das On-Demand-Backend wird gestartet und lädt sein Modell."],
+          poweroff: ["„" + name + "“ stoppen und Speicher freigeben?", "Der Dienst wird dauerhaft deaktiviert und sofort beendet: kein automatischer Neustart, übersteht auch „Übernehmen“ und einen Neustart des Mac. Mit „Einschalten“ jederzeit reaktivierbar."],
+          poweron: ["„" + name + "“ einschalten?", "Autostart und Neustart-bei-Absturz werden wiederhergestellt und der Dienst startet jetzt (kann je nach Modell 30–60 s dauern)."],
         }[act];
         if (!await confirmDlg(q[0], q[1], "Ja")) return;
         try {
