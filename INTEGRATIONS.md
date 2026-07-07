@@ -23,33 +23,28 @@ behind an alias can be swapped (`llm-models`) without the app noticing.
 
 | Alias  | What it is                       | Endpoint(s)                       | Backed by                     |
 |--------|----------------------------------|-----------------------------------|-------------------------------|
-| `main` | The big always-on model (chat **+ images**), reasons by default | `/v1/chat/completions`, `/v1/completions`, `/v1/messages` | unified optiq main (always on; for very long docs use `agent`) |
+| `main` | The big always-on model (chat **+ images**), reasons by default | `/v1/chat/completions`, `/v1/completions`, `/v1/messages` | unified mlx-vlm main (always on; context capped by `MLXVLM_MAIN_MAX_KV_SIZE`, default 64K) |
 | `main-fast` | Exactly `main` but **thinking OFF** — fast, non-reasoning chat / tool use / web / cron / email | same as `main` | **same loaded model**, thinking-off |
-| `agent` | Fast **co-resident** helper: text + tools + **images**, **128K context**, thinking-off — the long-context / fast path (send long docs here; the big main OOMs above ~110K) | `/v1/chat/completions`, `/v1/messages` | OptiQ Gemma-4 e2b, a 2nd `optiq serve` (only if `INSTALL_AGENT=1`) |
 | `ocr`  | Dedicated OCR (document → text), best quality | `/v1/chat/completions` (image input) | GLM-OCR via mlx-vlm (on-demand, only if `ALIAS_OCR` is set) |
 | `embed` | Dense text **embeddings** for RAG (1024-dim, multilingual) | `/v1/embeddings` | BAAI/bge-m3 via Infinity (on-demand) |
 | `rerank` | Cross-encoder **reranker** (scores docs against a query) | `/v1/rerank`, `/rerank` | BAAI/bge-reranker-v2-m3 via Infinity (on-demand) |
 
 The gateway exposes `main`, `main-fast`, `embed`, `rerank` by default — plus `ocr` when
 `ALIAS_OCR` is set (**empty/off by default**; set it via `llm-models` or
-`--set-model ocr <id>` to re-enable) and `agent` when
-`INSTALL_AGENT=1` (**off by default**). `main` and `main-fast` point at the **one** big loaded model (they
-differ only in DEFAULT thinking, so picking one does **not** load a second model);
-`agent` is a **separate** small co-resident model. `main`/`main-fast`/`agent` share
-Gemma's reference sampling (**temperature 1.0 / top_p 0.95 / top_k 64**); `main`/`main-fast`
-temp+top_p come from the catalog, `top_k` from `GEMMA_TOP_K` (via `extra_body`, since
+`--set-model ocr <id>` to re-enable). `main` and `main-fast` point at the **one** big loaded model (they
+differ only in DEFAULT thinking, so picking one does **not** load a second model).
+`main`/`main-fast` share Gemma's reference sampling (**temperature 1.0 / top_p 0.95 /
+top_k 64**); temp+top_p come from the catalog, `top_k` from `GEMMA_TOP_K` (via `extra_body`, since
 top_k is not a native OpenAI param). Clients may override any of these per request.
 Toggle `main-fast` with `PRESET_ALIASES`.
 
 **Thinking/reasoning:** `main` reasons by default (a reasoning model thinks; clients
-can send `enable_thinking:false` to turn it off). **`main-fast` and `agent`
-always run without thinking** (suppressed at the gateway) — so `main-fast` is the
-fast/clean chat & tool path and metadata returns tidy JSON.
+can send `enable_thinking:false` to turn it off). **`main-fast` always runs without
+thinking** (suppressed at the gateway) — so `main-fast` is the fast/clean chat & tool path.
 
 **Images:** the unified mlx-vlm `main` is multimodal — send `image_url` straight to
-`main` (or `main-fast`). There is **no separate `vision` alias** (`ALIAS_VISION=""`);
-the dedicated `ocr` alias (GLM-OCR) is for best-quality document transcription, when
-enabled (`ALIAS_OCR` set — off by default).
+`main` (or `main-fast`); the dedicated `ocr` alias (GLM-OCR) is for best-quality document
+transcription, when enabled (`ALIAS_OCR` set — off by default).
 
 ### Authentication
 
@@ -115,7 +110,7 @@ TOKEN=…   # sudo sed -n "s/^DASHBOARD_TOKEN=//p" /usr/local/etc/macstudio.conf
 curl -s -H "Authorization: Bearer $TOKEN" http://mac.home.arpa:8090/api/status      # daemons + memory + active models
 curl -s -H "Authorization: Bearer $TOKEN" http://mac.home.arpa:8090/api/telemetry   # power/thermal/RAM history
 curl -s -H "Authorization: Bearer $TOKEN" -X POST http://mac.home.arpa:8090/api/models/select \
-  -H "Content-Type: application/json" -d '{"slot":"main","id":"gemma4-26b-optiq"}'  # returns {"job_id":…}
+  -H "Content-Type: application/json" -d '{"slot":"main","id":"gemma4-26b-qat"}'  # returns {"job_id":…}
 ```
 
 ---
@@ -253,7 +248,7 @@ mosquitto_sub -h mqtt.home.arpa -u <user> -P <pass> -t 'macstudio/#' -v
 mosquitto_sub -h mqtt.home.arpa -u <user> -P <pass> -t 'homeassistant/+/macstudio/+/config' -v
 
 # Switch the main model (id from `llm-models`):
-mosquitto_pub -h mqtt.home.arpa -u <user> -P <pass> -t macstudio/model/set -m gemma4-26b-optiq
+mosquitto_pub -h mqtt.home.arpa -u <user> -P <pass> -t macstudio/model/set -m gemma4-26b-qat
 ```
 
 An ESP32 (e.g. ESPHome) can subscribe to the same `macstudio/state` topic to drive
@@ -268,19 +263,22 @@ a local display — the JSON keys above are the contract.
 - **API Base URL:** `http://mac.home.arpa:11434/v1`
 - **API Key:** `sk-local`
 
-The models `main` and `main-fast` always appear in the model picker; `agent` and `ocr`
-appear only when enabled (`INSTALL_AGENT=1` / `ALIAS_OCR` set — both off by default).
+The models `main` and `main-fast` always appear in the model picker; `ocr`
+appears only when enabled (`ALIAS_OCR` set — off by default).
 For chat use `main`, which may emit reasoning that Open WebUI renders as a foldable
-"thinking" block; `main-fast` and `agent` are thinking-off, so they return
-clean output with no thinking block (`main-fast` is the fast non-reasoning chat path,
-`agent` adds a 128K context for long documents).
+"thinking" block; `main-fast` is thinking-off, so it returns clean output with no
+thinking block (the fast non-reasoning chat path).
 (Embeddings/STT are not served by this stack.)
 
 ---
 
 ## paperless-gpt (and paperless-ngx AI)
 
-Point the OpenAI provider at the gateway:
+> **For OCR, prefer the Apple-Vision worker below** (next section) — it supersedes the
+> `OCR_PROVIDER=llm` path here for OCR quality. Keep paperless-gpt if you also want
+> LLM-generated titles/tags.
+
+Point the OpenAI provider at the gateway for LLM tasks (titles/tags):
 
 ```yaml
 environment:
@@ -288,16 +286,11 @@ environment:
   LLM_MODEL: main
   OPENAI_API_KEY: sk-local
   OPENAI_BASE_URL: http://mac.home.arpa:11434/v1
-  # OCR via the on-demand vision model (requires ALIAS_OCR set — off by default):
-  OCR_PROVIDER: llm
-  VISION_LLM_PROVIDER: openai
-  VISION_LLM_MODEL: ocr
 ```
 
-`ocr` is off by default (`ALIAS_OCR` empty) — enable it first via `llm-models` or
-`setup.sh --set-model ocr <id>`. Once enabled, the first OCR call wakes GLM-OCR
-(~10–20 s) and then it serves; it sleeps again after
-the idle timeout, freeing RAM for the main model.
+The `OCR_PROVIDER=llm` path (`VISION_LLM_MODEL: ocr`) still works but routes through the
+GLM-OCR `ocr` alias, which is **off by default** (`ALIAS_OCR` empty) — enable it via
+`llm-models` or `setup.sh --set-model ocr <id>` first.
 
 ---
 
@@ -359,14 +352,13 @@ through untouched** — never rasterized or re-OCR'd, so perfect text is preserv
 `PAPERLESS_OCR_TEXT_MIN_CHARS` (avg chars/page, default 50). The **`*-force`** retro-fix tags
 override this — they re-OCR regardless of an existing layer.
 
-**Handwriting / math → VLM fallback route.** An OCR benchmark on real documents (see
-[`docs/ocr-benchmark.md`](docs/ocr-benchmark.md)) found a clean split: **Apple Vision wins on
-printed text** (fast, exact, tiny RAM) but is **blind to faint pencil handwriting and breaks
-math symbols** (∀→"Kk", ℕ→"IN"); the large vision model **Gemma-4** (`main`) reads handwriting
-and emits correct **LaTeX** — but *loops* on dense tables, so it is a **fallback, not a
-replacement**. So handwriting/math docs are routed to the VLM (`PAPERLESS_OCR_VLM_MODEL`,
-default `main-fast`), which lays its transcription down as one **invisible full-page** searchable
-layer (no per-word boxes). Two ways to trigger it:
+**Handwriting / math → VLM fallback route.** Rule of thumb: **Apple Vision for printed text**
+(fast, exact, tiny RAM), **the unified `main` VLM for handwriting/math** (reads pencil, emits
+correct LaTeX) — the VLM is a fallback, not a replacement (it can loop on dense tables). See
+[`docs/ocr-benchmark.md`](docs/ocr-benchmark.md) for the underlying comparison. Handwriting/math
+docs are routed to the VLM (`PAPERLESS_OCR_VLM_MODEL`, default `main-fast`), which lays its
+transcription down as one **invisible full-page** searchable layer (no per-word boxes). Two ways
+to trigger it:
 - **Manual (reliable):** tag a paperless doc **`ocr:vlm`** (retro-fix), or put **`_vlm`** in an
   inbox filename (gateway) — forces the Gemma-4 route.
 - **Auto (best-effort):** if Apple Vision reads fewer than `PAPERLESS_OCR_VLM_MIN_CHARS`
@@ -458,7 +450,7 @@ r = client.chat.completions.create(
   via `extra_body` when overriding per request.
 - **Image detail / resolution:** Gemma's per-image *visual token budget*
   (`max_soft_tokens`, 70–1120 — higher for dense OCR, lower for captioning) is **not
-  exposed by mlx-vlm 0.6.2** — there is no per-request image-resolution knob in this
+  exposed by mlx-vlm 0.6.3** — there is no per-request image-resolution knob in this
   stack. For best document transcription use the dedicated `ocr` alias (GLM-OCR); the
   unified `main` handles general image Q&A.
 

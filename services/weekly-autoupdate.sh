@@ -61,11 +61,11 @@ run_as_user '/opt/homebrew/bin/brew upgrade node_exporter' || true
 run_as_user '/opt/homebrew/bin/brew cleanup -s --prune=7' || true
 
 # DELIBERATELY NOT auto-upgraded: a surprise version jump broke a model before.
-# mlx-lm is pinned via MLXLM_VERSION; mlx-vlm, litellm, immich-ml, docling
-# and Ollama stay at their installed versions. Upgrade them on purpose with
-# `setup.sh` (menu: Check for updates -> set the pin -> Install/update everything).
+# mlx-vlm is pinned via MLXVLM_VERSION; litellm, immich-ml and docling stay at
+# their installed versions. Upgrade them on purpose with `setup.sh` (menu:
+# Check for updates -> set the pin -> Install/update everything).
 step "held versions (available but NOT auto-upgraded — bump deliberately)"
-for pair in "mlxlm:mlx-lm" "mlxvlm:mlx-vlm" "litellm:litellm"; do
+for pair in "mlxvlm:mlx-vlm" "litellm:litellm"; do
   vn=${pair%%:*}; pk=${pair##*:}
   py="$VENV_DIR/$vn/bin/python"; [ -x "$py" ] || continue
   "$py" - "$pk" <<'PY' 2>/dev/null || true
@@ -80,28 +80,18 @@ except Exception:
     print("  %-10s installed=%s  (pypi check n/a)"%(pkg,cur))
 PY
 done
-echo "  -> to upgrade the LLM stack on purpose: MLXLM_VERSION + 'sudo bash setup.sh --apply'"
+echo "  -> to upgrade the LLM stack on purpose: MLXVLM_VERSION + 'sudo bash setup.sh --apply'"
 
 step "restart long-running services"
 if [ "${INSTALL_MLX:-1}" = "1" ]; then
-  # Restart whichever text engine TEXT_ENGINE selects (only one is loaded).
-  if [ "${TEXT_ENGINE:-mlx-lm}" = "mlx-vlm" ]; then
-    /bin/launchctl kickstart -k system/com.local.mlxvlm.main  2>/dev/null || true
-  elif [ "${TEXT_ENGINE:-mlx-lm}" = "optiq" ]; then
-    /bin/launchctl kickstart -k system/com.local.optiq.main   2>/dev/null || true
-  else
-    /bin/launchctl kickstart -k system/com.local.mlxlm.serve  2>/dev/null || true
-  fi
+  /bin/launchctl kickstart -k system/com.local.mlxvlm.main    2>/dev/null || true
   /bin/launchctl kickstart -k system/com.local.litellm.proxy  2>/dev/null || true
   /bin/launchctl kickstart -k system/com.local.glmocr.proxy   2>/dev/null || true
-  /bin/launchctl kickstart -k system/com.local.vision.proxy   2>/dev/null || true
 fi
-[ "${INSTALL_OLLAMA:-0}" = "1" ] && /bin/launchctl kickstart -k system/com.local.ollama.headless 2>/dev/null || true
 /bin/launchctl kickstart -k system/com.local.immich.proxy   2>/dev/null || true
 /bin/launchctl kickstart -k system/com.local.docling.proxy  2>/dev/null || true
 /bin/launchctl kickstart -k system/com.local.node.exporter  2>/dev/null || true
 /bin/launchctl kickstart -k system/com.local.silicon.exporter 2>/dev/null || true
-[ "${INSTALL_OLLAMA:-0}" = "1" ] && /bin/launchctl kickstart -k system/com.local.ollama.exporter 2>/dev/null || true
 
 step "macOS minor / security updates (no --restart; FileVault-aware)"
 su_out=$(/usr/bin/mktemp)

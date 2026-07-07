@@ -29,24 +29,16 @@ MOTD_BACKUP=/etc/motd.macstudio.bak
 # --- Labels & their plist source filenames ---------------------------------
 # Always-on services
 ALWAYS_ON_LABELS=(
-  com.local.mlxlm.serve
   com.local.mlxvlm.main
-  com.local.optiq.main
-  com.local.vllmmlx.main
   com.local.litellm.proxy
   com.local.glmocr.proxy
-  com.local.vision.proxy
   com.local.infinity.proxy
-  com.local.ollama.headless
-  com.local.optiq.agent
   com.local.immich.proxy
   com.local.docling.proxy
   com.local.node.exporter
   com.local.silicon.exporter
-  com.local.ollama.exporter
   com.local.ondemand.exporter
   com.local.llm.watchdog
-  com.local.inference.watchdog
   com.local.preventsleep
   com.local.iogpu.wiredlimit
   com.local.weekly.autoupdate
@@ -59,7 +51,6 @@ ALWAYS_ON_LABELS=(
 # On-demand backends (KeepAlive=false, RunAtLoad=false)
 ONDEMAND_LABELS=(
   com.local.glmocr.serve
-  com.local.vision.serve
   com.local.infinity.serve
   com.local.immich.ml
   com.local.docling.serve
@@ -75,43 +66,24 @@ CONFIG_KEYS=(
   DOCLING_PROJECT_DIR
   IOGPU_WIRED_LIMIT_MB
   INSTALL_MLX
-  INSTALL_OLLAMA
   VENV_DIR
   HF_CACHE_DIR
   ALIAS_MAIN
   ALIAS_OCR
-  ALIAS_VISION
   MODEL_PIN_MAIN
-  VLLM_BACKEND_PORT
-  VLLM_MAX_NUM_SEQS
+  MAIN_BACKEND_PORT
+  MAIN_MAX_NUM_SEQS
   LLM_REQUEST_TIMEOUT
   TEXT_ENGINE
-  MLXLM_VERSION
-  MLXLM_PROMPT_CACHE_MB
-  MLXLM_DECODE_CONCURRENCY
-  MLXLM_PROMPT_CONCURRENCY
-  MLXLM_MAX_TOKENS
-  MLXLM_CHAT_TEMPLATE_ARGS
   MLXVLM_VERSION
   MLXVLM_MAIN_KV_BITS
   MLXVLM_MAIN_KV_SCHEME
   MLXVLM_MAIN_MAX_KV_SIZE
   MLXVLM_MAIN_ENABLE_THINKING
+  MLXVLM_MAX_TOKENS
   MLXVLM_DRAFT_MODEL
   MLXVLM_DRAFT_KIND
   MLXVLM_DRAFT_BLOCK_SIZE
-  OPTIQ_KV_BITS
-  OPTIQ_KV_GROUP_SIZE
-  OPTIQ_MAX_TOKENS
-  OPTIQ_PROMPT_CACHE_MB
-  OPTIQ_DRAFTER
-  VLLMMLX_MAX_TOKENS
-  VLLMMLX_CONTINUOUS_BATCHING
-  VLLMMLX_PAGED_CACHE
-  VLLMMLX_FORCE_MLLM
-  VLLMMLX_REASONING_PARSER
-  VLLMMLX_TOOL_PARSER
-  VLLMMLX_MAX_KV_SIZE
   GEMMA_TOP_K
   PRESET_ALIASES
   LITELLM_PORT
@@ -120,14 +92,6 @@ CONFIG_KEYS=(
   IDLE_TIMEOUT_GLMOCR
   STARTUP_TIMEOUT_GLMOCR
   GLMOCR_MAX_TOKENS
-  VISION_PUBLIC_PORT
-  VISION_BACKEND_PORT
-  IDLE_TIMEOUT_VISION
-  STARTUP_TIMEOUT_VISION
-  VISION_KV_BITS
-  VISION_KV_SCHEME
-  VISION_MAX_KV_SIZE
-  VISION_ENABLE_THINKING
   INSTALL_EMBED
   ALIAS_EMBED
   ALIAS_RERANK
@@ -138,20 +102,6 @@ CONFIG_KEYS=(
   INFINITY_DEVICE
   INFINITY_BATCH_SIZE
   INFINITY_DTYPE
-  OLLAMA_PORT
-  OLLAMA_MODELS
-  OLLAMA_MAX_LOADED_MODELS
-  OLLAMA_NUM_PARALLEL
-  OLLAMA_FLASH_ATTENTION
-  OLLAMA_KV_CACHE_TYPE
-  OLLAMA_KEEP_ALIVE
-  OLLAMA_LOAD_TIMEOUT
-  OLLAMA_VERSION
-  INSTALL_AGENT
-  AGENT_MODEL
-  AGENT_BACKEND_PORT
-  AGENT_KV_BITS
-  AGENT_MAX_TOKENS
   ML_PUBLIC_PORT
   ML_BACKEND_PORT
   DOCLING_PUBLIC_PORT
@@ -165,7 +115,6 @@ CONFIG_KEYS=(
   AUTOUPDATE_MINUTE
   NODE_EXPORTER_PORT
   SILICON_EXPORTER_PORT
-  OLLAMA_EXPORTER_PORT
   ONDEMAND_EXPORTER_PORT
   SILICON_SAMPLE_INTERVAL_MS
   INSTALL_IMMICH
@@ -175,9 +124,6 @@ CONFIG_KEYS=(
   INSTALL_WATCHDOG
   WATCHDOG_PRESSURE_THRESHOLD
   WATCHDOG_AUTO_RESTORE
-  INFERENCE_STALL_TIMEOUT_MIN
-  INFERENCE_WATCHDOG_POLL_SEC
-  INFERENCE_WATCHDOG_GPU_THRESHOLD
   INSTALL_MQTT
   MQTT_HOST
   MQTT_PORT
@@ -241,43 +187,24 @@ config_default() {
     DOCLING_PROJECT_DIR)         echo /Users/mac/projects/docling-serve ;;
     IOGPU_WIRED_LIMIT_MB)        echo 30720 ;;
     INSTALL_MLX)                 echo 1 ;;
-    INSTALL_OLLAMA)              echo 0 ;;
     VENV_DIR)                    echo /Users/mac/.macstudio-venvs ;;
     HF_CACHE_DIR)                echo /Users/mac/.cache/huggingface ;;
-    ALIAS_MAIN)                  echo gemma4-26b-optiq ;;
+    ALIAS_MAIN)                  echo gemma4-26b-qat ;;
     ALIAS_OCR)                   echo "" ;;
-    ALIAS_VISION)                echo "" ;;
     MODEL_PIN_MAIN)              echo 1 ;;
-    VLLM_BACKEND_PORT)           echo 18000 ;;
-    VLLM_MAX_NUM_SEQS)           echo 4 ;;
+    MAIN_BACKEND_PORT)           echo 18000 ;;
+    MAIN_MAX_NUM_SEQS)           echo 4 ;;
     LLM_REQUEST_TIMEOUT)         echo 3600 ;;
-    TEXT_ENGINE)                 echo optiq ;;
-    MLXLM_VERSION)               echo 0.31.3 ;;
-    MLXLM_PROMPT_CACHE_MB)       echo 8192 ;;
-    MLXLM_DECODE_CONCURRENCY)    echo "" ;;
-    MLXLM_PROMPT_CONCURRENCY)    echo 1 ;;
-    MLXLM_MAX_TOKENS)            echo 16384 ;;
-    MLXLM_CHAT_TEMPLATE_ARGS)    echo "" ;;
+    TEXT_ENGINE)                 echo mlx-vlm ;;
     MLXVLM_VERSION)              echo 0.6.3 ;;
     MLXVLM_MAIN_KV_BITS)         echo 8 ;;
     MLXVLM_MAIN_KV_SCHEME)       echo uniform ;;
     MLXVLM_MAIN_MAX_KV_SIZE)     echo 65536 ;;
     MLXVLM_MAIN_ENABLE_THINKING) echo 1 ;;
+    MLXVLM_MAX_TOKENS)           echo 16384 ;;
     MLXVLM_DRAFT_MODEL)          echo "" ;;
     MLXVLM_DRAFT_KIND)           echo mtp ;;
     MLXVLM_DRAFT_BLOCK_SIZE)     echo "" ;;
-    OPTIQ_KV_BITS)               echo 8 ;;
-    OPTIQ_KV_GROUP_SIZE)         echo "" ;;
-    OPTIQ_MAX_TOKENS)            echo 16384 ;;
-    OPTIQ_PROMPT_CACHE_MB)       echo 8192 ;;
-    OPTIQ_DRAFTER)               echo "" ;;
-    VLLMMLX_MAX_TOKENS)          echo 16384 ;;
-    VLLMMLX_CONTINUOUS_BATCHING) echo 1 ;;
-    VLLMMLX_PAGED_CACHE)         echo 1 ;;
-    VLLMMLX_FORCE_MLLM)          echo 1 ;;
-    VLLMMLX_REASONING_PARSER)    echo gemma4 ;;
-    VLLMMLX_TOOL_PARSER)         echo gemma4 ;;
-    VLLMMLX_MAX_KV_SIZE)         echo "" ;;
     GEMMA_TOP_K)                 echo 64 ;;
     PRESET_ALIASES)              echo 1 ;;
     LITELLM_PORT)                echo 11434 ;;
@@ -286,14 +213,6 @@ config_default() {
     IDLE_TIMEOUT_GLMOCR)         echo 60 ;;
     STARTUP_TIMEOUT_GLMOCR)      echo 120 ;;
     GLMOCR_MAX_TOKENS)           echo 8192 ;;
-    VISION_PUBLIC_PORT)          echo 5003 ;;
-    VISION_BACKEND_PORT)         echo 15003 ;;
-    IDLE_TIMEOUT_VISION)         echo 60 ;;
-    STARTUP_TIMEOUT_VISION)      echo 180 ;;
-    VISION_KV_BITS)              echo 8 ;;
-    VISION_KV_SCHEME)            echo uniform ;;
-    VISION_MAX_KV_SIZE)          echo "" ;;
-    VISION_ENABLE_THINKING)      echo 0 ;;
     INSTALL_EMBED)               echo 1 ;;
     ALIAS_EMBED)                 echo bge-m3 ;;
     ALIAS_RERANK)                echo bge-reranker-v2-m3 ;;
@@ -304,20 +223,6 @@ config_default() {
     INFINITY_DEVICE)             echo mps ;;
     INFINITY_BATCH_SIZE)         echo 4 ;;
     INFINITY_DTYPE)              echo float16 ;;
-    OLLAMA_PORT)                 echo 11434 ;;
-    OLLAMA_MODELS)               echo /Users/mac/.ollama/models ;;
-    OLLAMA_MAX_LOADED_MODELS)    echo 2 ;;
-    OLLAMA_NUM_PARALLEL)         echo 1 ;;
-    OLLAMA_FLASH_ATTENTION)      echo 1 ;;
-    OLLAMA_KV_CACHE_TYPE)        echo q8_0 ;;
-    OLLAMA_KEEP_ALIVE)           echo 10m ;;
-    OLLAMA_LOAD_TIMEOUT)         echo 15m ;;
-    OLLAMA_VERSION)              echo 0.31.1 ;;
-    INSTALL_AGENT)               echo 0 ;;
-    AGENT_MODEL)                 echo gemma4-e2b-optiq ;;
-    AGENT_BACKEND_PORT)          echo 18002 ;;
-    AGENT_KV_BITS)               echo 4 ;;
-    AGENT_MAX_TOKENS)            echo 8192 ;;
     ML_PUBLIC_PORT)              echo 3003 ;;
     ML_BACKEND_PORT)             echo 13003 ;;
     DOCLING_PUBLIC_PORT)         echo 5001 ;;
@@ -331,7 +236,6 @@ config_default() {
     AUTOUPDATE_MINUTE)           echo 0 ;;
     NODE_EXPORTER_PORT)          echo 9100 ;;
     SILICON_EXPORTER_PORT)       echo 9101 ;;
-    OLLAMA_EXPORTER_PORT)        echo 9102 ;;
     ONDEMAND_EXPORTER_PORT)      echo 9103 ;;
     SILICON_SAMPLE_INTERVAL_MS)  echo 10000 ;;
     INSTALL_IMMICH)              echo 1 ;;
@@ -341,9 +245,6 @@ config_default() {
     INSTALL_WATCHDOG)            echo 1 ;;
     WATCHDOG_PRESSURE_THRESHOLD) echo warn ;;
     WATCHDOG_AUTO_RESTORE)       echo 0 ;;
-    INFERENCE_STALL_TIMEOUT_MIN)      echo 15 ;;
-    INFERENCE_WATCHDOG_POLL_SEC)      echo 30 ;;
-    INFERENCE_WATCHDOG_GPU_THRESHOLD) echo 0.5 ;;
     INSTALL_MQTT)                echo 0 ;;
     MQTT_HOST)                   echo mqtt.home.arpa ;;
     MQTT_PORT)                   echo 1883 ;;
@@ -402,54 +303,30 @@ config_default() {
 config_hint() {
   case "$1" in
     IOGPU_WIRED_LIMIT_MB)        echo "GPU wired memory ceiling in MB (28672–30720 on 32 GB; 2048 headroom for OS)" ;;
-    INSTALL_MLX)                 echo "1 = install the MLX stack (mlx_lm.server text engine + LiteLLM + GLM-OCR/vision) as the primary backend" ;;
-    INSTALL_OLLAMA)              echo "0 = Ollama kept as a code/install OPTION only (no daemon/dirs); 1 = run it too" ;;
-    VENV_DIR)                    echo "Where the mlxlm/litellm/mlxvlm Python venvs live (owned by TARGET_USER)" ;;
+    INSTALL_MLX)                 echo "1 = install the MLX stack (mlx_vlm.server unified text+images main + LiteLLM + GLM-OCR) as the primary backend" ;;
+    VENV_DIR)                    echo "Where the mlxvlm/litellm/infinity Python venvs live (owned by TARGET_USER)" ;;
     HF_CACHE_DIR)                echo "HuggingFace model cache (HF_HOME) — where downloaded MLX models land" ;;
     ALIAS_MAIN)                  echo "Catalog id of the ONE active main/text model (manage via 'llm-models')" ;;
     ALIAS_OCR)                   echo "Catalog id of the on-demand OCR model (engine mlxvlm) -> alias 'ocr'. empty = ocr off (default)" ;;
-    ALIAS_VISION)                echo "Catalog id of the on-demand VISION model (role=vision, engine mlxvlm) -> alias 'vision' for images. empty = vision off" ;;
     MODEL_PIN_MAIN)              echo "1 = keep the main model permanently warm (agentic main load)" ;;
-    VLLM_BACKEND_PORT)           echo "Internal port the text engine (mlx_lm.server) binds; LiteLLM fronts it. (Legacy VLLM_ name kept to avoid config churn.)" ;;
-    VLLM_MAX_NUM_SEQS)           echo "Fallback for MLXLM_DECODE_CONCURRENCY (concurrent decode streams). (Legacy VLLM_ name.)" ;;
+    MAIN_BACKEND_PORT)           echo "Internal port the text engine (mlx_vlm.server) binds; LiteLLM fronts it" ;;
+    MAIN_MAX_NUM_SEQS)           echo "Fallback for concurrent decode streams" ;;
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
-    TEXT_ENGINE)                 echo "Which engine serves 'main': mlx-lm (Apple mlx_lm.server — text-only, batches, broad models incl. granite/glm) | mlx-vlm (mlx_vlm.server — UNIFIED text+images, KV-quant, single-stream; needs a VLM main like gemma-4) | optiq (mlx-optiq 'optiq serve', BETA — QAT OptiQ Gemma-4 mains, multimodal text+image + KV-quant, mlx-lm-from-git venv) | vllm-mlx (waybarrios 'vllm-mlx serve' — OpenAI+Anthropic, CONTINUOUS BATCHING + KV-quant, pulls mlx-vlm for gemma-4 vision; loads stock/QAT gemma-4, NOT OptiQ format; verify 12B/26B vision on Mac). Flip + --apply to switch/rollback; one runs at a time" ;;
-    MLXLM_VERSION)               echo "Pinned mlx-lm for the 'mlxlm' venv (the text engine). Bump deliberately + --apply" ;;
-    MLXLM_PROMPT_CACHE_MB)       echo "mlx-lm prompt-cache hard cap in MB (--prompt-cache-bytes). Bounds KV/prefix RAM (16-bit KV grows fast — no kv-quant); default 8192" ;;
-    MLXLM_DECODE_CONCURRENCY)    echo "mlx-lm concurrent decode streams (--decode-concurrency). empty = reuse VLLM_MAX_NUM_SEQS" ;;
-    MLXLM_PROMPT_CONCURRENCY)    echo "mlx-lm concurrent prompt prefills (--prompt-concurrency); default 1 on 32 GB (limits prefill RAM spikes)" ;;
-    MLXLM_MAX_TOKENS)            echo "mlx-lm server default --max-tokens = ceiling for main (unset would be only 512!). 16384 = effectively unrestricted for chat/long text; model stops at EOS" ;;
-    MLXLM_CHAT_TEMPLATE_ARGS)    echo "mlx-lm chat-template JSON (--chat-template-args), e.g. {\"enable_thinking\":false} to suppress reasoning output. empty = off" ;;
+    TEXT_ENGINE)                 echo "Engine serving 'main': mlx-vlm (mlx_vlm.server — UNIFIED text+images, KV-quant, single-stream; needs a VLM main like gemma-4). The only supported engine" ;;
     MLXVLM_VERSION)              echo "Pinned mlx-vlm for the 'mlxvlm' venv (unified text+vision main + GLM-OCR). 0.6.3 = the release that FIXED Gemma-4 unified silently dropping images (0.6.2 answered text-only, no error). Bump deliberately + --apply" ;;
     MLXVLM_MAIN_KV_BITS)         echo "KV-cache quant bits for the mlx-vlm unified main: 8 (recommended), 4, or 3.5 with turboquant. empty=off. (Only when TEXT_ENGINE=mlx-vlm)" ;;
     MLXVLM_MAIN_KV_SCHEME)       echo "mlx-vlm main KV quant scheme: uniform | turboquant (fractional bits like 3.5)" ;;
-    MLXVLM_MAIN_MAX_KV_SIZE)     echo "mlx-vlm main CONTEXT cap (--max-kv-size) = the OOM guard (bounds prompt+KV, unlike MLXLM_MAX_TOKENS which only caps generation). Default 65536 (64K) — chosen for co-residence safety margin (~5GB free at 64K, room for GLM-OCR/agent). Verified swap-safe 2026-07-04 on both 26B-A4B and 12B @ 8-bit KV, with and without MTP (swap stayed at baseline). 128K is also memory-safe on 26B-A4B (~8.7min prefill at 125K, ~96M swap) but leaves no co-residence headroom at the ceiling; on dense 12B a ~121K prompt fits in RAM but prefill takes ~19min (exceeds the 600s MLX_VLM_TOKEN_QUEUE_TIMEOUT) — impractical. Raise to 131072 for max solo context on 26B. empty = model native 262144 (256K, OOM-risky uncapped). Per-model tuning (e2b/e4b) is a separate step" ;;
+    MLXVLM_MAIN_MAX_KV_SIZE)     echo "mlx-vlm main CONTEXT cap (--max-kv-size) = the OOM guard (bounds prompt+KV, unlike MLXVLM_MAX_TOKENS which only caps generation). Default 65536 (64K) — co-residence safety margin (~5GB free at 64K, room for GLM-OCR). Verified swap-safe 2026-07-04 on both 26B-A4B and 12B @ 8-bit KV. 128K is also memory-safe on 26B-A4B (~8.7min prefill at 125K, ~96M swap) but leaves no co-residence headroom at the ceiling; on dense 12B a ~121K prompt fits in RAM but prefill takes ~19min — impractical. Raise to 131072 for max solo context on 26B. empty = model native 262144 (256K, OOM-risky uncapped)" ;;
     MLXVLM_MAIN_ENABLE_THINKING) echo "mlx-vlm main: 1 = think by default (default — so 'main' reasons; OpenWebUI shows it), 0 = off. main-fast is forced thinking-off at the proxy regardless; clients can override per request" ;;
+    MLXVLM_MAX_TOKENS)           echo "mlx-vlm server default --max-tokens = generation ceiling for main (default 16384 = effectively unrestricted for chat/long text; model stops at EOS)" ;;
     MLXVLM_DRAFT_MODEL)          echo "mlx-vlm speculative-decoding (MTP) drafter HF repo for the main (--draft-model). empty = OFF (default, recommended). WORKLOAD-DEPENDENT — not a free win: best-case high-acceptance code-gen gave +18% (12B) / +8% (26B-A4B), but a broader decode test 2026-07-04 (long generative output, temp0) showed MTP NET-NEGATIVE — 12B ~23→~19 tok/s (−17%), 26B-A4B fine on short prompts (+7%) but 47→36 tok/s (−23%) on a 6.5K-token prompt (drafter prefill + rejected drafts cost more than they save when acceptance is low). Enable ONLY for a verified high-acceptance workload; leave OFF for general chat. Use the matching assistant, e.g. mlx-community/gemma-4-12B-it-qat-assistant-4bit or gemma-4-26B-A4B-it-qat-assistant-4bit. E2B/E4B MTP is BROKEN in mlx-vlm 0.6.3 (reshape crash) — leave empty for those. Must be downloaded first (hf download); if missing, the main starts WITHOUT the drafter" ;;
     MLXVLM_DRAFT_KIND)           echo "mlx-vlm drafter family (--draft-kind): mtp (Gemma-4) | dflash | eagle3. Default mtp. Only used when MLXVLM_DRAFT_MODEL is set" ;;
     MLXVLM_DRAFT_BLOCK_SIZE)     echo "mlx-vlm drafter block size (--draft-block-size); empty = drafter's configured default. Only used when MLXVLM_DRAFT_MODEL is set" ;;
-    OPTIQ_KV_BITS)               echo "optiq serve KV-cache quant bits: 4 or 8 (--kv-bits). empty = off. (Only when TEXT_ENGINE=optiq)" ;;
-    OPTIQ_KV_GROUP_SIZE)         echo "optiq serve KV quant group size (--kv-group-size); empty = optiq default (64). Only with OPTIQ_KV_BITS set" ;;
-    OPTIQ_MAX_TOKENS)            echo "optiq serve default --max-tokens ceiling for main (default 16384). (Only when TEXT_ENGINE=optiq). NOTE: there is NO main context cap — mlx_lm.server (which optiq wraps) has no --max-kv-size; a prompt beyond ~110K OOM-restarts the daemon, so route long-context work to the 'agent'" ;;
-    OPTIQ_PROMPT_CACHE_MB)       echo "optiq serve prompt-cache cap in MB (--prompt-cache-bytes); bounds the reusable KV/prefix cache → enables a LARGE context window. Default 8192 (8 GB; model streams experts from SSD so plenty of headroom on 32 GB). Raise for huge contexts. It's a lazy CAP not a pre-allocation, but under real multi-turn load it can grow to fill it — size it to the ACTIVE main's footprint: with ALIAS_MAIN=gemma4-26b-optiq (~20 GB weights) co-resident with the agent, 1024 was the swap-safe live value (see project_coresident_swap_tuning memory); with a small standalone main like gemma4-e4b-optiq (~8 GB weights, no agent), 16384 (16 GB) verified swap-free with ~13.7 GB still free (2026-07-03 live test, mac.home.arpa)" ;;
-    OPTIQ_DRAFTER)               echo "optiq serve speculative-decoding drafter repo (--drafter), e.g. google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant. empty = OFF (drafter costs extra RAM — leave off on 32 GB unless verified)" ;;
-    VLLMMLX_MAX_TOKENS)          echo "vllm-mlx serve default --max-tokens ceiling for main (default 16384). (Only when TEXT_ENGINE=vllm-mlx)" ;;
-    VLLMMLX_CONTINUOUS_BATCHING) echo "vllm-mlx: 1 = --continuous-batching (multi-user throughput; vllm-mlx's edge over the single-stream engines), 0 = off. (Only when TEXT_ENGINE=vllm-mlx)" ;;
-    VLLMMLX_PAGED_CACHE)         echo "vllm-mlx: 1 = --use-paged-cache (paged/memory-efficient KV cache — recommended on 32 GB), 0 = off. (vllm-mlx has NO --kv-bits; this is its KV-memory lever.)" ;;
-    VLLMMLX_FORCE_MLLM)          echo "vllm-mlx: 1 = --mllm (force-load the model as MULTIMODAL/vision even if name auto-detect misses — keep 1 for gemma-4 to guarantee the image path), 0 = auto-detect only" ;;
-    VLLMMLX_REASONING_PARSER)    echo "vllm-mlx --reasoning-parser: splits thinking into the reasoning_content field. gemma4 (matches the model) | qwen3 | deepseek_r1 | gpt_oss | harmony | glm4 | mistral. empty = off" ;;
-    VLLMMLX_TOOL_PARSER)         echo "vllm-mlx --tool-call-parser (enables --enable-auto-tool-choice): parses the model's tool syntax into structured tool_calls. gemma4 (matches the model) | qwen3_coder | hermes | llama | granite | ... empty = off (tool calls would leak as raw text)" ;;
-    VLLMMLX_MAX_KV_SIZE)         echo "vllm-mlx context cap (--max-kv-size); empty = model default. Bounds KV memory/context on 32 GB (paired with --use-paged-cache)" ;;
-    GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast/agent (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off" ;;
+    GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off" ;;
     PRESET_ALIASES)              echo "1 = also expose the 'main-fast' preset alias (same loaded model as 'main' but thinking-OFF at the proxy — fast non-reasoning chat / tools / web / cron / email)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
     IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend sleeps (default 60); -1 = never sleep (stay warm)" ;;
     GLMOCR_MAX_TOKENS)           echo "Max output tokens for GLM-OCR (mlx-vlm default is only 2048 — a dense full page can exceed it and get truncated). Default 8192" ;;
-    IDLE_TIMEOUT_VISION)         echo "Seconds before the on-demand vision backend sleeps (default 60); -1 = never sleep" ;;
-    VISION_KV_BITS)              echo "mlx-vlm KV-cache quantization bits for the vision model: 8 (recommended), 4, or 3.5 with turboquant. empty=off" ;;
-    VISION_KV_SCHEME)            echo "mlx-vlm KV quant scheme: uniform | turboquant (TurboQuant allows fractional bits like 3.5)" ;;
-    VISION_MAX_KV_SIZE)          echo "mlx-vlm context cap (--max-kv-size) for the vision model; empty = model default" ;;
-    VISION_ENABLE_THINKING)      echo "1 = enable the vision model's reasoning by default; 0 = off (faster captions)" ;;
     INSTALL_EMBED)               echo "1 = run the on-demand Infinity backend serving the BGE embedder + reranker (LiteLLM aliases 'embed' + 'rerank'). Needs INSTALL_MLX=1 for the LiteLLM gateway" ;;
     ALIAS_EMBED)                 echo "Catalog id of the embedding model (role=embed, engine infinity) -> LiteLLM alias 'embed'. empty = embeddings off" ;;
     ALIAS_RERANK)                echo "Catalog id of the reranker (role=rerank, engine infinity) -> LiteLLM alias 'rerank'. empty = rerank off" ;;
@@ -457,24 +334,12 @@ config_hint() {
     INFINITY_DEVICE)             echo "Torch device for Infinity: mps (Apple GPU, default), cpu, or auto" ;;
     INFINITY_BATCH_SIZE)         echo "Infinity max batch size per forward pass (default 4 — plenty for a single user; raise for heavy parallel load, lower still if MPS memory is tight)" ;;
     INFINITY_DTYPE)              echo "Infinity model weight precision: float16 (default — ~half the RAM of float32, ample for BGE) or float32" ;;
-    OLLAMA_KEEP_ALIVE)           echo "How long Ollama keeps a model in VRAM: 10m (default), 1h, 24h, -1=forever" ;;
-    OLLAMA_MAX_LOADED_MODELS)    echo "Max models in VRAM at once: 2 (default; e.g. text + OCR), 1 = single-model mode" ;;
-    OLLAMA_KV_CACHE_TYPE)        echo "KV cache precision: q8_0 (recommended), q4_0 (aggressive), fp16 (default)" ;;
-    OLLAMA_VERSION)              echo "Pinned Ollama version fetched as ollama-darwin.tgz from GitHub into \$VENV_DIR/ollama-dist (the -mlx gemma-4 tags need >=0.31.0; the brew formula lags). Used only by the INSTALL_OLLAMA fallback (the 'agent' is optiq now). Bump deliberately + --apply" ;;
-    INSTALL_AGENT)               echo "1 = run a small, fast, co-resident OptiQ Gemma-4 model (a 2nd 'optiq serve') ALONGSIDE the big unified main, exposed as LiteLLM alias 'agent'. Does text+tools+IMAGES (vision) and a huge context (128K) at tiny KV — swap-free co-resident with the 26B (verified). Needs INSTALL_MLX=1 + the optiq venv (auto-built). thinking-OFF by default" ;;
-    AGENT_MODEL)                 echo "HF CATALOG id of the 'agent' model (an OptiQ Gemma-4 build). Default gemma4-e2b-optiq (~5 GB, ~76 tok/s, tools+vision, 128K). e.g. gemma4-e4b-optiq for more quality (NOTE: e4b co-resident swaps on 32 GB — verified; stick with e2b unless the main is smaller)" ;;
-    AGENT_BACKEND_PORT)          echo "Internal port the 'agent' optiq daemon binds (default 18002); LiteLLM fronts it. Distinct from VLLM_BACKEND_PORT (:18000 main) and OLLAMA_PORT (:11434)" ;;
-    AGENT_KV_BITS)               echo "agent optiq serve KV-cache quant bits: 4 (recommended — keeps 128K KV tiny) or 8. empty = fp16" ;;
-    AGENT_MAX_TOKENS)            echo "agent default output-token ceiling (optiq --max-tokens). Default 8192; clients can override per request. (No context cap — the model's own max_position, e2b/e4b = 128K, is the ceiling)" ;;
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
     AUTOUPDATE_WEEKDAY)          echo "launchd weekday: 0=Sun 1=Mon … 6=Sat" ;;
     AUTO_ACCEPT)                 echo "1 = skip all 'press Enter to proceed' prompts in TUI" ;;
     INSTALL_TUI)                 echo "Install mactop + macmon (live TUI for GPU/ANE/CPU/power; needs sudo)" ;;
     WATCHDOG_PRESSURE_THRESHOLD) echo "warn | critical — when watchdog offloads optional services" ;;
-    INFERENCE_STALL_TIMEOUT_MIN) echo "Minutes of stuck inference (GPU active + no GIN 200 + open TCP) before kill" ;;
-    INFERENCE_WATCHDOG_POLL_SEC) echo "How often the inference watchdog polls (seconds)" ;;
-    INFERENCE_WATCHDOG_GPU_THRESHOLD) echo "gpu_active_ratio threshold (0..1) above which the GPU is considered busy" ;;
     SILICON_SAMPLE_INTERVAL_MS)  echo "Silicon sampler cadence in ms (default 10000). macmon averages over the interval — match the MQTT/Prometheus cadence; longer = less load AND more representative values" ;;
     INSTALL_MQTT)                echo "1 = run the MQTT bridge (publishes runtime data + Home Assistant autodiscovery; lets HA switch the main model). Needs MQTT_HOST set" ;;
     MQTT_HOST)                   echo "MQTT broker host/IP for the bridge (e.g. mqtt.home.arpa). Empty = bridge idles" ;;
@@ -697,31 +562,17 @@ load_config() {
   local _lbl
   for _lbl in "${ALL_LABELS[@]}"; do
     case "$_lbl" in
-      com.local.mlxlm.serve)
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = mlx-lm ]; }  || continue ;;
       com.local.mlxvlm.main)
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = mlx-vlm ]; } || continue ;;
-      com.local.optiq.main)
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = optiq ]; } || continue ;;
-      com.local.vllmmlx.main)
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = vllm-mlx ]; } || continue ;;
+        [ "${INSTALL_MLX:-1}" = 1 ] || continue ;;
       com.local.litellm.*|com.local.glmocr.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || continue ;;
       com.local.infinity.*)
         [ "${INSTALL_EMBED:-1}" = 1 ] || continue ;;
-      com.local.vision.*)
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ -n "${ALIAS_VISION:-}" ]; } || continue ;;
-      com.local.ollama.headless)
-        [ "${INSTALL_OLLAMA:-0}" = 1 ] || continue ;;
-      com.local.optiq.agent)
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${INSTALL_AGENT:-0}" = 1 ]; } || continue ;;
-      com.local.ollama.exporter)
-        { [ "${INSTALL_OLLAMA:-0}" = 1 ] && [ "${INSTALL_EXPORTERS:-1}" = 1 ]; } || continue ;;
       com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || continue ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || continue ;;
       com.local.node.exporter|com.local.silicon.exporter|com.local.ondemand.exporter)
         [ "${INSTALL_EXPORTERS:-1}" = 1 ] || continue ;;
-      com.local.llm.watchdog|com.local.inference.watchdog)
+      com.local.llm.watchdog)
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || continue ;;
       com.local.mqtt.bridge)
         [ "${INSTALL_MQTT:-0}" = 1 ] || continue ;;
@@ -763,29 +614,20 @@ save_config_key() {
 # --- label → log file mapping ---------------------------------------------
 label_log() {
   case "$1" in
-    com.local.mlxlm.serve)       echo "$LOG_DIR/mlxlm.log" ;;
     com.local.mlxvlm.main)       echo "$LOG_DIR/mlxvlm-main.log" ;;
-    com.local.optiq.main)        echo "$LOG_DIR/optiq-main.log" ;;
-    com.local.vllmmlx.main)      echo "$LOG_DIR/vllmmlx-main.log" ;;
     com.local.litellm.proxy)     echo "$LOG_DIR/litellm.log" ;;
     com.local.glmocr.proxy)      echo "$LOG_DIR/glmocr-proxy.log" ;;
     com.local.glmocr.serve)      echo "$LOG_DIR/glmocr-serve.log" ;;
     com.local.infinity.proxy)    echo "$LOG_DIR/infinity-proxy.log" ;;
     com.local.infinity.serve)    echo "$LOG_DIR/infinity-serve.log" ;;
-    com.local.vision.proxy)      echo "$LOG_DIR/vision-proxy.log" ;;
-    com.local.vision.serve)      echo "$LOG_DIR/vision-serve.log" ;;
-    com.local.ollama.headless)   echo "$LOG_DIR/ollama.log" ;;
-    com.local.optiq.agent)       echo "$LOG_DIR/optiq-agent.log" ;;
     com.local.immich.proxy)      echo "$LOG_DIR/immich-proxy.log" ;;
     com.local.immich.ml)         echo "$LOG_DIR/immich-ml.log" ;;
     com.local.docling.proxy)     echo "$LOG_DIR/docling-proxy.log" ;;
     com.local.docling.serve)     echo "$LOG_DIR/docling-serve.log" ;;
     com.local.node.exporter)     echo "$LOG_DIR/node-exporter.log" ;;
     com.local.silicon.exporter)  echo "$LOG_DIR/silicon-exporter.log" ;;
-    com.local.ollama.exporter)   echo "$LOG_DIR/ollama-exporter.log" ;;
     com.local.ondemand.exporter) echo "$LOG_DIR/ondemand-exporter.log" ;;
     com.local.llm.watchdog)      echo "$LOG_DIR/watchdog.log" ;;
-    com.local.inference.watchdog) echo "$LOG_DIR/inference-watchdog.log" ;;
     com.local.preventsleep)      echo "$LOG_DIR/preventsleep.log" ;;
     com.local.iogpu.wiredlimit)  echo "$LOG_DIR/iogpu-wired-limit.log" ;;
     com.local.weekly.autoupdate) echo "$LOG_DIR/autoupdate.log" ;;
@@ -933,9 +775,7 @@ ensure_formula() {
 }
 
 ensure_formulas() {
-  # Ollama is an OPTION now (INSTALL_OLLAMA=0 by default). The MLX stack is the
-  # primary backend and runs from Python venvs, not a brew formula.
-  [ "${INSTALL_OLLAMA:-0}" = 1 ] && ensure_formula ollama
+  # The MLX stack is the primary backend and runs from Python venvs, not a brew formula.
   [ "${INSTALL_EXPORTERS:-1}" = 1 ] && ensure_formula node_exporter
   [ "${INSTALL_TUI:-1}" = 1 ] && ensure_formula mactop
   # macmon doubles as the silicon-exporter's sampler (sys power, temps, real
@@ -946,7 +786,7 @@ ensure_formulas() {
 }
 
 ensure_modern_python() {
-  # The MLX stack (mlx-lm, mlx-vlm, litellm) and docling-serve all need
+  # The MLX stack (mlx-vlm, litellm) and docling-serve all need
   # Python ≥ 3.10; macOS ships /usr/bin/python3 at 3.9. Install python@3.12
   # via brew so those venvs have a compatible interpreter. Skip only if both
   # the MLX stack and docling are off.
@@ -1266,50 +1106,14 @@ ensure_python_venvs() {
     fi
   }
 
-  # The text engine is Apple's mlx_lm.server (venv 'mlxlm'), pinned via
-  # MLXLM_VERSION so neither a fresh build nor the weekly autoupdate floats it.
-  # mlx-vlm (unified text+vision main, GLM-OCR) is pinned via MLXVLM_VERSION: 0.6.3
-  # is the release that fixed Gemma-4 unified SILENTLY DROPPING image/video inputs
-  # (0.6.2 had the bug — a main would answer text-only with no error). litellm floats.
+  # The text engine is mlx_vlm.server (venv 'mlxvlm', unified text+vision main +
+  # GLM-OCR), pinned via MLXVLM_VERSION: 0.6.3 is the release that fixed Gemma-4
+  # unified SILENTLY DROPPING image/video inputs (0.6.2 had the bug — a main would
+  # answer text-only with no error). litellm floats.
   _ensure_venv litellm bin:litellm       'litellm[proxy]'
   local mlxvlm_spec="mlx-vlm"
   [ -n "${MLXVLM_VERSION:-}" ] && mlxvlm_spec="mlx-vlm==${MLXVLM_VERSION}"
   _ensure_venv mlxvlm  mod:mlx_vlm        "$mlxvlm_spec" 'huggingface_hub[cli]'
-  local mlxlm_spec="mlx-lm"
-  [ -n "${MLXLM_VERSION:-}" ] && mlxlm_spec="mlx-lm==${MLXLM_VERSION}"
-  _ensure_venv mlxlm   bin:mlx_lm.server  "$mlxlm_spec" 'huggingface_hub[cli]'
-
-  # OptiQ engine (BETA): only built when selected, since it pulls mlx-lm from git
-  # main (the QAT OptiQ MoE/unified Gemma-4 towers aren't in the PyPI release).
-  # Its OWN venv so the pinned 'mlxlm' venv above is never disturbed. The wrapper
-  # execs the 'optiq' console script; it serves text+image on the same internal port.
-  # pillow: mlx-optiq does NOT depend on PIL, but `optiq serve` needs it to decode
-  # image_url input — without it the server logs "vision serving not installed: No
-  # module named 'PIL'" and silently runs text-only. Required for the multimodal main.
-  # Also built when INSTALL_AGENT=1: the co-resident 'agent' is a 2nd optiq serve
-  # (OptiQ Gemma-4 e2b), so it needs the optiq venv even if the main runs another engine.
-  if [ "${TEXT_ENGINE:-mlx-vlm}" = optiq ] || [ "${INSTALL_AGENT:-0}" = 1 ]; then
-    _ensure_venv optiq bin:optiq 'mlx-optiq' 'mlx-lm @ git+https://github.com/ml-explore/mlx-lm.git' 'pillow' 'huggingface_hub[cli]'
-  fi
-
-  # vllm-mlx engine venv (only when TEXT_ENGINE=vllm-mlx). The 'vllm-mlx' PyPI package
-  # pulls mlx + mlx-lm + mlx-vlm (its vision path rides on mlx-vlm's SigLIP2 loader) and
-  # installs the 'vllm-mlx' console script. Serves stock/QAT gemma-4 (NOT OptiQ format).
-  # transformers must be DOWNGRADED to 5.10.2 AFTER install: vllm-mlx pulls 5.13.x, which
-  # breaks mlx-lm 0.31.3's AutoTokenizer.register (AttributeError: 'str' has no attribute
-  # '__module__') at import (verified on Mac 2026-07-04; 5.10.2 is what the working mlxvlm
-  # venv uses). Done as a separate idempotent step because co-specifying it in the initial
-  # pip install can trip vllm-mlx's own resolver.
-  if [ "${TEXT_ENGINE:-mlx-vlm}" = vllm-mlx ]; then
-    _ensure_venv vllmmlx bin:vllm-mlx 'vllm-mlx' 'huggingface_hub[cli]'
-    local _tfver
-    _tfver=$("$vdir/vllmmlx/bin/python" -c 'import transformers,sys; sys.stdout.write(transformers.__version__)' 2>/dev/null || true)
-    if [ "$_tfver" != "5.10.2" ]; then
-      ok "pinning transformers==5.10.2 in vllmmlx venv (was '${_tfver:-none}'; 5.13.x breaks mlx-lm 0.31.3)"
-      "$vdir/vllmmlx/bin/pip" install -q 'transformers==5.10.2' >>"$LOG_DIR/vllmmlx-venv-install.log" 2>&1 \
-        || warn "transformers pin failed — see $LOG_DIR/vllmmlx-venv-install.log"
-    fi
-  fi
 
   # Embeddings + reranker: BGE pair served by Infinity (infinity-emb) on MPS,
   # on-demand. Independent of the text engine; pulls torch, so only built when
@@ -1325,21 +1129,21 @@ ensure_python_venvs() {
     _ensure_venv infinity bin:infinity_emb 'infinity-emb[torch,server]' 'click<8.2' 'huggingface_hub[cli]'
   fi
 
-  # Version-sync: set MLXLM_VERSION + `--apply` to up/downgrade the text engine.
-  if [ -n "${MLXLM_VERSION:-}" ] && [ -x "$vdir/mlxlm/bin/python" ]; then
+  # Version-sync: set MLXVLM_VERSION + `--apply` to up/downgrade the text engine.
+  if [ -n "${MLXVLM_VERSION:-}" ] && [ -x "$vdir/mlxvlm/bin/python" ]; then
     local cur_m
-    cur_m=$(/usr/bin/sudo -u "$TARGET_USER" -H "$vdir/mlxlm/bin/python" -c \
-      'import importlib.metadata as m; print(m.version("mlx-lm"))' 2>/dev/null)
-    if [ -n "$cur_m" ] && [ "$cur_m" != "$MLXLM_VERSION" ]; then
-      log "mlx-lm pin: $cur_m -> $MLXLM_VERSION (reinstalling)"
-      if /usr/bin/sudo -u "$TARGET_USER" -H "$vdir/mlxlm/bin/pip" install "mlx-lm==${MLXLM_VERSION}" \
-            >"$LOG_DIR/mlxlm-pin-install.log" 2>&1; then
-        ok "mlx-lm pinned to $MLXLM_VERSION"
-        daemon_loaded com.local.mlxlm.serve \
-          && /bin/launchctl kickstart -k system/com.local.mlxlm.serve >/dev/null 2>&1 \
-          && ok "restarted mlx_lm.server to apply the version change"
+    cur_m=$(/usr/bin/sudo -u "$TARGET_USER" -H "$vdir/mlxvlm/bin/python" -c \
+      'import importlib.metadata as m; print(m.version("mlx-vlm"))' 2>/dev/null)
+    if [ -n "$cur_m" ] && [ "$cur_m" != "$MLXVLM_VERSION" ]; then
+      log "mlx-vlm pin: $cur_m -> $MLXVLM_VERSION (reinstalling)"
+      if /usr/bin/sudo -u "$TARGET_USER" -H "$vdir/mlxvlm/bin/pip" install "mlx-vlm==${MLXVLM_VERSION}" \
+            >"$LOG_DIR/mlxvlm-pin-install.log" 2>&1; then
+        ok "mlx-vlm pinned to $MLXVLM_VERSION"
+        daemon_loaded com.local.mlxvlm.main \
+          && /bin/launchctl kickstart -k system/com.local.mlxvlm.main >/dev/null 2>&1 \
+          && ok "restarted mlx_vlm.server to apply the version change"
       else
-        warn "mlx-lm pin install failed; see $LOG_DIR/mlxlm-pin-install.log"
+        warn "mlx-vlm pin install failed; see $LOG_DIR/mlxvlm-pin-install.log"
       fi
     fi
   fi
@@ -1379,8 +1183,8 @@ ensure_model_catalog() {
 }
 
 # Generate /usr/local/etc/litellm.config.yaml from the active alias
-# assignments. Roles: `main` (the ONE loaded mlx_lm.server text model), `ocr`
-# and `vision` (on-demand mlx-vlm proxies). Only rewrites + reloads on a real change.
+# assignments. Roles: `main` (the ONE loaded mlx_vlm.server text+images model) and
+# `ocr` (on-demand GLM-OCR). Only rewrites + reloads on a real change.
 render_litellm_config() {
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   local main_repo ocr_repo embed_repo rerank_repo tmp
@@ -1417,15 +1221,8 @@ render_litellm_config() {
   #     param, so it MUST ride in extra_body (catalog has no top_k column). At temperature 0
   #     it is inert, so we don't bother passing it to deterministic aliases.
   # LiteLLM forwards extra_body verbatim (drop_params leaves it untouched).
-  # optiq serve wraps mlx_lm.server, so it uses mlx-lm's nested chat_template_kwargs
-  # form for enable_thinking (NOT mlx-vlm's top-level form).
-  # vllm-mlx ALSO uses the nested chat_template_kwargs form (verified on Mac 2026-07-04:
-  # top-level enable_thinking is ignored; {"chat_template_kwargs":{"enable_thinking":false}}
-  # correctly suppresses thinking -> content populated, finish=stop).
+  # mlx-vlm uses the TOP-LEVEL enable_thinking wire form.
   local _nothink_body='{"enable_thinking": false}'
-  case "${TEXT_ENGINE:-mlx-vlm}" in
-    mlx-lm|optiq|vllm-mlx) _nothink_body='{"chat_template_kwargs": {"enable_thinking": false}}' ;;
-  esac
   emit_model() {
     printf '  - model_name: %s\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' "$1" "$2" "$3"
     [ -n "${4:-}" ] && printf '      temperature: %s\n' "$4"
@@ -1435,12 +1232,7 @@ render_litellm_config() {
     [ -n "${8:-}" ] && printf '      max_tokens: %s\n' "$8"
     local _eb=""
     if [ -n "${9:-}" ] && [ -n "${10:-}" ]; then
-      case "${TEXT_ENGINE:-mlx-vlm}" in
-        mlx-lm|optiq|vllm-mlx)
-          _eb=$(printf '{"chat_template_kwargs": {"enable_thinking": false}, "top_k": %s}' "${10}") ;;
-        *)
-          _eb=$(printf '{"enable_thinking": false, "top_k": %s}' "${10}") ;;
-      esac
+      _eb=$(printf '{"enable_thinking": false, "top_k": %s}' "${10}")
     elif [ -n "${9:-}" ]; then
       _eb="$_nothink_body"
     elif [ -n "${10:-}" ]; then
@@ -1458,25 +1250,12 @@ render_litellm_config() {
     # thinking is left to the model/client (a reasoning model thinks by default; a client
     # can pass enable_thinking per request).
     # main-fast: thinking ALWAYS off at the proxy (emit_model arg 9).
-    emit_model main "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" "" "${GEMMA_TOP_K:-64}"
+    emit_model main "$main_repo" "${MAIN_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" "" "${GEMMA_TOP_K:-64}"
     # main-fast = SAME loaded gemma model as 'main' (shares :18000 -> only ONE resident),
     # exactly 'main' sampling but thinking OFF at the proxy
     # (fast, non-reasoning chat / tools / web / cron / email). (main-metadata was retired.)
     if [ "${PRESET_ALIASES:-1}" = 1 ]; then
-      emit_model main-fast "$main_repo" "${VLLM_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" 1 "${GEMMA_TOP_K:-64}"
-    fi
-    # 'agent' — a small, fast, CO-RESIDENT OptiQ Gemma-4 (default gemma4-e2b-optiq) on its
-    # OWN internal port (AGENT_BACKEND_PORT), a 2nd `optiq serve` running ALONGSIDE the big
-    # unified main. NOT the main, NOT a TEXT_ENGINE — a self-contained extra like ocr/embed,
-    # driven by INSTALL_AGENT + AGENT_* config. Because it's optiq (OpenAI /v1) it does
-    # text + tools + IMAGES (vision) and a huge context (128K) at tiny KV — Ollama's MLX
-    # runner couldn't (drops Gemma-4 vision, verified). openai/ provider via emit_model;
-    # thinking-OFF by default (verified: e2b stays clean thinking-off; the 12B loops — so
-    # nothink is safe here). Gemma reference sampling. Emitted only when AGENT_MODEL resolves
-    # in the catalog (download first).
-    if [ "${INSTALL_AGENT:-0}" = 1 ]; then
-      local agent_repo; agent_repo=$(catalog_repo "${AGENT_MODEL:-}")
-      [ -n "$agent_repo" ] && emit_model agent "$agent_repo" "${AGENT_BACKEND_PORT:-18002}" 1.0 0.95 "" "" "${AGENT_MAX_TOKENS:-}" 1 "${GEMMA_TOP_K:-64}"
+      emit_model main-fast "$main_repo" "${MAIN_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" 1 "${GEMMA_TOP_K:-64}"
     fi
     if [ -n "$ocr_repo" ]; then
       printf '  - model_name: ocr\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
@@ -1496,9 +1275,8 @@ render_litellm_config() {
       printf '  - model_name: rerank\n    litellm_params:\n      model: infinity/%s\n      api_base: http://127.0.0.1:%s\n      api_key: dummy\n    model_info:\n      mode: rerank\n' \
         "${ALIAS_RERANK}" "${INFINITY_PUBLIC_PORT:-5004}"
     fi
-    # No 'vision' gateway alias: the unified 'main' already does images, so the chat set
-    # is intentionally main / main-fast / agent / ocr (plus the embed / rerank utility
-    # aliases above). The vision wrapper/daemon/role stay in the repo but dormant (ALIAS_VISION="").
+    # No separate 'vision' alias: the unified 'main' already does images, so the chat set
+    # is intentionally main / main-fast / ocr (plus the embed / rerank utility aliases above).
     echo "litellm_settings:"
     echo "  drop_params: true"
     # Long docs/OCR generations can run minutes — raise the gateway timeout and
@@ -1547,8 +1325,6 @@ service_py_label() {
     dashboard.py)          echo com.local.dashboard ;;
     silicon-exporter.py)   echo com.local.silicon.exporter ;;
     ondemand-exporter.py)  echo com.local.ondemand.exporter ;;
-    ollama-exporter.py)    echo com.local.ollama.exporter ;;
-    inference-watchdog.py) echo com.local.inference.watchdog ;;
     paperless-ocr.py)      echo com.local.paperless.ocr ;;
     vnc-secfilter.py)      echo com.local.vncfilter ;;
     *) echo "" ;;
@@ -1611,41 +1387,20 @@ render_all_plists() {
     fi
     # Skip optional services per config
     case "$label" in
-      com.local.mlxlm.serve)
-        # Text engine: mlx_lm.server (text-only). One text daemon at a time.
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = mlx-lm ]; }  || { remove_plist "$label"; continue; } ;;
       com.local.mlxvlm.main)
-        # Text engine: mlx_vlm.server (unified text+vision). One text daemon at a time.
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = mlx-vlm ]; } || { remove_plist "$label"; continue; } ;;
-      com.local.optiq.main)
-        # Text engine: mlx-optiq 'optiq serve' (unified text+image, BETA). One text daemon at a time.
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = optiq ]; } || { remove_plist "$label"; continue; } ;;
-      com.local.vllmmlx.main)
-        # Text engine: vllm-mlx 'vllm-mlx serve' (unified text+image, batching). One text daemon at a time.
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${TEXT_ENGINE:-mlx-lm}" = vllm-mlx ]; } || { remove_plist "$label"; continue; } ;;
+        # Text engine: mlx_vlm.server (unified text+vision). The one always-on main.
+        [ "${INSTALL_MLX:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.litellm.*|com.local.glmocr.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.infinity.*)
         # On-demand BGE embedder + reranker (Infinity, MPS). Independent of the
         # text engine, but only reachable through the LiteLLM gateway.
         [ "${INSTALL_EMBED:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
-      com.local.vision.*)
-        # On-demand vision (mlx-vlm) — only when a model is assigned (redundant under mlx-vlm main).
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ -n "${ALIAS_VISION:-}" ]; } || { remove_plist "$label"; continue; } ;;
-      com.local.ollama.headless)
-        [ "${INSTALL_OLLAMA:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
-      com.local.optiq.agent)
-        # Small fast co-resident OptiQ Gemma-4 model (alias 'agent', 2nd 'optiq serve'),
-        # alongside the big unified main. Text+tools+vision + big context; needs the
-        # optiq venv (auto-built when INSTALL_AGENT=1) + the LiteLLM gateway.
-        { [ "${INSTALL_MLX:-1}" = 1 ] && [ "${INSTALL_AGENT:-0}" = 1 ]; } || { remove_plist "$label"; continue; } ;;
-      com.local.ollama.exporter)
-        { [ "${INSTALL_OLLAMA:-0}" = 1 ] && [ "${INSTALL_EXPORTERS:-1}" = 1 ]; } || { remove_plist "$label"; continue; } ;;
       com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.node.exporter|com.local.silicon.exporter|com.local.ondemand.exporter)
         [ "${INSTALL_EXPORTERS:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
-      com.local.llm.watchdog|com.local.inference.watchdog)
+      com.local.llm.watchdog)
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.mqtt.bridge)
         [ "${INSTALL_MQTT:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
@@ -1705,75 +1460,6 @@ render_motd() {
   fi
 }
 
-ensure_ollama_dist() {
-  # Version-pinned Ollama distribution (GitHub ollama-darwin.tgz) → $VENV_DIR/ollama-dist.
-  # The -mlx gemma-4 tags require Ollama >= 0.31.0, which the brew formula lags behind;
-  # the tgz is self-contained (ollama + llama-server + mlx_metal runners). Needed for
-  # the INSTALL_OLLAMA fallback (the 'agent' is optiq now, so it no longer needs this).
-  # Idempotent: re-fetch only when the installed binary's version != OLLAMA_VERSION.
-  [ "${INSTALL_OLLAMA:-0}" = 1 ] || return 0
-  local ver="${OLLAMA_VERSION:-0.31.1}"
-  local dist="${VENV_DIR:-/Users/mac/.macstudio-venvs}/ollama-dist"
-  local bin="$dist/ollama" have=""
-  [ -x "$bin" ] && have=$(/usr/bin/sudo -u "$TARGET_USER" -H "$bin" --version 2>/dev/null | /usr/bin/awk '/version is/{print $NF; exit}')
-  if [ "$have" = "$ver" ]; then
-    ok "ollama dist present ($dist, $ver)"
-    return 0
-  fi
-  local url="https://github.com/ollama/ollama/releases/download/v${ver}/ollama-darwin.tgz"
-  log "fetching pinned Ollama $ver (ollama-darwin.tgz) → $dist (self-contained: ollama + mlx runner)"
-  /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$dist"
-  local tgz="$dist/.ollama-darwin.tgz"
-  if ! /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/curl -fsSL -m 600 -o "$tgz" "$url"; then
-    warn "failed to download $url — 'agent' falls back to brew ollama (may be too old for -mlx tags)"
-    return 0
-  fi
-  if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/tar xzf "$tgz" -C "$dist"; then
-    /usr/bin/sudo -u "$TARGET_USER" -H /bin/rm -f "$tgz"
-    ok "ollama dist installed ($ver) at $dist"
-  else
-    warn "tar extract failed for $tgz"
-  fi
-}
-
-ensure_ollama_models() {
-  # Walk modelfiles/*.Modelfile and create/update each Ollama model tag.
-  # Idempotent: stages the source file to /usr/local/etc/macstudio-models/
-  # via install_if_different, and only calls `ollama create` when the source
-  # actually changed. This avoids spamming `ollama create` on every --apply
-  # while still picking up any edit you push via git pull.
-  [ "${INSTALL_OLLAMA:-0}" = 1 ] || return 0
-  [ -d "$REPO_DIR/modelfiles" ] || return 0
-  local target_dir=/usr/local/etc/macstudio-models
-  /bin/mkdir -p "$target_dir"
-  local changed_any=0
-  local src tag dst
-  # ollama serve must be up for `ollama create` to work — give it a moment
-  # if render_all_plists just (re)started it.
-  if ! /usr/bin/curl -fsS -m 3 "http://127.0.0.1:${OLLAMA_PORT:-11434}/api/tags" >/dev/null 2>&1; then
-    warn "ollama API not reachable on :${OLLAMA_PORT:-11434} — skipping model creation"
-    warn "(ollama may still be starting up; re-run 'sudo bash setup.sh --apply' in 30 s)"
-    return 0
-  fi
-  for src in "$REPO_DIR"/modelfiles/*.Modelfile; do
-    [ -f "$src" ] || continue
-    tag=$(basename "$src" .Modelfile)
-    dst="$target_dir/$tag.Modelfile"
-    if install_if_different "$src" "$dst" 644; then
-      log "creating/updating ollama model: $tag"
-      if sudo -u "$TARGET_USER" -H /opt/homebrew/bin/ollama create "$tag" -f "$dst"; then
-        ok "ollama model created/updated: $tag"
-        changed_any=1
-      else
-        warn "ollama create failed for $tag (is the base model from FROM pulled?)"
-      fi
-    else
-      dbg "ollama modelfile unchanged: $tag"
-    fi
-  done
-  [ "$changed_any" = 0 ] && ok "ollama models up to date"
-}
-
 apply_iogpu_wired_limit() {
   local current target
   current=$(/usr/sbin/sysctl -n iogpu.wired_limit_mb 2>/dev/null || echo 0)
@@ -1795,7 +1481,6 @@ apply_pmset() {
 }
 
 apply_os_trim() {
-  [ "${INSTALL_OLLAMA:-0}" = 1 ] && /usr/bin/mdutil -i off "$OLLAMA_MODELS" >/dev/null 2>&1 || true
   [ "${INSTALL_MLX:-1}" = 1 ] && /usr/bin/mdutil -i off "${HF_CACHE_DIR:-/Users/mac/.cache/huggingface}" >/dev/null 2>&1 || true
   /usr/bin/mdutil -i off "$LOG_DIR"       >/dev/null 2>&1 || true
   sudo -u "$TARGET_USER" defaults write com.apple.SubmitDiagInfo AutoSubmit -bool false 2>/dev/null || true
@@ -1896,7 +1581,6 @@ apply_everything() {
   dbg "step: ensure_novnc_venv";       ensure_novnc_venv || true
   dbg "step: ensure_novnc_assets";     ensure_novnc_assets || true
   dbg "step: ensure_python_venvs";     ensure_python_venvs || true
-  dbg "step: ensure_ollama_dist";      ensure_ollama_dist || true
   dbg "step: ensure_model_catalog";    ensure_model_catalog
   dbg "step: render_wrappers";        render_wrappers
   dbg "step: render_services";        render_services
@@ -1907,7 +1591,6 @@ apply_everything() {
   dbg "step: mqtt_apply_warnings";    mqtt_apply_warnings
   dbg "step: render_motd";            render_motd
   dbg "step: apply_iogpu_wired_limit"; apply_iogpu_wired_limit
-  dbg "step: ensure_ollama_models";    ensure_ollama_models
   dbg "step: apply_pmset";            apply_pmset
   dbg "step: apply_os_trim";          apply_os_trim
   echo
@@ -2018,52 +1701,43 @@ menu_select_services() {
   load_config
   while true; do
     printf "\n${C_BOLD}── Select services to install ─────────────────${C_RST}\n"
-    printf "%s\n" "The MLX stack (mlx_lm.server + LiteLLM + on-demand GLM-OCR/vision) is the primary"
-    printf "%s\n" "backend. Ollama is kept in the repo as an OPTION only — turn it on if"
-    printf "%s\n" "you want it back. The GPU-wired-limit helper, caffeinate and the weekly"
-    printf "%s\n" "autoupdate are always installed. Re-running setup.sh never overwrites a"
-    printf "%s\n" "healthy installed service."
+    printf "%s\n" "The MLX stack (mlx_vlm.server + LiteLLM + on-demand GLM-OCR) is the primary"
+    printf "%s\n" "backend. The GPU-wired-limit helper, caffeinate and the weekly autoupdate are"
+    printf "%s\n" "always installed. Re-running setup.sh never overwrites a healthy installed service."
     echo
-    printf "  1) %-18s [%s]   MLX stack: mlx_lm.server :%s internal, LiteLLM :%s public, GLM-OCR :%s\n" \
+    printf "  1) %-18s [%s]   MLX stack: mlx_vlm.server :%s internal, LiteLLM :%s public, GLM-OCR :%s\n" \
       INSTALL_MLX       "$(onoff_label "${INSTALL_MLX:-1}")" \
-      "${VLLM_BACKEND_PORT:-18000}" "${LITELLM_PORT:-11434}" "${GLMOCR_PUBLIC_PORT:-5002}"
-    printf "  2) %-18s [%s]   Ollama fallback engine (:%s) — off by default\n" \
-      INSTALL_OLLAMA    "$(onoff_label "${INSTALL_OLLAMA:-0}")" "${OLLAMA_PORT:-11434}"
-    printf "  3) %-18s [%s]   immich-ml on-demand photo AI (:%s)\n" \
+      "${MAIN_BACKEND_PORT:-18000}" "${LITELLM_PORT:-11434}" "${GLMOCR_PUBLIC_PORT:-5002}"
+    printf "  2) %-18s [%s]   immich-ml on-demand photo AI (:%s)\n" \
       INSTALL_IMMICH    "$(onoff_label "${INSTALL_IMMICH:-1}")"    "${ML_PUBLIC_PORT:-3003}"
-    printf "  4) %-18s [%s]   docling-serve on-demand OCR/VLM (:%s)\n" \
+    printf "  3) %-18s [%s]   docling-serve on-demand OCR/VLM (:%s)\n" \
       INSTALL_DOCLING   "$(onoff_label "${INSTALL_DOCLING:-1}")"   "${DOCLING_PUBLIC_PORT:-5001}"
-    printf "  5) %-18s [%s]   Prometheus exporters (:%s :%s :%s)\n" \
+    printf "  4) %-18s [%s]   Prometheus exporters (:%s :%s :%s)\n" \
       INSTALL_EXPORTERS "$(onoff_label "${INSTALL_EXPORTERS:-1}")" \
       "${NODE_EXPORTER_PORT:-9100}" "${SILICON_EXPORTER_PORT:-9101}" "${ONDEMAND_EXPORTER_PORT:-9103}"
-    printf "  6) %-18s [%s]   Memory-pressure safety watchdog\n" \
+    printf "  5) %-18s [%s]   Memory-pressure safety watchdog\n" \
       INSTALL_WATCHDOG  "$(onoff_label "${INSTALL_WATCHDOG:-1}")"
-    printf "  7) %-18s [%s]   MQTT bridge -> Home Assistant (runtime data + model switch); host %s\n" \
+    printf "  6) %-18s [%s]   MQTT bridge -> Home Assistant (runtime data + model switch); host %s\n" \
       INSTALL_MQTT      "$(onoff_label "${INSTALL_MQTT:-0}")" "${MQTT_HOST:-<unset>}"
-    printf "  8) %-18s [%s]   Web dashboard (browser control: models/services/settings/logs) :%s\n" \
+    printf "  7) %-18s [%s]   Web dashboard (browser control: models/services/settings/logs) :%s\n" \
       INSTALL_DASHBOARD "$(onoff_label "${INSTALL_DASHBOARD:-1}")" "${DASHBOARD_PORT:-8090}"
-    printf "  9) %-18s [%s]   Remote desktop: macOS Screen Sharing / VNC, password-only via :%s (Windows client)\n" \
+    printf "  8) %-18s [%s]   Remote desktop: macOS Screen Sharing / VNC, password-only via :%s (Windows client)\n" \
       INSTALL_REMOTE    "$(onoff_label "${INSTALL_REMOTE:-1}")" "${VNC_FILTER_PORT:-5901}"
-    printf " 10) %-18s [%s]   Browser VNC bridge (noVNC) :%s/vnc.html — needs #9\n" \
+    printf "  9) %-18s [%s]   Browser VNC bridge (noVNC) :%s/vnc.html — needs #8\n" \
       INSTALL_NOVNC     "$(onoff_label "${INSTALL_NOVNC:-1}")" "${NOVNC_PORT:-6080}"
     echo
-    if [ "${INSTALL_MLX:-1}" = 1 ] && [ "${INSTALL_OLLAMA:-0}" = 1 ] \
-       && [ "${LITELLM_PORT:-11434}" = "${OLLAMA_PORT:-11434}" ]; then
-      warn "MLX and Ollama are both on but share port ${LITELLM_PORT:-11434} — change OLLAMA_PORT in settings."
-    fi
     echo "   a) Apply these choices now     q) Back (don't apply)"
-    read -r -p "Toggle which? [1-10 / a / q]: " c
+    read -r -p "Toggle which? [1-9 / a / q]: " c
     case "$c" in
       1) toggle_install_flag INSTALL_MLX       ;;
-      2) toggle_install_flag INSTALL_OLLAMA    ;;
-      3) toggle_install_flag INSTALL_IMMICH    ;;
-      4) toggle_install_flag INSTALL_DOCLING   ;;
-      5) toggle_install_flag INSTALL_EXPORTERS ;;
-      6) toggle_install_flag INSTALL_WATCHDOG  ;;
-      7) toggle_install_flag INSTALL_MQTT      ;;
-      8) toggle_install_flag INSTALL_DASHBOARD ;;
-      9) toggle_install_flag INSTALL_REMOTE    ;;
-      10) toggle_install_flag INSTALL_NOVNC    ;;
+      2) toggle_install_flag INSTALL_IMMICH    ;;
+      3) toggle_install_flag INSTALL_DOCLING   ;;
+      4) toggle_install_flag INSTALL_EXPORTERS ;;
+      5) toggle_install_flag INSTALL_WATCHDOG  ;;
+      6) toggle_install_flag INSTALL_MQTT      ;;
+      7) toggle_install_flag INSTALL_DASHBOARD ;;
+      8) toggle_install_flag INSTALL_REMOTE    ;;
+      9) toggle_install_flag INSTALL_NOVNC    ;;
       a|A) apply_everything; pause_enter; return 0 ;;
       q|Q|"") return 0 ;;
       *) warn "unknown: $c"; sleep 1 ;;
@@ -2130,8 +1804,8 @@ menu_settings() {
 # renamed `huggingface-cli` -> `hf`; the old name is a deprecated no-op shim.)
 hf_cli() {
   local base="${VENV_DIR:-/Users/mac/.macstudio-venvs}"
-  if [ -x "$base/mlxlm/bin/hf" ]; then echo "$base/mlxlm/bin/hf"
-  else echo "$base/mlxvlm/bin/hf"; fi
+  if [ -x "$base/mlxvlm/bin/hf" ]; then echo "$base/mlxvlm/bin/hf"
+  else echo "$base/litellm/bin/hf"; fi
 }
 
 ram_guard_warn() {
@@ -2159,7 +1833,7 @@ download_model() {
   rc=${PIPESTATUS[0]}
   out=$(/usr/bin/tail -40 "$logf" 2>/dev/null)
   if [ "$rc" -eq 0 ] && [ "$(model_status "$repo")" = ok ]; then
-    ok "downloaded + verified '$id' — selectable now ('s'/'o'/'v'/'m'/'k' $id for main/ocr/vision/embed/rerank)"
+    ok "downloaded + verified '$id' — selectable now ('s'/'o'/'m'/'k' $id for main/ocr/embed/rerank)"
     return 0
   fi
   # Classify the failure so a dead list-item explains itself.
@@ -2187,15 +1861,13 @@ set_model_alias() {
   [ "$st" = ok ] || { err "'$id' is not fully downloaded (status=$st) — run 'd $id' first"; return 1; }
   case "$slot" in
     main)   key=ALIAS_MAIN;   want_role=text ;;
-    agent)  key=AGENT_MODEL;  want_role=text ;;
     ocr)    key=ALIAS_OCR;    want_role=ocr  ;;
-    vision) key=ALIAS_VISION; want_role=vision ;;
     embed)  key=ALIAS_EMBED;  want_role=embed ;;
     rerank) key=ALIAS_RERANK; want_role=rerank ;;
     *) err "bad slot: $slot"; return 1 ;;
   esac
-  # Roles: text -> 'main' (mlx_lm.server), ocr -> 'ocr' + vision -> 'vision' (both mlx-vlm),
-  # embed -> 'embed' + rerank -> 'rerank' (both the Infinity backend).
+  # Roles: text -> 'main' (mlx_vlm.server, unified text+images), ocr -> 'ocr' (GLM-OCR
+  # on mlx-vlm), embed -> 'embed' + rerank -> 'rerank' (both the Infinity backend).
   role=$(catalog_role "$id"); role=${role:-text}
   if [ "$role" != "$want_role" ]; then
     err "'$id' has role '$role' but slot '$slot' needs role '$want_role' — wrong list"
@@ -2203,14 +1875,10 @@ set_model_alias() {
   fi
   # Refuse models the catalog flags BROKEN for the engine that will actually run
   # this slot — selecting one just breaks the server. A bare legacy BROKEN always
-  # blocks; an engine-tagged BROKEN[<engine>] blocks ONLY for that engine. So
-  # BROKEN[mlx-lm] (e.g. gemma4-12b = gemma4_unified) is fine under mlx-vlm and
-  # selectable there; BROKEN[vllm] is HISTORICAL (vllm-mlx retired) and never blocks.
-  # main runs on TEXT_ENGINE; agent always runs on optiq; ocr/vision always on mlx-vlm.
+  # blocks; an engine-tagged BROKEN[<engine>] blocks ONLY for that engine. Everything
+  # runs on mlx-vlm (main + ocr) or infinity (embed/rerank).
   local _notes _broken=0 _check_engine
   case "$slot" in
-    main)         _check_engine="${TEXT_ENGINE:-mlx-vlm}" ;;
-    agent)        _check_engine="optiq" ;;
     embed|rerank) _check_engine="infinity" ;;
     *)            _check_engine="mlx-vlm" ;;
   esac
@@ -2232,30 +1900,14 @@ set_model_alias() {
   render_litellm_config
   if [ "$slot" = main ]; then
     ram_guard_warn
-    local _text_label=com.local.mlxlm.serve
-    [ "${TEXT_ENGINE:-mlx-lm}" = mlx-vlm ]  && _text_label=com.local.mlxvlm.main
-    [ "${TEXT_ENGINE:-mlx-lm}" = optiq ]    && _text_label=com.local.optiq.main
-    [ "${TEXT_ENGINE:-mlx-lm}" = vllm-mlx ] && _text_label=com.local.vllmmlx.main
-    if daemon_loaded "$_text_label"; then
-      /bin/launchctl kickstart -k "system/$_text_label" >/dev/null 2>&1 \
-        && ok "restarting $_text_label with new main model (load ~30–60 s, no hot-swap)"
-    fi
-  elif [ "$slot" = agent ]; then
-    if daemon_loaded com.local.optiq.agent; then
-      /bin/launchctl kickstart -k system/com.local.optiq.agent >/dev/null 2>&1 \
-        && ok "restarting com.local.optiq.agent with new agent model (load ~10-30 s)"
-    else
-      [ "${INSTALL_AGENT:-0}" = 1 ] || warn "INSTALL_AGENT=0 — the agent daemon is off; enable it (menu 4) + --apply"
+    if daemon_loaded com.local.mlxvlm.main; then
+      /bin/launchctl kickstart -k system/com.local.mlxvlm.main >/dev/null 2>&1 \
+        && ok "restarting com.local.mlxvlm.main with new main model (load ~30–60 s, no hot-swap)"
     fi
   elif [ "$slot" = ocr ]; then
     if daemon_running com.local.glmocr.serve; then
       /bin/launchctl stop com.local.glmocr.serve >/dev/null 2>&1 || true
       ok "stopped GLM-OCR backend; next OCR request wakes it with the new model"
-    fi
-  elif [ "$slot" = vision ]; then
-    if daemon_running com.local.vision.serve; then
-      /bin/launchctl stop com.local.vision.serve >/dev/null 2>&1 || true
-      ok "stopped vision backend; next image request wakes it with the new model"
     fi
   elif [ "$slot" = embed ] || [ "$slot" = rerank ]; then
     if daemon_running com.local.infinity.serve; then
@@ -2271,7 +1923,7 @@ cli_set_model() {
   # (downloaded, role match, BROKEN refusal). Usage: --set-model <slot> <id>.
   INTERACTIVE=0
   load_config
-  [ "$#" -eq 2 ] || { err "usage: --set-model <main|agent|ocr|vision|embed|rerank> <id>"; exit 2; }
+  [ "$#" -eq 2 ] || { err "usage: --set-model <main|ocr|embed|rerank> <id>"; exit 2; }
   set_model_alias "$1" "$2" || exit 1
 }
 
@@ -2397,7 +2049,7 @@ EOF
   [ "$s_topp" = 1 ]   && c15=$n_topp
   [ "$s_freq" = 1 ]   && c16=$n_freq
   [ "$s_pres" = 1 ]   && c17=$n_pres
-  case "$c3" in text|ocr|vision|embed|rerank) : ;; *) err "invalid role '$c3'"; exit 2 ;; esac
+  case "$c3" in text|ocr|embed|rerank) : ;; *) err "invalid role '$c3'"; exit 2 ;; esac
   local newline; newline="$c1|$c2|$c3|$c4|$c5|$c6|$c7|$c8|$c9|$c10|$c11|$c12|$c13|$c14|$c15|$c16|$c17"
   local tmp l; tmp=$(/usr/bin/mktemp)
   while IFS= read -r l || [ -n "$l" ]; do
@@ -2422,8 +2074,8 @@ cli_add_model() {
   # TUI's catalog_add_entry; editing/removing rows stays TUI-only. Keys:
   #   id=      short slug (required, [A-Za-z0-9._-])
   #   repo=    HF org/name — a ready MLX build (required)
-  #   role=    text|ocr|vision|embed|rerank  (default text)
-  #   engine=  optiq|mlxvlm|mlxlm|infinity   (default: derived from role/TEXT_ENGINE)
+  #   role=    text|ocr|embed|rerank         (default text)
+  #   engine=  mlxvlm|infinity               (default: derived from role)
   #   quant=   e.g. 4bit                     (default ?)
   #   gb=      approx footprint              (default ?)
   #   gated=   yes|no                        (default no)
@@ -2454,19 +2106,13 @@ cli_add_model() {
     *[\|]*|*" "*) err "invalid repo '$repo' — no spaces or '|'"; exit 2 ;;
   esac
   case "$role" in
-    text|ocr|vision|embed|rerank) : ;;
-    *) err "invalid role '$role' (text|ocr|vision|embed|rerank)"; exit 2 ;;
+    text|ocr|embed|rerank) : ;;
+    *) err "invalid role '$role' (text|ocr|embed|rerank)"; exit 2 ;;
   esac
   if [ -z "$engine" ]; then
     case "$role" in
-      ocr|vision)   engine=mlxvlm ;;
       embed|rerank) engine=infinity ;;
-      *) case "${TEXT_ENGINE:-optiq}" in
-           mlx-vlm)  engine=mlxvlm ;;
-           mlx-lm)   engine=mlxlm ;;
-           vllm-mlx) engine=vllmmlx ;;
-           *)        engine=optiq ;;
-         esac ;;
+      *)            engine=mlxvlm ;;
     esac
   fi
   ensure_model_catalog
@@ -2533,15 +2179,8 @@ catalog_add_entry() {
   fi
   read -r -p "HF repo-id (org/name, MUST be a ready MLX build): " repo; [ -z "$repo" ] && return 0
   read -r -p "role [text/ocr] (default text): " role; role=${role:-text}
-  if [ "$role" = ocr ]; then
-    engine=mlxvlm
-  else
-    local mm
-    read -r -p "multimodal (vision/audio) text model? [y/N]: " mm
-    # engine col is informational (auto-detected at runtime): mlxvlm = unified
-    # text+images main (TEXT_ENGINE=mlx-vlm); mlxlm = text-only (TEXT_ENGINE=mlx-lm).
-    case "$mm" in y|Y|yes|YES) engine=mlxvlm ;; *) engine=mlxlm ;; esac
-  fi
+  # Only engine is mlx-vlm (unified text+images main + GLM-OCR). embed/rerank use infinity.
+  engine=mlxvlm
   read -r -p "quant (e.g. 4bit): " quant;       quant=${quant:-?}
   read -r -p "approx GB: " gb;                  gb=${gb:-?}
   read -r -p "gated? [yes/no] (default no): " gated; gated=${gated:-no}
@@ -2615,7 +2254,6 @@ print_catalog_table() {
     case "$notes" in *BROKEN*|*broken*) flag="BROKEN" ;; esac
     if [ -z "$flag" ]; then case "${rating:-}" in 5) flag="REC" ;; esac; fi
     [ "$id" = "${ALIAS_MAIN:-}" ] && tag="${tag}main "
-    [ "$id" = "${AGENT_MODEL:-}" ] && [ "${INSTALL_AGENT:-0}" = 1 ] && tag="${tag}agent "
     [ "$id" = "${ALIAS_OCR:-}" ]  && tag="${tag}ocr "
     printf "$fmt" \
       "$id" "${role:-text}" "$mark" "$flag" "$engine" "$gb" "$gated" "$rating" "${tag:-}" "$repo"
@@ -2637,7 +2275,7 @@ print_model_detail() {
   st=$(model_status "$repo")
   printf "\n${C_BOLD}── %s ──────────────────────────────${C_RST}\n" "$id"
   printf "  repo        %s\n" "$repo"
-  printf "  role/engine %s / %s%s\n" "${role:-text}" "${engine:-vllm}" \
+  printf "  role/engine %s / %s%s\n" "${role:-text}" "${engine:-mlxvlm}" \
     "$( [ "$id" = "${ALIAS_MAIN:-}" ] && printf '   [active main]'; [ "$id" = "${ALIAS_OCR:-}" ] && printf '   [active ocr]' )"
   printf "  quant/gb    %s / %s GB\n" "${quant:--}" "${gb:-?}"
   printf "  status      %s   gated=%s   rating=%s/5\n" "$st" "${gated:-no}" "${rating:-?}"
@@ -2656,13 +2294,13 @@ menu_models() {
   while true; do
     clear 2>/dev/null || true
     printf "${C_BOLD}── Models & aliases ───────────────────────────${C_RST}\n"
-    printf "Active:  main=%s  ocr=%s  vision=%s  embed=%s  rerank=%s\n" \
-      "${ALIAS_MAIN:-none}" "${ALIAS_OCR:-none}" "${ALIAS_VISION:-off}" "${ALIAS_EMBED:-off}" "${ALIAS_RERANK:-off}"
-    printf "${C_DIM}(ONE text model loads on the active text engine; ocr + vision + embed/rerank are on-demand)${C_RST}\n\n"
+    printf "Active:  main=%s  ocr=%s  embed=%s  rerank=%s\n" \
+      "${ALIAS_MAIN:-none}" "${ALIAS_OCR:-none}" "${ALIAS_EMBED:-off}" "${ALIAS_RERANK:-off}"
+    printf "${C_DIM}(ONE text+images model loads as 'main'; ocr + embed/rerank are on-demand)${C_RST}\n\n"
     print_catalog_table
     printf "\nSTATUS ok = downloaded+verified (only ok is selectable).  FLAG: ${C_RED}BROKEN${C_RST}=not selectable  ${C_GRN}REC${C_RST}=recommended (rating 5).\n"
-    printf "Roles: text -> 's' (main)   ocr -> 'o'   vision -> 'v'   embed -> 'm'   rerank -> 'k'. Source: HuggingFace repo-ids.\n"
-    printf "Actions:  i <id> info   d <id> download   s <id> set TEXT/main   g <id> set AGENT   o <id> set OCR   v <id> set VISION\n"
+    printf "Roles: text -> 's' (main)   ocr -> 'o'   embed -> 'm'   rerank -> 'k'. Source: HuggingFace repo-ids.\n"
+    printf "Actions:  i <id> info   d <id> download   s <id> set TEXT/main   o <id> set OCR\n"
     printf "          m <id> set EMBED   k <id> set RERANK   a add   e <id> edit   x <id> remove   r <id> delete-local   t HF token   q back\n"
     read -r -p "models> " line || return 0
     local cmd arg
@@ -2672,9 +2310,7 @@ menu_models() {
       i) print_model_detail "$arg";    pause_enter ;;
       d) download_model "$arg";        pause_enter ;;
       s) set_model_alias main "$arg";   pause_enter ;;
-      g) set_model_alias agent "$arg";  pause_enter ;;
       o) set_model_alias ocr "$arg";    pause_enter ;;
-      v) set_model_alias vision "$arg"; pause_enter ;;
       m) set_model_alias embed "$arg";  pause_enter ;;
       k) set_model_alias rerank "$arg"; pause_enter ;;
       a) catalog_add_entry;            pause_enter ;;
@@ -2689,15 +2325,15 @@ menu_models() {
 }
 
 # Read-only "what could be updated" view. Changes NOTHING — the LLM stack is
-# frozen on purpose; the user bumps it deliberately via MLXLM_VERSION.
+# frozen on purpose; the user bumps it deliberately via MLXVLM_VERSION.
 menu_updates() {
   load_config
   printf "\n${C_BOLD}── Check for updates (read-only) ──────────────${C_RST}\n"
-  printf "mlx-lm pin: MLXLM_VERSION=%s   (text engine — frozen unless you bump it)\n\n" \
-    "${MLXLM_VERSION:-<float=latest>}"
+  printf "mlx-vlm pin: MLXVLM_VERSION=%s   (text engine — frozen unless you bump it)\n\n" \
+    "${MLXVLM_VERSION:-<float=latest>}"
   printf "LLM stack (installed vs PyPI):\n"
   local pair vn pk py
-  for pair in mlxlm:mlx-lm mlxvlm:mlx-vlm litellm:litellm; do
+  for pair in mlxvlm:mlx-vlm litellm:litellm; do
     vn=${pair%%:*}; pk=${pair##*:}
     py="${VENV_DIR:-/Users/mac/.macstudio-venvs}/$vn/bin/python"
     if [ ! -x "$py" ]; then printf "  %-10s (venv not built)\n" "$pk"; continue; fi
@@ -2724,7 +2360,7 @@ PY
   brew_ outdated 2>/dev/null | /usr/bin/sed 's/^/  /' || echo "  (brew n/a)"
   printf "macOS updates:\n"
   /usr/sbin/softwareupdate -l 2>&1 | /usr/bin/grep -iE 'label:|recommended|^\* |no new software' | /usr/bin/sed 's/^/  /' | /usr/bin/head -8
-  printf "\n${C_DIM}Upgrade the LLM stack on purpose: menu 4 -> set MLXLM_VERSION -> menu 1.${C_RST}\n"
+  printf "\n${C_DIM}Upgrade the LLM stack on purpose: menu 4 -> set MLXVLM_VERSION -> menu 1.${C_RST}\n"
   pause_enter
 }
 
@@ -2779,7 +2415,7 @@ menu_cleanup() {
   while true; do
     printf "\n${C_BOLD}── Clean-up tasks ─────────────────────────────${C_RST}\n"
     echo "  1) Purge logs older than 30 days in $LOG_DIR"
-    echo "  2) Uninstall node_exporter (keeps ollama)"
+    echo "  2) Uninstall node_exporter"
     echo "  q) Back"
     read -r -p "Choice: " c
     case "$c" in
@@ -2798,7 +2434,7 @@ follow_log() {
   printf "\n${C_DIM}── live: %s  (Ctrl-C to stop) ──${C_RST}\n" "$f"
   trap 'true' INT
   case "$f" in
-    *mlxlm.log|*mlxvlm-main.log|*vllmmlx-main.log|*vllm.log)
+    *mlxvlm-main.log)
       /usr/bin/tail -n 20 -F "$f" 2>/dev/null \
         | /usr/bin/grep --line-buffered -E 'REQUEST|Chat completion|tok/s|running=|ABORTED|schedule|Error|Traceback|mllm=' || true ;;
     *)
@@ -2840,16 +2476,15 @@ menu_logs() {
 menu_uninstall() {
   echo
   warn "This will REMOVE everything this tool installed (plists, wrappers, logs, config)."
-  warn "It will NOT touch Homebrew, Ollama itself, or your models."
+  warn "It will NOT touch Homebrew or your downloaded models."
   if ! confirm "Proceed with uninstall?"; then return 0; fi
   for label in "${ALL_LABELS[@]}"; do
     bootout_plist "$label"
     /bin/rm -f "$PLIST_DIR/$label.plist"
   done
   /bin/rm -rf "$LIBEXEC_DIR"/start-*.sh "$LIBEXEC_DIR"/ondemand-proxy.py \
-              "$LIBEXEC_DIR"/ollama-exporter.py "$LIBEXEC_DIR"/silicon-exporter.py \
+              "$LIBEXEC_DIR"/silicon-exporter.py \
               "$LIBEXEC_DIR"/ondemand-exporter.py "$LIBEXEC_DIR"/llm-watchdog.sh \
-              "$LIBEXEC_DIR"/inference-watchdog.py \
               "$LIBEXEC_DIR"/mqtt-bridge.py "$LIBEXEC_DIR"/dashboard.py \
               "$LIBEXEC_DIR"/dashboard-ui.html "$LIBEXEC_DIR"/paperless-ocr.py
   /bin/rm -rf /usr/local/etc/macstudio-models
@@ -2930,7 +2565,7 @@ MacStudio LLM Server — setup.sh v${SCRIPT_VERSION}
   sudo bash setup.sh             Interactive TUI (recommended)
   sudo bash setup.sh --apply     Non-interactive install/update (no prompts)
   sudo bash setup.sh --status    Print live status and exit
-  sudo bash setup.sh --set-model <main|agent|ocr|vision|embed|rerank> <id>
+  sudo bash setup.sh --set-model <main|ocr|embed|rerank> <id>
                                  Switch a model slot non-interactively (same
                                  validation as the TUI; used by the MQTT bridge
                                  and the web dashboard)

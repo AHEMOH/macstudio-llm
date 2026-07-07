@@ -375,13 +375,9 @@ def text_model_options(hf_cache, engine):
     return opts
 
 
-def text_daemon_label(engine):
-    """launchd label of the text daemon TEXT_ENGINE selects (one runs at a time)."""
-    if engine == "mlx-vlm":
-        return "com.local.mlxvlm.main"
-    if engine == "optiq":
-        return "com.local.optiq.main"
-    return "com.local.mlxlm.serve"
+def text_daemon_label(engine=None):
+    """launchd label of the text daemon (mlx-vlm is the only engine)."""
+    return "com.local.mlxvlm.main"
 
 
 def ram_free_mb():
@@ -860,7 +856,7 @@ class Bridge:
         conf = parse_conf()
         active = conf.get("ALIAS_MAIN", model)
         self.mqtt.publish(self.model_state_topic, active, retain=True)
-        port = int(conf.get("VLLM_BACKEND_PORT", "18000") or 18000)
+        port = int(conf.get("MAIN_BACKEND_PORT", "18000") or 18000)
         deadline = time.monotonic() + BACKEND_WAIT
         while time.monotonic() < deadline:
             if tcp_listening(port):

@@ -3,7 +3,7 @@
 #
 # Usage:
 #   llm-restart                 # restart every always-on service
-#   llm-restart ollama          # restart ollama only
+#   llm-restart main            # restart the text engine only
 #   llm-restart immich docling  # multiple
 #   llm-restart all             # explicit "all"
 #   llm-restart list            # show known service names
@@ -17,7 +17,10 @@ fi
 # Short-name → launchd label (Bash-3.2 safe; macOS ships /bin/bash 3.2).
 label_for() {
   case "$1" in
-    ollama)          echo com.local.ollama.headless ;;
+    main)            echo com.local.mlxvlm.main ;;
+    litellm)         echo com.local.litellm.proxy ;;
+    glmocr-proxy)    echo com.local.glmocr.proxy ;;
+    glmocr)          echo com.local.glmocr.serve ;;
     immich-proxy)    echo com.local.immich.proxy ;;
     immich)          echo com.local.immich.ml ;;
     docling-proxy)   echo com.local.docling.proxy ;;
@@ -26,17 +29,16 @@ label_for() {
     infinity)        echo com.local.infinity.serve ;;
     node)            echo com.local.node.exporter ;;
     silicon)         echo com.local.silicon.exporter ;;
-    ollama-exporter) echo com.local.ollama.exporter ;;
     watchdog)        echo com.local.llm.watchdog ;;
     preventsleep)    echo com.local.preventsleep ;;
     *)               echo "" ;;
   esac
 }
 
-ALL_SHORT_NAMES=(ollama immich-proxy immich docling-proxy docling \
+ALL_SHORT_NAMES=(main litellm glmocr-proxy glmocr immich-proxy immich docling-proxy docling \
                  infinity-proxy infinity \
-                 node silicon ollama-exporter watchdog preventsleep)
-ALL_ALWAYS_ON=(ollama immich-proxy docling-proxy infinity-proxy node silicon ollama-exporter watchdog preventsleep)
+                 node silicon watchdog preventsleep)
+ALL_ALWAYS_ON=(main litellm glmocr-proxy immich-proxy docling-proxy infinity-proxy node silicon watchdog preventsleep)
 
 if [ $# -eq 0 ] || [ "${1:-}" = all ]; then
   set -- "${ALL_ALWAYS_ON[@]}"
