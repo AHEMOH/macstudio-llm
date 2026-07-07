@@ -311,7 +311,7 @@
         <input type="text" id="edRepo" autocomplete="off"></div>
       <div><label class="muted" style="font-size:12px">Rolle</label>
         <select id="edRole">
-          <option value="text">text</option><option value="ocr">ocr</option>
+          <option value="text">text</option>
           <option value="embed">embed</option>
           <option value="rerank">rerank</option>
         </select></div>
@@ -373,7 +373,6 @@
         <div><label class="muted" style="font-size:12px">Rolle</label>
           <select id="addRole">
             <option value="text">text (main)</option>
-            <option value="ocr">ocr</option>
             <option value="embed">embed</option>
             <option value="rerank">rerank</option>
           </select></div>
@@ -792,7 +791,7 @@ async function renderLinks() {
     <div class="value" style="font-size:15px;word-break:break-all"><a href="${esc(href)}" target="_blank" rel="noopener">${esc(href)}</a></div>
     ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}</div>`;
   const cards = [];
-  cards.push(copyCard("OpenAI-API (LiteLLM)", `http://${H}:${L.litellm_port}/v1`, "main · main-fast · ocr · embed · rerank"));
+  cards.push(copyCard("OpenAI-API (LiteLLM)", `http://${H}:${L.litellm_port}/v1`, "main · main-fast · embed · rerank"));
   cards.push(copyCard("Anthropic-API", `http://${H}:${L.litellm_port}`, "/v1/messages"));
   if (L.docling_port) cards.push(linkCard("docling (OCR / RAG)", `http://${H}:${L.docling_port}`, "UI + REST /v1/convert · /v1/chunk"));
   if (L.novnc_port) cards.push(linkCard("Remote Desktop (Browser)", `http://${H}:${L.novnc_port}/vnc.html`, "noVNC · Passwort: VNC_PASSWORD"));
@@ -835,9 +834,9 @@ function viewUebersicht() {
       <div class="card"><div class="label">Hauptmodell (main)</div>
         <div class="value" title="${esc(a.main)}">${esc(a.main || "–")}</div>
         <div class="sub">Engine: ${esc(st.engine)}${a.main_fast ? " · main-fast aktiv" : ""}</div></div>
-      <div class="card"><div class="label">OCR / Embed</div>
-        <div class="value" title="${esc(a.ocr)}">${esc(a.ocr || "aus")}</div>
-        <div class="sub">embed: ${a.embed ? "an" : "aus"} · rerank: ${a.rerank ? "an" : "aus"}</div></div>
+      <div class="card"><div class="label">Embed / Rerank</div>
+        <div class="value">${a.embed ? "an" : "aus"}</div>
+        <div class="sub">embed: ${esc(a.embed || "aus")} · rerank: ${esc(a.rerank || "aus")}</div></div>
       <div class="card"><div class="label">RAM frei</div>
         <div class="value">${fmtMB(m.ram_free_mb)}</div>
         <div class="sub">von ${m.total_ram_gb != null ? m.total_ram_gb + " GB" : "–"} · Druck:
@@ -934,8 +933,6 @@ function viewModelle() {
       if (m.status === "ok") {
         if (m.role === "text" && !(m.slots || []).includes("main"))
           acts.push(`<button class="small" data-act="main" data-id="${esc(m.id)}" ${m.broken_main ? "disabled title='BROKEN für die aktive Engine'" : ""}>→ main</button>`);
-        if (m.role === "ocr" && !(m.slots || []).includes("ocr"))
-          acts.push(`<button class="small" data-act="ocr" data-id="${esc(m.id)}" ${m.broken ? "disabled" : ""}>→ ocr</button>`);
         if (m.role === "embed" && !(m.slots || []).includes("embed"))
           acts.push(`<button class="small" data-act="embed" data-id="${esc(m.id)}" ${m.broken ? "disabled" : ""}>→ embed</button>`);
         if (m.role === "rerank" && !(m.slots || []).includes("rerank"))
@@ -994,7 +991,6 @@ function viewModelle() {
         } else {
           const warnTxt = {
             main: "Das Text-Backend startet neu und lädt das Modell (~30–60 s, kein Hot-Swap).",
-            ocr: "Das OCR-Backend wird gestoppt; die nächste Anfrage weckt es mit dem neuen Modell.",
             embed: "Das Embed/Rerank-Backend wird gestoppt und lädt beim nächsten Zugriff neu.",
             rerank: "Das Embed/Rerank-Backend wird gestoppt und lädt beim nächsten Zugriff neu.",
           }[act];
@@ -1235,7 +1231,6 @@ const SET_GROUPS = [
   ["Text-Engine", k => k === "TEXT_ENGINE" || k.startsWith("MAIN_") || k === "LLM_REQUEST_TIMEOUT"
       || k.startsWith("MLXVLM_")
       || k === "GEMMA_TOP_K" || k === "PRESET_ALIASES" || k === "LITELLM_PORT"],
-  ["OCR", k => k.startsWith("GLMOCR_") || k.includes("GLMOCR")],
   ["Embeddings & Rerank", k => k.startsWith("INFINITY_") || k.includes("INFINITY")],
   ["immich & docling", k => k.includes("IMMICH") || k.includes("DOCLING") || k.startsWith("ML_")],
   ["Exporter & MQTT", k => k.includes("EXPORTER") || k.startsWith("MQTT_") || k === "SILICON_SAMPLE_INTERVAL_MS"],

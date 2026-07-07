@@ -3,9 +3,8 @@
 Headless Apple Silicon Mac as an **MLX inference server**: **one unified
 multimodal model permanently warm** — by default **gemma-4-26b on `mlx_vlm.server`**,
 which handles **text *and* images in the same chat** plus tool calling, with KV-cache
-quantization — a **LiteLLM gateway** that gives apps stable aliases, an on-demand
-**GLM-OCR** model for document OCR, and an on-demand **BGE embeddings + reranker**
-pair (for RAG). Plus optional companion services (image AI,
+quantization — a **LiteLLM gateway** that gives apps stable aliases, and an on-demand
+**BGE embeddings + reranker** pair (for RAG). Plus optional companion services (image AI,
 document conversion) that sleep when idle and wake on first request. Runs fully
 unattended: no GUI, no login, auto-restart on power loss, weekly self-update.
 
@@ -17,8 +16,8 @@ raise a couple of config keys.
 > model** that handles **text *and* images in the same chat** plus tool calling, with
 > KV-cache quantization (bigger context on 32 GB). The default main is `gemma4-26b-qat`
 > (verified: `gemma4-{26b,12b,e4b,e2b}-qat`, text+tools+vision, vision 4/4). Only **one
-> big model** is in memory (GLM-OCR and the small BGE embed/rerank pair are the only
-> on-demand extras).
+> big model** is in memory (the small BGE embed/rerank pair is the only on-demand
+> extra).
 
 ## What this gives you
 
@@ -30,19 +29,17 @@ raise a couple of config keys.
   chat template. Version pinned via `MLXVLM_VERSION` (0.6.3).
 - **LiteLLM gateway** on the public port (:11434): apps talk OpenAI `/v1` (and
   Anthropic `/v1/messages`) to the stable aliases — `main` (text + images, reasons by
-  default), `main-fast` (same model, thinking-off), `ocr`, `embed` (BGE-M3 embeddings)
+  default), `main-fast` (same model, thinking-off), `embed` (BGE-M3 embeddings)
   and `rerank` (BGE reranker). The underlying model is swappable without the app
   noticing.
-- **GLM-OCR** (0.9 B, ~2 GB) on-demand on :5002 via `mlx-vlm` — document OCR,
-  #1 on OmniDocBench. The only vision model small enough to co-reside with the
-  big text main.
 - **Embeddings + rerank** (opt-in `INSTALL_EMBED=1`, on by default): **BAAI/bge-m3**
   (1024-dim multilingual dense embeddings, `embed` alias) + **BAAI/bge-reranker-v2-m3**
   (cross-encoder, `rerank` alias) served together by **Infinity** in one Torch-MPS
-  process, on-demand on :5004. Both small (~2 GB each) — they co-reside with the
-  big main like GLM-OCR. Reachable via LiteLLM `/v1/embeddings` and `/v1/rerank`.
+  process, on-demand on :5004. Both small (~2 GB each) — they are the only on-demand
+  extra that co-resides with the big main. Reachable via LiteLLM `/v1/embeddings` and
+  `/v1/rerank`.
 - **Model catalog + `llm-models` TUI**: download pre-converted MLX models from
-  HuggingFace, pick the active text / ocr / embed / rerank model, manage
+  HuggingFace, pick the active text / embed / rerank model, manage
   your HF token. Only fully-downloaded models become selectable.
 - **30 GB GPU wired memory limit** (on a 32 GB box) + OS trim → nearly the whole
   machine is available to the model.
@@ -67,7 +64,7 @@ raise a couple of config keys.
   See [INTEGRATIONS.md](INTEGRATIONS.md#mac-studio-in-home-assistant-mqtt).
 - **Web dashboard** (on by default, `INSTALL_DASHBOARD=1`): browser control of
   the whole box on `http://mac.home.arpa:8090` — models (download with live
-  progress, switch main/ocr/embed/rerank), services (restart/stop/wake +
+  progress, switch main/embed/rerank), services (restart/stop/wake +
   live state), every `macstudio.conf` setting with **Save & Apply**, live log
   tails, and power/thermal/GPU/RAM charts. Token-protected (auto-generated
   `DASHBOARD_TOKEN` in `macstudio.conf`). The SSH TUI stays fully authoritative
@@ -88,11 +85,10 @@ raise a couple of config keys.
 ```
 Public (apps point here):
   com.local.litellm.proxy          :11434   LiteLLM gateway — aliases main / main-fast /
-                                             ocr / embed / rerank
+                                             embed / rerank
                                              (OpenAI /v1 + Anthropic /v1/messages)
 Always on (internal / support):
   com.local.mlxvlm.main            :18000   the ONE unified multimodal main (mlx_vlm.server)
-  com.local.glmocr.proxy           :5002    on-demand proxy for GLM-OCR
   com.local.infinity.proxy         :5004    on-demand proxy for embed + rerank (Infinity)
   com.local.immich.proxy           :3003    on-demand proxy (optional)
   com.local.docling.proxy          :5001    on-demand proxy (optional)
@@ -100,7 +96,6 @@ Always on (internal / support):
   com.local.preventsleep                    caffeinate
 
 Registered but sleeping until requested:
-  com.local.glmocr.serve           :15002   GLM-OCR backend (mlx-vlm)
   com.local.infinity.serve         :15004   Infinity embed + rerank backend (Torch MPS)
   com.local.immich.ml              :13003   immich-ml backend (optional)
   com.local.docling.serve          :15001   docling-serve backend (optional)
@@ -192,8 +187,6 @@ llm-models                    # opens the model & alias manager
 #   t                         → paste your HuggingFace token (gemma is gated — required)
 #   d gemma4-26b-qat          → download the default unified main (~16 GB, live progress)
 #   s gemma4-26b-qat          → set it as the active 'main' (text+images)
-#   d glm-ocr                 → download GLM-OCR (~2 GB)
-#   o glm-ocr                 → set it as the active 'ocr' model
 #   d bge-m3                  → download the embedder (~2 GB, ungated)
 #   m bge-m3                  → set it as the active 'embed' model
 #   d bge-reranker-v2-m3      → download the matching reranker (~2 GB, ungated)
@@ -215,11 +208,11 @@ curl http://mac.home.arpa:11434/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"main","messages":[{"role":"user","content":"Hallo!"}]}'
 
-# OCR (wakes GLM-OCR on demand) — or send images straight to "main" for general image Q&A
+# Image Q&A — send images straight to "main" (the unified multimodal model)
 curl http://mac.home.arpa:11434/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"ocr","messages":[{"role":"user","content":[
-        {"type":"text","text":"Extract the text"},
+  -d '{"model":"main","messages":[{"role":"user","content":[
+        {"type":"text","text":"What is in this image?"},
         {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}]}]}'
 ```
 
@@ -242,8 +235,8 @@ on HuggingFace** — there is **no local conversion**. Source is always
 HuggingFace; entries are repo-ids (`org/name`), not URLs.
 
 Roles that are selectable: **`text`** (alias `main`, plus the `main-fast`
-preset on the same model), **`ocr`** (alias `ocr`, on-demand), **`embed`**
-(alias `embed`) and **`rerank`** (alias `rerank`).
+preset on the same model), **`embed`** (alias `embed`) and **`rerank`**
+(alias `rerank`).
 
 `llm-models` actions:
 
@@ -251,7 +244,6 @@ preset on the same model), **`ocr`** (alias `ocr`, on-demand), **`embed`**
 |---|---|
 | `d <id>` | **Download** the repo from HuggingFace (live progress), then verify |
 | `s <id>` | Set as the active **text/main** model (role=text only) → `mlx_vlm.server` restarts |
-| `o <id>` | Set as the active **ocr** model (role=ocr only) |
 | `m <id>` / `k <id>` | Set the active **embed** / **rerank** model |
 | `a` / `e <id>` / `x <id>` | Add / edit / remove a catalog entry |
 | `r <id>` | Delete the locally-downloaded files |
@@ -274,14 +266,13 @@ via `extra_body`). The generation ceiling for `main` is `MLXVLM_MAX_TOKENS`.
 HF cache (`$HF_CACHE_DIR/.../token`, mode 600) — **never** in `macstudio.conf`
 or git. Needed for gated repos (e.g. Gemma) and for higher download rate limits.
 
-Seeded models — intentionally **lean** (QAT Gemma-4 unified mains + GLM-OCR + the
+Seeded models — intentionally **lean** (QAT Gemma-4 unified mains + the
 BGE embed/rerank pair). Add more via `llm-models`:
 
 | id | role | ~GB | notes |
 |---|---|---|---|
 | `gemma4-26b-qat` | text | 16 | **default main** — QAT 26B-A4B MoE on mlx-vlm, unified text+images+tools, KV-quant (~32 tok/s); German (**gated**) |
 | `gemma4-12b-qat` / `-e4b-qat` / `-e2b-qat` | text | 8 / 4 / 3 | QAT variants on mlx-vlm — multimodal, faster/smaller; **gated** |
-| `glm-ocr` | ocr | 2 | **default ocr**, on-demand, #1 OmniDocBench (full page via `GLMOCR_MAX_TOKENS`) |
 | `bge-m3` | embed | 2 | **default embed** — 1024-dim multilingual dense embeddings (Infinity) |
 | `bge-reranker-v2-m3` | rerank | 2 | **default rerank** — cross-encoder reranker (Infinity) |
 
@@ -324,8 +315,8 @@ The **immich-ml venv** is the only thing not auto-built (needs your fork in
 **Memory note (32 GB):** `mlx_vlm.server` quantizes the KV cache
 (`MLXVLM_MAIN_KV_BITS`, default 8-bit) and caps context with
 `MLXVLM_MAIN_MAX_KV_SIZE` (default 65536) as an OOM guard. Only **one** big model
-fits, so GLM-OCR (~2 GB) and the BGE embed/rerank pair co-reside as small
-on-demand extras; a second big model does not fit.
+fits, so the BGE embed/rerank pair (~2 GB each) co-resides as the small on-demand
+extra; a second big model does not fit.
 
 ## `setup.sh` — one file, whole lifecycle
 
@@ -342,7 +333,7 @@ TUI main menu:
 ```
 1) Install / update everything
 2) Select services to install…   (MLX / immich / docling / exporters / watchdog)
-3) Models & aliases…             (download MLX models, pick main / ocr / embed / rerank)
+3) Models & aliases…             (download MLX models, pick main / embed / rerank)
 4) Change settings…
 5) Service control…
 6) Run weekly autoupdate now
@@ -366,11 +357,10 @@ use the menu) to change a live box.
 |---|---|---|
 | `TARGET_USER` | `mac` | Unix user that owns the venvs + daemons |
 | `IOGPU_WIRED_LIMIT_MB` | `30720` | GPU wired memory ceiling |
-| `INSTALL_MLX` | `1` | The MLX stack (mlx_vlm.server + LiteLLM + GLM-OCR) — primary backend |
+| `INSTALL_MLX` | `1` | The MLX stack (mlx_vlm.server + LiteLLM gateway) — primary backend |
 | `VENV_DIR` | `/Users/mac/.macstudio-venvs` | Where the mlxvlm/litellm venvs live |
 | `HF_CACHE_DIR` | `/Users/mac/.cache/huggingface` | HF model cache (`HF_HOME`) + token store |
 | `ALIAS_MAIN` | `gemma4-26b-qat` | Catalog id of the active unified text+images main (a VLM arch like gemma-4) |
-| `ALIAS_OCR` | _(empty)_ | Catalog id of the on-demand OCR model (`ocr` gateway alias). Empty = no `ocr` alias (off by default); set to `glm-ocr` to re-enable |
 | `ALIAS_EMBED` | `bge-m3` | Catalog id of the on-demand embedder (Infinity, alias `embed`). Empty = no embed alias |
 | `ALIAS_RERANK` | `bge-reranker-v2-m3` | Catalog id of the on-demand reranker (Infinity, alias `rerank`). Empty = no rerank alias |
 | `MODEL_PIN_MAIN` | `1` | Keep the main model permanently warm |
@@ -387,10 +377,6 @@ use the menu) to change a live box.
 | `MLXVLM_DRAFT_MODEL` / `_KIND` / `_BLOCK_SIZE` | _(empty)_ | Optional MTP speculative-decoding drafter (`--draft-model`/`--draft-kind`); empty = **off** (helps only bigger dense/MoE mains; broken on e2b/e4b) |
 | `GEMMA_TOP_K` | `64` | Gemma reference top_k for `main`/`main-fast` (via `extra_body`; top_k is not a native OpenAI param). `0`/empty = off; inert at temperature 0 |
 | `PRESET_ALIASES` | `1` | Expose the `main-fast` preset alias (same loaded model as `main`, thinking-off) |
-| `GLMOCR_PUBLIC_PORT` | `5002` | Public GLM-OCR port (proxy) |
-| `GLMOCR_BACKEND_PORT` | `15002` | Internal GLM-OCR backend port |
-| `IDLE_TIMEOUT_GLMOCR` | `60` | Seconds before GLM-OCR sleeps; **`-1` = never sleep** |
-| `STARTUP_TIMEOUT_GLMOCR` | `120` | GLM-OCR wake-up deadline |
 | `INFINITY_PUBLIC_PORT` | `5004` | Public embed/rerank port (proxy) |
 | `INFINITY_BACKEND_PORT` | `15004` | Internal Infinity backend port |
 | `IDLE_TIMEOUT_INFINITY` | `900` | Seconds before the embed/rerank backend sleeps; **`-1` = never** |
@@ -436,11 +422,11 @@ broke a loaded model).
 | Command | Purpose |
 |---|---|
 | `llm-status` | Live overview: memory, daemons, scheduled jobs |
-| `llm-models` | Model & alias manager (download, pick main/ocr/embed/rerank, HF token) |
+| `llm-models` | Model & alias manager (download, pick main/embed/rerank, HF token) |
 | `llm-restart [name\|all]` | Restart one or all services |
 | `llm-update` | Run the weekly autoupdate job now |
-| `llm-service-ctl wake\|sleep\|status glmocr\|infinity\|immich\|docling\|all` | Manual on-demand override |
-| `llm-logs [name]` | `tail -F` a service log (`mlxvlm-main`, `litellm`, `glmocr-serve`, …) |
+| `llm-service-ctl wake\|sleep\|status infinity\|immich\|docling\|all` | Manual on-demand override |
+| `llm-logs [name]` | `tail -F` a service log (`mlxvlm-main`, `litellm`, `infinity-serve`, …) |
 | `sudo mactop` / `sudo macmon` | Live Apple-Silicon TUIs |
 
 To watch **what the model is doing right now** from the TUI: `sudo bash setup.sh`
@@ -462,8 +448,8 @@ shows it any time). Five views:
   a new model by HF repo id (e.g. `mlx-community/…-OptiQ-4bit`) which appends a
   row and starts the download, **edit** any row's fields (repo, GB, context /
   `max_kv_size`, parsers, rating, notes, sampling), **remove** a catalog row,
-  download with a live progress bar, activate per slot (main / ocr /
-  embed / rerank; same validation incl. BROKEN refusal), delete local files,
+  download with a live progress bar, activate per slot (main / embed /
+  rerank; same validation incl. BROKEN refusal), delete local files,
   store the HF token. The GB column shows the real on-disk size once downloaded.
 - **Dienste** — every active daemon with live state; restart / stop / wake.
 - **Einstellungen** — every `macstudio.conf` key, grouped, with the same hints
@@ -506,9 +492,9 @@ for the Apple-Silicon + on-demand panels.
 
 ## How on-demand works
 
-The proxy plist always owns the public port (e.g. GLM-OCR :5002, Infinity :5004);
-the real backend plist (`com.local.glmocr.serve` / `com.local.infinity.serve`) is
-registered with `KeepAlive=false, RunAtLoad=false` and stays stopped. On the
+The proxy plist always owns the public port (e.g. Infinity :5004); the real
+backend plist (`com.local.infinity.serve`) is registered with
+`KeepAlive=false, RunAtLoad=false` and stays stopped. On the
 first TCP connection the proxy kickstarts the backend, polls its health endpoint,
 then streams traffic. A 30 s loop stops the backend after `IDLE_TIMEOUT_*`
 seconds of idle (set `-1` to keep it warm forever). Transparent to clients apart
@@ -521,7 +507,7 @@ from a short cold-start latency.
 ├── setup.sh            single TUI / --apply entry point
 ├── motd.txt            SSH-login banner template
 ├── models/catalog.tsv  model catalog seed
-├── wrappers/           scripts plists execute (start-mlxvlm-main, start-litellm, start-glmocr, …)
+├── wrappers/           scripts plists execute (start-mlxvlm-main, start-litellm, start-infinity, …)
 ├── bin/                user commands (llm-*)
 ├── daemons/            plist templates (@VAR@ substitution)
 ├── services/           proxy, exporters, watchdogs, autoupdate
@@ -551,7 +537,7 @@ On the Mac after `--apply`:
 | `hf auth login` / `hf download` fail with help text | huggingface_hub ≥ 1.0 renamed the CLI to `hf`. `git pull && --apply`. |
 | `main` flapping in `mlxvlm-main.log` | No model downloaded yet, or `ALIAS_MAIN` points at a model that isn't `ok`. Run `llm-models` → `d` then `s`. |
 | Short answer comes back empty from a reasoning model | The model spent the token budget thinking. Raise `MLXVLM_MAX_TOKENS` or use the thinking-off `main-fast` alias. |
-| Need image/vision input | The unified mlx-vlm `main` is multimodal — send `image_url` straight to `main` (or `main-fast`), image **before** the text. For best document transcription use `ocr` (GLM-OCR). |
+| Need image/vision input | The unified mlx-vlm `main` is multimodal — send `image_url` straight to `main` (or `main-fast`), image **before** the text. For bulk document OCR into paperless, use the separate paperless-ocr service. |
 | Download is slow / rate-limited | Set your HF token: `llm-models` → `t`. |
 | `memory_pressure` reports `Warn` with a model loaded | Use a smaller model, lower `MLXVLM_MAIN_MAX_KV_SIZE`, or `IOGPU_WIRED_LIMIT_MB` by 1024, via `setup.sh` menu 4. |
 | Mac doesn't come back after reboot / power loss | **FileVault is ON** and no console operator. Use `sudo fdesetup authrestart` for planned reboots; never plain `sudo reboot` on a headless FileVault Mac. |
@@ -561,7 +547,7 @@ On the Mac after `--apply`:
 
 `sudo bash setup.sh` → menu 9. Removes every plist, wrapper, script, config and
 log this tool installed — the daemons are `com.local.mlxvlm.main`,
-`com.local.litellm.proxy`, `com.local.glmocr.{proxy,serve}`,
+`com.local.litellm.proxy`,
 `com.local.infinity.{proxy,serve}`, `com.local.immich.{proxy,ml}`,
 `com.local.docling.{proxy,serve}`, `com.local.node.exporter`,
 `com.local.silicon.exporter`, `com.local.ondemand.exporter`,

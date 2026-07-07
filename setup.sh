@@ -31,7 +31,6 @@ MOTD_BACKUP=/etc/motd.macstudio.bak
 ALWAYS_ON_LABELS=(
   com.local.mlxvlm.main
   com.local.litellm.proxy
-  com.local.glmocr.proxy
   com.local.infinity.proxy
   com.local.immich.proxy
   com.local.docling.proxy
@@ -50,7 +49,6 @@ ALWAYS_ON_LABELS=(
 )
 # On-demand backends (KeepAlive=false, RunAtLoad=false)
 ONDEMAND_LABELS=(
-  com.local.glmocr.serve
   com.local.infinity.serve
   com.local.immich.ml
   com.local.docling.serve
@@ -69,7 +67,6 @@ CONFIG_KEYS=(
   VENV_DIR
   HF_CACHE_DIR
   ALIAS_MAIN
-  ALIAS_OCR
   MODEL_PIN_MAIN
   MAIN_BACKEND_PORT
   MAIN_MAX_NUM_SEQS
@@ -87,11 +84,6 @@ CONFIG_KEYS=(
   GEMMA_TOP_K
   PRESET_ALIASES
   LITELLM_PORT
-  GLMOCR_PUBLIC_PORT
-  GLMOCR_BACKEND_PORT
-  IDLE_TIMEOUT_GLMOCR
-  STARTUP_TIMEOUT_GLMOCR
-  GLMOCR_MAX_TOKENS
   INSTALL_EMBED
   ALIAS_EMBED
   ALIAS_RERANK
@@ -190,7 +182,6 @@ config_default() {
     VENV_DIR)                    echo /Users/mac/.macstudio-venvs ;;
     HF_CACHE_DIR)                echo /Users/mac/.cache/huggingface ;;
     ALIAS_MAIN)                  echo gemma4-26b-qat ;;
-    ALIAS_OCR)                   echo "" ;;
     MODEL_PIN_MAIN)              echo 1 ;;
     MAIN_BACKEND_PORT)           echo 18000 ;;
     MAIN_MAX_NUM_SEQS)           echo 4 ;;
@@ -208,11 +199,6 @@ config_default() {
     GEMMA_TOP_K)                 echo 64 ;;
     PRESET_ALIASES)              echo 1 ;;
     LITELLM_PORT)                echo 11434 ;;
-    GLMOCR_PUBLIC_PORT)          echo 5002 ;;
-    GLMOCR_BACKEND_PORT)         echo 15002 ;;
-    IDLE_TIMEOUT_GLMOCR)         echo 60 ;;
-    STARTUP_TIMEOUT_GLMOCR)      echo 120 ;;
-    GLMOCR_MAX_TOKENS)           echo 8192 ;;
     INSTALL_EMBED)               echo 1 ;;
     ALIAS_EMBED)                 echo bge-m3 ;;
     ALIAS_RERANK)                echo bge-reranker-v2-m3 ;;
@@ -303,20 +289,19 @@ config_default() {
 config_hint() {
   case "$1" in
     IOGPU_WIRED_LIMIT_MB)        echo "GPU wired memory ceiling in MB (28672–30720 on 32 GB; 2048 headroom for OS)" ;;
-    INSTALL_MLX)                 echo "1 = install the MLX stack (mlx_vlm.server unified text+images main + LiteLLM + GLM-OCR) as the primary backend" ;;
+    INSTALL_MLX)                 echo "1 = install the MLX stack (mlx_vlm.server unified text+images main + LiteLLM gateway) as the primary backend" ;;
     VENV_DIR)                    echo "Where the mlxvlm/litellm/infinity Python venvs live (owned by TARGET_USER)" ;;
     HF_CACHE_DIR)                echo "HuggingFace model cache (HF_HOME) — where downloaded MLX models land" ;;
     ALIAS_MAIN)                  echo "Catalog id of the ONE active main/text model (manage via 'llm-models')" ;;
-    ALIAS_OCR)                   echo "Catalog id of the on-demand OCR model (engine mlxvlm) -> alias 'ocr'. empty = ocr off (default)" ;;
     MODEL_PIN_MAIN)              echo "1 = keep the main model permanently warm (agentic main load)" ;;
     MAIN_BACKEND_PORT)           echo "Internal port the text engine (mlx_vlm.server) binds; LiteLLM fronts it" ;;
     MAIN_MAX_NUM_SEQS)           echo "Fallback for concurrent decode streams" ;;
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
     TEXT_ENGINE)                 echo "Engine serving 'main': mlx-vlm (mlx_vlm.server — UNIFIED text+images, KV-quant, single-stream; needs a VLM main like gemma-4). The only supported engine" ;;
-    MLXVLM_VERSION)              echo "Pinned mlx-vlm for the 'mlxvlm' venv (unified text+vision main + GLM-OCR). 0.6.3 = the release that FIXED Gemma-4 unified silently dropping images (0.6.2 answered text-only, no error). Bump deliberately + --apply" ;;
+    MLXVLM_VERSION)              echo "Pinned mlx-vlm for the 'mlxvlm' venv (unified text+vision main). 0.6.3 = the release that FIXED Gemma-4 unified silently dropping images (0.6.2 answered text-only, no error). Bump deliberately + --apply" ;;
     MLXVLM_MAIN_KV_BITS)         echo "KV-cache quant bits for the mlx-vlm unified main: 8 (recommended), 4, or 3.5 with turboquant. empty=off. (Only when TEXT_ENGINE=mlx-vlm)" ;;
     MLXVLM_MAIN_KV_SCHEME)       echo "mlx-vlm main KV quant scheme: uniform | turboquant (fractional bits like 3.5)" ;;
-    MLXVLM_MAIN_MAX_KV_SIZE)     echo "mlx-vlm main CONTEXT cap (--max-kv-size) = the OOM guard (bounds prompt+KV, unlike MLXVLM_MAX_TOKENS which only caps generation). Default 65536 (64K) — co-residence safety margin (~5GB free at 64K, room for GLM-OCR). Verified swap-safe 2026-07-04 on both 26B-A4B and 12B @ 8-bit KV. 128K is also memory-safe on 26B-A4B (~8.7min prefill at 125K, ~96M swap) but leaves no co-residence headroom at the ceiling; on dense 12B a ~121K prompt fits in RAM but prefill takes ~19min — impractical. Raise to 131072 for max solo context on 26B. empty = model native 262144 (256K, OOM-risky uncapped)" ;;
+    MLXVLM_MAIN_MAX_KV_SIZE)     echo "mlx-vlm main CONTEXT cap (--max-kv-size) = the OOM guard (bounds prompt+KV, unlike MLXVLM_MAX_TOKENS which only caps generation). Default 65536 (64K) — swap-safe with headroom. Verified swap-safe 2026-07-04 on both 26B-A4B and 12B @ 8-bit KV. 128K is also memory-safe on 26B-A4B (~8.7min prefill at 125K, ~96M swap) but leaves no co-residence headroom at the ceiling; on dense 12B a ~121K prompt fits in RAM but prefill takes ~19min — impractical. Raise to 131072 for max solo context on 26B. empty = model native 262144 (256K, OOM-risky uncapped)" ;;
     MLXVLM_MAIN_ENABLE_THINKING) echo "mlx-vlm main: 1 = think by default (default — so 'main' reasons; OpenWebUI shows it), 0 = off. main-fast is forced thinking-off at the proxy regardless; clients can override per request" ;;
     MLXVLM_MAX_TOKENS)           echo "mlx-vlm server default --max-tokens = generation ceiling for main (default 16384 = effectively unrestricted for chat/long text; model stops at EOS)" ;;
     MLXVLM_DRAFT_MODEL)          echo "mlx-vlm speculative-decoding (MTP) drafter HF repo for the main (--draft-model). empty = OFF (default, recommended). WORKLOAD-DEPENDENT — not a free win: best-case high-acceptance code-gen gave +18% (12B) / +8% (26B-A4B), but a broader decode test 2026-07-04 (long generative output, temp0) showed MTP NET-NEGATIVE — 12B ~23→~19 tok/s (−17%), 26B-A4B fine on short prompts (+7%) but 47→36 tok/s (−23%) on a 6.5K-token prompt (drafter prefill + rejected drafts cost more than they save when acceptance is low). Enable ONLY for a verified high-acceptance workload; leave OFF for general chat. Use the matching assistant, e.g. mlx-community/gemma-4-12B-it-qat-assistant-4bit or gemma-4-26B-A4B-it-qat-assistant-4bit. E2B/E4B MTP is BROKEN in mlx-vlm 0.6.3 (reshape crash) — leave empty for those. Must be downloaded first (hf download); if missing, the main starts WITHOUT the drafter" ;;
@@ -325,8 +310,6 @@ config_hint() {
     GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off" ;;
     PRESET_ALIASES)              echo "1 = also expose the 'main-fast' preset alias (same loaded model as 'main' but thinking-OFF at the proxy — fast non-reasoning chat / tools / web / cron / email)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
-    IDLE_TIMEOUT_GLMOCR)         echo "Seconds before the GLM-OCR backend sleeps (default 60); -1 = never sleep (stay warm)" ;;
-    GLMOCR_MAX_TOKENS)           echo "Max output tokens for GLM-OCR (mlx-vlm default is only 2048 — a dense full page can exceed it and get truncated). Default 8192" ;;
     INSTALL_EMBED)               echo "1 = run the on-demand Infinity backend serving the BGE embedder + reranker (LiteLLM aliases 'embed' + 'rerank'). Needs INSTALL_MLX=1 for the LiteLLM gateway" ;;
     ALIAS_EMBED)                 echo "Catalog id of the embedding model (role=embed, engine infinity) -> LiteLLM alias 'embed'. empty = embeddings off" ;;
     ALIAS_RERANK)                echo "Catalog id of the reranker (role=rerank, engine infinity) -> LiteLLM alias 'rerank'. empty = rerank off" ;;
@@ -564,7 +547,7 @@ load_config() {
     case "$_lbl" in
       com.local.mlxvlm.main)
         [ "${INSTALL_MLX:-1}" = 1 ] || continue ;;
-      com.local.litellm.*|com.local.glmocr.*)
+      com.local.litellm.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || continue ;;
       com.local.infinity.*)
         [ "${INSTALL_EMBED:-1}" = 1 ] || continue ;;
@@ -616,8 +599,6 @@ label_log() {
   case "$1" in
     com.local.mlxvlm.main)       echo "$LOG_DIR/mlxvlm-main.log" ;;
     com.local.litellm.proxy)     echo "$LOG_DIR/litellm.log" ;;
-    com.local.glmocr.proxy)      echo "$LOG_DIR/glmocr-proxy.log" ;;
-    com.local.glmocr.serve)      echo "$LOG_DIR/glmocr-serve.log" ;;
     com.local.infinity.proxy)    echo "$LOG_DIR/infinity-proxy.log" ;;
     com.local.infinity.serve)    echo "$LOG_DIR/infinity-serve.log" ;;
     com.local.immich.proxy)      echo "$LOG_DIR/immich-proxy.log" ;;
@@ -1106,10 +1087,10 @@ ensure_python_venvs() {
     fi
   }
 
-  # The text engine is mlx_vlm.server (venv 'mlxvlm', unified text+vision main +
-  # GLM-OCR), pinned via MLXVLM_VERSION: 0.6.3 is the release that fixed Gemma-4
-  # unified SILENTLY DROPPING image/video inputs (0.6.2 had the bug — a main would
-  # answer text-only with no error). litellm floats.
+  # The text engine is mlx_vlm.server (venv 'mlxvlm', unified text+vision main),
+  # pinned via MLXVLM_VERSION: 0.6.3 is the release that fixed Gemma-4 unified
+  # SILENTLY DROPPING image/video inputs (0.6.2 had the bug — a main would answer
+  # text-only with no error). litellm floats.
   _ensure_venv litellm bin:litellm       'litellm[proxy]'
   local mlxvlm_spec="mlx-vlm"
   [ -n "${MLXVLM_VERSION:-}" ] && mlxvlm_spec="mlx-vlm==${MLXVLM_VERSION}"
@@ -1184,17 +1165,16 @@ ensure_model_catalog() {
 
 # Generate /usr/local/etc/litellm.config.yaml from the active alias
 # assignments. Roles: `main` (the ONE loaded mlx_vlm.server text+images model) and
-# `ocr` (on-demand GLM-OCR). Only rewrites + reloads on a real change.
+# the embed/rerank Infinity aliases. Only rewrites + reloads on a real change.
 render_litellm_config() {
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
-  local main_repo ocr_repo embed_repo rerank_repo tmp
+  local main_repo embed_repo rerank_repo tmp
   main_repo=$(catalog_repo "${ALIAS_MAIN:-}")
   if [ -z "$main_repo" ]; then
     warn "ALIAS_MAIN='${ALIAS_MAIN:-}' has no catalog repo — LiteLLM config not (re)written"
     warn "(download a model and set it as main via 'llm-models')"
     return 0
   fi
-  ocr_repo=$(catalog_repo "${ALIAS_OCR:-}")
   # Embeddings + reranking (BGE pair) served by the on-demand Infinity backend.
   embed_repo=$(catalog_repo "${ALIAS_EMBED:-}")
   rerank_repo=$(catalog_repo "${ALIAS_RERANK:-}")
@@ -1257,10 +1237,6 @@ render_litellm_config() {
     if [ "${PRESET_ALIASES:-1}" = 1 ]; then
       emit_model main-fast "$main_repo" "${MAIN_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" 1 "${GEMMA_TOP_K:-64}"
     fi
-    if [ -n "$ocr_repo" ]; then
-      printf '  - model_name: ocr\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' \
-        "$ocr_repo" "${GLMOCR_PUBLIC_PORT:-5002}"
-    fi
     # Embeddings + reranking via the on-demand Infinity backend (BGE pair on MPS).
     # LiteLLM's 'infinity/<served-name>' provider posts to <api_base>/embeddings and
     # <api_base>/rerank (api_base = the on-demand PROXY port — the FIRST call wakes the
@@ -1276,7 +1252,7 @@ render_litellm_config() {
         "${ALIAS_RERANK}" "${INFINITY_PUBLIC_PORT:-5004}"
     fi
     # No separate 'vision' alias: the unified 'main' already does images, so the chat set
-    # is intentionally main / main-fast / ocr (plus the embed / rerank utility aliases above).
+    # is intentionally main / main-fast (plus the embed / rerank utility aliases above).
     echo "litellm_settings:"
     echo "  drop_params: true"
     # Long docs/OCR generations can run minutes — raise the gateway timeout and
@@ -1292,7 +1268,7 @@ render_litellm_config() {
   fi
   /usr/bin/install -m 644 "$tmp" "$LITELLM_CONFIG_FILE"
   /bin/rm -f "$tmp"
-  ok "litellm config written → $LITELLM_CONFIG_FILE (main=${ALIAS_MAIN}, ocr=${ALIAS_OCR:-none}, embed=${ALIAS_EMBED:-none}, rerank=${ALIAS_RERANK:-none})"
+  ok "litellm config written → $LITELLM_CONFIG_FILE (main=${ALIAS_MAIN}, embed=${ALIAS_EMBED:-none}, rerank=${ALIAS_RERANK:-none})"
   if daemon_loaded com.local.litellm.proxy; then
     /bin/launchctl kickstart -k system/com.local.litellm.proxy >/dev/null 2>&1 \
       && ok "restarted litellm to pick up new routing"
@@ -1390,7 +1366,7 @@ render_all_plists() {
       com.local.mlxvlm.main)
         # Text engine: mlx_vlm.server (unified text+vision). The one always-on main.
         [ "${INSTALL_MLX:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
-      com.local.litellm.*|com.local.glmocr.*)
+      com.local.litellm.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.infinity.*)
         # On-demand BGE embedder + reranker (Infinity, MPS). Independent of the
@@ -1637,7 +1613,7 @@ verify_and_summary() {
           state="absent"; pid=""
         fi
         case "$label" in
-          com.local.immich.ml|com.local.docling.serve|com.local.glmocr.serve)
+          com.local.immich.ml|com.local.docling.serve|com.local.infinity.serve)
             [ -z "$pid" ] || [ "$pid" = 0 ] && notes="on-demand (sleeping)"
             [ -n "$pid" ] && [ "$pid" != 0 ] && notes="on-demand (awake)"
             ;;
@@ -1701,13 +1677,13 @@ menu_select_services() {
   load_config
   while true; do
     printf "\n${C_BOLD}── Select services to install ─────────────────${C_RST}\n"
-    printf "%s\n" "The MLX stack (mlx_vlm.server + LiteLLM + on-demand GLM-OCR) is the primary"
-    printf "%s\n" "backend. The GPU-wired-limit helper, caffeinate and the weekly autoupdate are"
+    printf "%s\n" "The MLX stack (mlx_vlm.server + LiteLLM gateway) is the primary backend."
+    printf "%s\n" "The GPU-wired-limit helper, caffeinate and the weekly autoupdate are"
     printf "%s\n" "always installed. Re-running setup.sh never overwrites a healthy installed service."
     echo
-    printf "  1) %-18s [%s]   MLX stack: mlx_vlm.server :%s internal, LiteLLM :%s public, GLM-OCR :%s\n" \
+    printf "  1) %-18s [%s]   MLX stack: mlx_vlm.server :%s internal, LiteLLM :%s public\n" \
       INSTALL_MLX       "$(onoff_label "${INSTALL_MLX:-1}")" \
-      "${MAIN_BACKEND_PORT:-18000}" "${LITELLM_PORT:-11434}" "${GLMOCR_PUBLIC_PORT:-5002}"
+      "${MAIN_BACKEND_PORT:-18000}" "${LITELLM_PORT:-11434}"
     printf "  2) %-18s [%s]   immich-ml on-demand photo AI (:%s)\n" \
       INSTALL_IMMICH    "$(onoff_label "${INSTALL_IMMICH:-1}")"    "${ML_PUBLIC_PORT:-3003}"
     printf "  3) %-18s [%s]   docling-serve on-demand OCR/VLM (:%s)\n" \
@@ -1811,11 +1787,11 @@ hf_cli() {
 ram_guard_warn() {
   local mg; mg=$(catalog_gb "${ALIAS_MAIN:-}"); mg=${mg:-0}
   case "$mg" in *[!0-9]*) mg=0 ;; esac
-  local total=$(( mg + 2 ))   # + ~2 GB for on-demand GLM-OCR when awake
+  local total=$(( mg + 2 ))   # + ~2 GB for the on-demand embed/rerank pair when awake
   if [ "$total" -gt 26 ]; then
-    warn "RAM budget: main ${mg} GB + OCR ~2 GB ≈ ${total} GB on a 32 GB box."
+    warn "RAM budget: main ${mg} GB + on-demand extras ~2 GB ≈ ${total} GB on a 32 GB box."
     warn "docling/immich may get paused by the watchdog when they wake. A smaller main"
-    warn "model (e.g. gptoss-20b ~13 GB) leaves more headroom for parallel services."
+    warn "model leaves more headroom for parallel services."
   fi
 }
 
@@ -1833,7 +1809,7 @@ download_model() {
   rc=${PIPESTATUS[0]}
   out=$(/usr/bin/tail -40 "$logf" 2>/dev/null)
   if [ "$rc" -eq 0 ] && [ "$(model_status "$repo")" = ok ]; then
-    ok "downloaded + verified '$id' — selectable now ('s'/'o'/'m'/'k' $id for main/ocr/embed/rerank)"
+    ok "downloaded + verified '$id' — selectable now ('s'/'m'/'k' $id for main/embed/rerank)"
     return 0
   fi
   # Classify the failure so a dead list-item explains itself.
@@ -1861,13 +1837,12 @@ set_model_alias() {
   [ "$st" = ok ] || { err "'$id' is not fully downloaded (status=$st) — run 'd $id' first"; return 1; }
   case "$slot" in
     main)   key=ALIAS_MAIN;   want_role=text ;;
-    ocr)    key=ALIAS_OCR;    want_role=ocr  ;;
     embed)  key=ALIAS_EMBED;  want_role=embed ;;
     rerank) key=ALIAS_RERANK; want_role=rerank ;;
     *) err "bad slot: $slot"; return 1 ;;
   esac
-  # Roles: text -> 'main' (mlx_vlm.server, unified text+images), ocr -> 'ocr' (GLM-OCR
-  # on mlx-vlm), embed -> 'embed' + rerank -> 'rerank' (both the Infinity backend).
+  # Roles: text -> 'main' (mlx_vlm.server, unified text+images), embed -> 'embed' +
+  # rerank -> 'rerank' (both the Infinity backend).
   role=$(catalog_role "$id"); role=${role:-text}
   if [ "$role" != "$want_role" ]; then
     err "'$id' has role '$role' but slot '$slot' needs role '$want_role' — wrong list"
@@ -1876,7 +1851,7 @@ set_model_alias() {
   # Refuse models the catalog flags BROKEN for the engine that will actually run
   # this slot — selecting one just breaks the server. A bare legacy BROKEN always
   # blocks; an engine-tagged BROKEN[<engine>] blocks ONLY for that engine. Everything
-  # runs on mlx-vlm (main + ocr) or infinity (embed/rerank).
+  # runs on mlx-vlm (main) or infinity (embed/rerank).
   local _notes _broken=0 _check_engine
   case "$slot" in
     embed|rerank) _check_engine="infinity" ;;
@@ -1904,11 +1879,6 @@ set_model_alias() {
       /bin/launchctl kickstart -k system/com.local.mlxvlm.main >/dev/null 2>&1 \
         && ok "restarting com.local.mlxvlm.main with new main model (load ~30–60 s, no hot-swap)"
     fi
-  elif [ "$slot" = ocr ]; then
-    if daemon_running com.local.glmocr.serve; then
-      /bin/launchctl stop com.local.glmocr.serve >/dev/null 2>&1 || true
-      ok "stopped GLM-OCR backend; next OCR request wakes it with the new model"
-    fi
   elif [ "$slot" = embed ] || [ "$slot" = rerank ]; then
     if daemon_running com.local.infinity.serve; then
       /bin/launchctl stop com.local.infinity.serve >/dev/null 2>&1 || true
@@ -1923,7 +1893,7 @@ cli_set_model() {
   # (downloaded, role match, BROKEN refusal). Usage: --set-model <slot> <id>.
   INTERACTIVE=0
   load_config
-  [ "$#" -eq 2 ] || { err "usage: --set-model <main|ocr|embed|rerank> <id>"; exit 2; }
+  [ "$#" -eq 2 ] || { err "usage: --set-model <main|embed|rerank> <id>"; exit 2; }
   set_model_alias "$1" "$2" || exit 1
 }
 
@@ -2049,7 +2019,7 @@ EOF
   [ "$s_topp" = 1 ]   && c15=$n_topp
   [ "$s_freq" = 1 ]   && c16=$n_freq
   [ "$s_pres" = 1 ]   && c17=$n_pres
-  case "$c3" in text|ocr|embed|rerank) : ;; *) err "invalid role '$c3'"; exit 2 ;; esac
+  case "$c3" in text|embed|rerank) : ;; *) err "invalid role '$c3'"; exit 2 ;; esac
   local newline; newline="$c1|$c2|$c3|$c4|$c5|$c6|$c7|$c8|$c9|$c10|$c11|$c12|$c13|$c14|$c15|$c16|$c17"
   local tmp l; tmp=$(/usr/bin/mktemp)
   while IFS= read -r l || [ -n "$l" ]; do
@@ -2061,7 +2031,7 @@ EOF
   /bin/mv -f "$tmp" "$CATALOG_FILE"
   /bin/chmod 644 "$CATALOG_FILE"
   ok "updated catalog entry '$id'"
-  if [ "$id" = "${ALIAS_MAIN:-}" ] || [ "$id" = "${ALIAS_OCR:-}" ] \
+  if [ "$id" = "${ALIAS_MAIN:-}" ] \
      || [ "$id" = "${ALIAS_EMBED:-}" ] || [ "$id" = "${ALIAS_RERANK:-}" ]; then
     render_litellm_config
     warn "'$id' is an active alias — re-select it to apply engine-level changes"
@@ -2074,8 +2044,8 @@ cli_add_model() {
   # TUI's catalog_add_entry; editing/removing rows stays TUI-only. Keys:
   #   id=      short slug (required, [A-Za-z0-9._-])
   #   repo=    HF org/name — a ready MLX build (required)
-  #   role=    text|ocr|embed|rerank         (default text)
-  #   engine=  mlxvlm|infinity               (default: derived from role)
+  #   role=    text|embed|rerank            (default text)
+  #   engine=  mlxvlm|infinity              (default: derived from role)
   #   quant=   e.g. 4bit                     (default ?)
   #   gb=      approx footprint              (default ?)
   #   gated=   yes|no                        (default no)
@@ -2106,8 +2076,8 @@ cli_add_model() {
     *[\|]*|*" "*) err "invalid repo '$repo' — no spaces or '|'"; exit 2 ;;
   esac
   case "$role" in
-    text|ocr|embed|rerank) : ;;
-    *) err "invalid role '$role' (text|ocr|embed|rerank)"; exit 2 ;;
+    text|embed|rerank) : ;;
+    *) err "invalid role '$role' (text|embed|rerank)"; exit 2 ;;
   esac
   if [ -z "$engine" ]; then
     case "$role" in
@@ -2178,8 +2148,8 @@ catalog_add_entry() {
     err "id '$id' already exists — use 'e $id' to edit"; return 0
   fi
   read -r -p "HF repo-id (org/name, MUST be a ready MLX build): " repo; [ -z "$repo" ] && return 0
-  read -r -p "role [text/ocr] (default text): " role; role=${role:-text}
-  # Only engine is mlx-vlm (unified text+images main + GLM-OCR). embed/rerank use infinity.
+  read -r -p "role [text] (default text): " role; role=${role:-text}
+  # Only engine is mlx-vlm (unified text+images main). embed/rerank use infinity.
   engine=mlxvlm
   read -r -p "quant (e.g. 4bit): " quant;       quant=${quant:-?}
   read -r -p "approx GB: " gb;                  gb=${gb:-?}
@@ -2254,7 +2224,6 @@ print_catalog_table() {
     case "$notes" in *BROKEN*|*broken*) flag="BROKEN" ;; esac
     if [ -z "$flag" ]; then case "${rating:-}" in 5) flag="REC" ;; esac; fi
     [ "$id" = "${ALIAS_MAIN:-}" ] && tag="${tag}main "
-    [ "$id" = "${ALIAS_OCR:-}" ]  && tag="${tag}ocr "
     printf "$fmt" \
       "$id" "${role:-text}" "$mark" "$flag" "$engine" "$gb" "$gated" "$rating" "${tag:-}" "$repo"
   done <"$CATALOG_FILE"
@@ -2276,7 +2245,7 @@ print_model_detail() {
   printf "\n${C_BOLD}── %s ──────────────────────────────${C_RST}\n" "$id"
   printf "  repo        %s\n" "$repo"
   printf "  role/engine %s / %s%s\n" "${role:-text}" "${engine:-mlxvlm}" \
-    "$( [ "$id" = "${ALIAS_MAIN:-}" ] && printf '   [active main]'; [ "$id" = "${ALIAS_OCR:-}" ] && printf '   [active ocr]' )"
+    "$( [ "$id" = "${ALIAS_MAIN:-}" ] && printf '   [active main]' )"
   printf "  quant/gb    %s / %s GB\n" "${quant:--}" "${gb:-?}"
   printf "  status      %s   gated=%s   rating=%s/5\n" "$st" "${gated:-no}" "${rating:-?}"
   printf "  parsers     reasoning=%s  tool=%s\n" "${rp:-none}" "${tp:-none}"
@@ -2294,13 +2263,13 @@ menu_models() {
   while true; do
     clear 2>/dev/null || true
     printf "${C_BOLD}── Models & aliases ───────────────────────────${C_RST}\n"
-    printf "Active:  main=%s  ocr=%s  embed=%s  rerank=%s\n" \
-      "${ALIAS_MAIN:-none}" "${ALIAS_OCR:-none}" "${ALIAS_EMBED:-off}" "${ALIAS_RERANK:-off}"
-    printf "${C_DIM}(ONE text+images model loads as 'main'; ocr + embed/rerank are on-demand)${C_RST}\n\n"
+    printf "Active:  main=%s  embed=%s  rerank=%s\n" \
+      "${ALIAS_MAIN:-none}" "${ALIAS_EMBED:-off}" "${ALIAS_RERANK:-off}"
+    printf "${C_DIM}(ONE text+images model loads as 'main'; embed/rerank are on-demand)${C_RST}\n\n"
     print_catalog_table
     printf "\nSTATUS ok = downloaded+verified (only ok is selectable).  FLAG: ${C_RED}BROKEN${C_RST}=not selectable  ${C_GRN}REC${C_RST}=recommended (rating 5).\n"
-    printf "Roles: text -> 's' (main)   ocr -> 'o'   embed -> 'm'   rerank -> 'k'. Source: HuggingFace repo-ids.\n"
-    printf "Actions:  i <id> info   d <id> download   s <id> set TEXT/main   o <id> set OCR\n"
+    printf "Roles: text -> 's' (main)   embed -> 'm'   rerank -> 'k'. Source: HuggingFace repo-ids.\n"
+    printf "Actions:  i <id> info   d <id> download   s <id> set TEXT/main\n"
     printf "          m <id> set EMBED   k <id> set RERANK   a add   e <id> edit   x <id> remove   r <id> delete-local   t HF token   q back\n"
     read -r -p "models> " line || return 0
     local cmd arg
@@ -2310,7 +2279,6 @@ menu_models() {
       i) print_model_detail "$arg";    pause_enter ;;
       d) download_model "$arg";        pause_enter ;;
       s) set_model_alias main "$arg";   pause_enter ;;
-      o) set_model_alias ocr "$arg";    pause_enter ;;
       m) set_model_alias embed "$arg";  pause_enter ;;
       k) set_model_alias rerank "$arg"; pause_enter ;;
       a) catalog_add_entry;            pause_enter ;;
@@ -2531,7 +2499,7 @@ main_menu() {
     echo "Main menu:"
     echo "  1) Install / update everything   (recommended — applies current config)"
     echo "  2) Select services to install…   (toggle MLX / Ollama / immich / docling / …)"
-    echo "  3) Models & aliases…             (download MLX models, pick main / ocr)"
+    echo "  3) Models & aliases…             (download MLX models, pick main / embed / rerank)"
     echo "  4) Change settings…"
     echo "  5) Service control…"
     echo "  6) Check for updates…           (versions: LLM stack / brew / macOS — read-only)"
@@ -2565,7 +2533,7 @@ MacStudio LLM Server — setup.sh v${SCRIPT_VERSION}
   sudo bash setup.sh             Interactive TUI (recommended)
   sudo bash setup.sh --apply     Non-interactive install/update (no prompts)
   sudo bash setup.sh --status    Print live status and exit
-  sudo bash setup.sh --set-model <main|ocr|embed|rerank> <id>
+  sudo bash setup.sh --set-model <main|embed|rerank> <id>
                                  Switch a model slot non-interactively (same
                                  validation as the TUI; used by the MQTT bridge
                                  and the web dashboard)

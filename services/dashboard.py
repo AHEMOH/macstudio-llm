@@ -89,8 +89,6 @@ JOB_RC_RE = re.compile(r"^__JOB_RC__=(\d+)\s*$", re.MULTILINE)
 SERVICES = [
     ("com.local.mlxvlm.main",       "Text-Engine (mlx-vlm)",       "always"),
     ("com.local.litellm.proxy",     "LiteLLM-Gateway",             "always"),
-    ("com.local.glmocr.proxy",      "GLM-OCR Proxy",               "always"),
-    ("com.local.glmocr.serve",      "GLM-OCR Backend",             "ondemand"),
     ("com.local.infinity.proxy",    "Embed/Rerank Proxy",          "always"),
     ("com.local.infinity.serve",    "Embed/Rerank Backend",        "ondemand"),
     ("com.local.immich.proxy",      "immich-ml Proxy",             "always"),
@@ -116,8 +114,6 @@ ALL_LABELS = {lbl for lbl, _n, _k in SERVICES}
 LABEL_LOG = {
     "com.local.mlxvlm.main": "mlxvlm-main.log",
     "com.local.litellm.proxy": "litellm.log",
-    "com.local.glmocr.proxy": "glmocr-proxy.log",
-    "com.local.glmocr.serve": "glmocr-serve.log",
     "com.local.infinity.proxy": "infinity-proxy.log",
     "com.local.infinity.serve": "infinity-serve.log",
     "com.local.immich.proxy": "immich-proxy.log",
@@ -202,7 +198,7 @@ def active_labels():
     for lbl, _name, _kind in SERVICES:
         if lbl == "com.local.mlxvlm.main":
             keep = mlx
-        elif lbl.startswith("com.local.litellm.") or lbl.startswith("com.local.glmocr."):
+        elif lbl.startswith("com.local.litellm."):
             keep = mlx
         elif lbl.startswith("com.local.infinity."):
             keep = c.get("INSTALL_EMBED", "1") == "1"
@@ -777,7 +773,6 @@ def api_status():
         "aliases": {
             "main": c.get("ALIAS_MAIN", ""),
             "main_fast": c.get("PRESET_ALIASES", "1") == "1",
-            "ocr": c.get("ALIAS_OCR", ""),
             "embed": c.get("ALIAS_EMBED", ""),
             "rerank": c.get("ALIAS_RERANK", ""),
         },
@@ -816,12 +811,10 @@ def api_models():
         row["broken_main"] = is_broken_for(notes, "mlx-vlm") if r["role"] == "text" else None
         if r["role"] in ("embed", "rerank"):
             row["broken"] = is_broken_for(notes, "infinity")
-        elif r["role"] == "ocr":
-            row["broken"] = is_broken_for(notes, "mlx-vlm")
         else:
             row["broken"] = row["broken_main"]
         row["slots"] = [s for s, key in (
-            ("main", "ALIAS_MAIN"), ("ocr", "ALIAS_OCR"),
+            ("main", "ALIAS_MAIN"),
             ("embed", "ALIAS_EMBED"), ("rerank", "ALIAS_RERANK"),
         ) if c.get(key, "") == r["id"]]
         rows.append(row)
@@ -1251,7 +1244,7 @@ class Handler(BaseHTTPRequestHandler):
     def handle_model_select(self, body):
         slot = str(body.get("slot", ""))
         mid = str(body.get("id", ""))
-        if slot not in ("main", "ocr", "embed", "rerank"):
+        if slot not in ("main", "embed", "rerank"):
             self.send_json({"error": f"ungültiger Slot: {slot}"}, code=400)
             return
         setup = find_setup_sh()

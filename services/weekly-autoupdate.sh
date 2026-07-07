@@ -86,7 +86,6 @@ step "restart long-running services"
 if [ "${INSTALL_MLX:-1}" = "1" ]; then
   /bin/launchctl kickstart -k system/com.local.mlxvlm.main    2>/dev/null || true
   /bin/launchctl kickstart -k system/com.local.litellm.proxy  2>/dev/null || true
-  /bin/launchctl kickstart -k system/com.local.glmocr.proxy   2>/dev/null || true
 fi
 /bin/launchctl kickstart -k system/com.local.immich.proxy   2>/dev/null || true
 /bin/launchctl kickstart -k system/com.local.docling.proxy  2>/dev/null || true

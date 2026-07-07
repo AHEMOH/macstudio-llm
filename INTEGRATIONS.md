@@ -25,13 +25,11 @@ behind an alias can be swapped (`llm-models`) without the app noticing.
 |--------|----------------------------------|-----------------------------------|-------------------------------|
 | `main` | The big always-on model (chat **+ images**), reasons by default | `/v1/chat/completions`, `/v1/completions`, `/v1/messages` | unified mlx-vlm main (always on; context capped by `MLXVLM_MAIN_MAX_KV_SIZE`, default 64K) |
 | `main-fast` | Exactly `main` but **thinking OFF** — fast, non-reasoning chat / tool use / web / cron / email | same as `main` | **same loaded model**, thinking-off |
-| `ocr`  | Dedicated OCR (document → text), best quality | `/v1/chat/completions` (image input) | GLM-OCR via mlx-vlm (on-demand, only if `ALIAS_OCR` is set) |
 | `embed` | Dense text **embeddings** for RAG (1024-dim, multilingual) | `/v1/embeddings` | BAAI/bge-m3 via Infinity (on-demand) |
 | `rerank` | Cross-encoder **reranker** (scores docs against a query) | `/v1/rerank`, `/rerank` | BAAI/bge-reranker-v2-m3 via Infinity (on-demand) |
 
-The gateway exposes `main`, `main-fast`, `embed`, `rerank` by default — plus `ocr` when
-`ALIAS_OCR` is set (**empty/off by default**; set it via `llm-models` or
-`--set-model ocr <id>` to re-enable). `main` and `main-fast` point at the **one** big loaded model (they
+The gateway exposes `main`, `main-fast`, `embed`, `rerank`. For images, send `image_url`
+straight to `main`/`main-fast` (both multimodal). `main` and `main-fast` point at the **one** big loaded model (they
 differ only in DEFAULT thinking, so picking one does **not** load a second model).
 `main`/`main-fast` share Gemma's reference sampling (**temperature 1.0 / top_p 0.95 /
 top_k 64**); temp+top_p come from the catalog, `top_k` from `GEMMA_TOP_K` (via `extra_body`, since
@@ -43,8 +41,8 @@ can send `enable_thinking:false` to turn it off). **`main-fast` always runs with
 thinking** (suppressed at the gateway) — so `main-fast` is the fast/clean chat & tool path.
 
 **Images:** the unified mlx-vlm `main` is multimodal — send `image_url` straight to
-`main` (or `main-fast`); the dedicated `ocr` alias (GLM-OCR) is for best-quality document
-transcription, when enabled (`ALIAS_OCR` set — off by default).
+`main` (or `main-fast`). Document OCR is handled by the separate **paperless-ocr** service
+(Apple Vision, see below), not a gateway alias.
 
 ### Authentication
 
@@ -57,7 +55,7 @@ put anything there.
 | Method & path                     | Use with model | Purpose                                  |
 |-----------------------------------|----------------|------------------------------------------|
 | `GET  /v1/models`                 | —              | List available aliases                   |
-| `POST /v1/chat/completions`       | `main`, `main-fast`, `ocr` | Chat (OpenAI). `stream: true`; `image_url` input for `main`/`main-fast`/`ocr` |
+| `POST /v1/chat/completions`       | `main`, `main-fast` | Chat (OpenAI). `stream: true`; `image_url` input for `main`/`main-fast` |
 | `POST /v1/completions`            | `main`         | Legacy text completion                   |
 | `POST /v1/messages`               | `main`         | **Anthropic** Messages API               |
 | `POST /v1/embeddings`             | `embed`        | Dense embeddings (OpenAI embeddings API) |
@@ -202,7 +200,7 @@ sensors and a **Main Model** select. No YAML required.
 |-------|-----|----------|---------|
 | `macstudio/availability` | pub (LWT) | yes | `online` / `offline` |
 | `macstudio/silicon/availability` | pub | yes | health of the powermetrics scrape (gates the power sensors) |
-| `macstudio/state` | pub | yes | JSON snapshot: `total_power_w` (whole system, SMC), `package_power_w`, `cpu_power_w`, `gpu_power_w`, `ane_power_w`, `cpu_temp_c`, `gpu_temp_c`, `gpu_util_pct`, `thermal_pressure`, `memory_pressure`, `ram_free_mb`, `wired_limit_mb`, `gpu_mem_used_mb`, `gpu_mem_free_mb`, `swap_used_mb`, `disk_free_gb`, `boot_time`, `reboot_pending`, `active_model`, `text_engine`, `text_backend_running`, `litellm_up`, `glmocr_awake` |
+| `macstudio/state` | pub | yes | JSON snapshot: `total_power_w` (whole system, SMC), `package_power_w`, `cpu_power_w`, `gpu_power_w`, `ane_power_w`, `cpu_temp_c`, `gpu_temp_c`, `gpu_util_pct`, `thermal_pressure`, `memory_pressure`, `ram_free_mb`, `wired_limit_mb`, `gpu_mem_used_mb`, `gpu_mem_free_mb`, `swap_used_mb`, `disk_free_gb`, `boot_time`, `reboot_pending`, `active_model`, `text_engine`, `text_backend_running`, `litellm_up` |
 | `macstudio/updates` | pub | yes | JSON: `updates_available`, `macos_version`, `mlx_lm`/`mlx_vlm`/`litellm` (installed+latest), `brew_outdated`, `last_autoupdate_run` |
 | `macstudio/model/state` | pub | yes | catalog id of the active main model |
 | `macstudio/model/status` | pub | yes | `ready` / `loading <id>` / `error: <msg>` |
@@ -263,8 +261,7 @@ a local display — the JSON keys above are the contract.
 - **API Base URL:** `http://mac.home.arpa:11434/v1`
 - **API Key:** `sk-local`
 
-The models `main` and `main-fast` always appear in the model picker; `ocr`
-appears only when enabled (`ALIAS_OCR` set — off by default).
+The models `main` and `main-fast` appear in the model picker.
 For chat use `main`, which may emit reasoning that Open WebUI renders as a foldable
 "thinking" block; `main-fast` is thinking-off, so it returns clean output with no
 thinking block (the fast non-reasoning chat path).
@@ -288,9 +285,10 @@ environment:
   OPENAI_BASE_URL: http://mac.home.arpa:11434/v1
 ```
 
-The `OCR_PROVIDER=llm` path (`VISION_LLM_MODEL: ocr`) still works but routes through the
-GLM-OCR `ocr` alias, which is **off by default** (`ALIAS_OCR` empty) — enable it via
-`llm-models` or `setup.sh --set-model ocr <id>` first.
+For OCR, use the **paperless-ngx Apple-Vision OCR** worker (next section) — it supersedes
+paperless-gpt's `OCR_PROVIDER=llm` path. If you insist on the `OCR_PROVIDER=llm` route, point
+its `VISION_LLM_MODEL` at `main-fast` (the multimodal VLM); there is no dedicated OCR gateway
+alias to enable.
 
 ---
 
@@ -299,7 +297,7 @@ GLM-OCR `ocr` alias, which is **off by default** (`ALIAS_OCR` empty) — enable 
 A Mac-side worker (`com.local.paperless.ocr`, opt-in `INSTALL_PAPERLESS_OCR=1`) that
 produces **genuinely searchable PDFs** using **Apple Vision** OCR — the engine that, in
 testing, cleanly transcribed dense Russian/Cyrillic documents that Tesseract (paperless's
-built-in OCR) turns into mojibake and that GLM-OCR truncates. It adds an *invisible*,
+built-in OCR) turns into mojibake. It adds an *invisible*,
 correctly-Unicode-encoded text layer (via `ocrmac` + PyMuPDF) without changing how the page
 looks. Runs on the Mac because Apple Vision is macOS-only; paperless-ngx can live anywhere
 reachable over HTTP.
@@ -451,8 +449,8 @@ r = client.chat.completions.create(
 - **Image detail / resolution:** Gemma's per-image *visual token budget*
   (`max_soft_tokens`, 70–1120 — higher for dense OCR, lower for captioning) is **not
   exposed by mlx-vlm 0.6.3** — there is no per-request image-resolution knob in this
-  stack. For best document transcription use the dedicated `ocr` alias (GLM-OCR); the
-  unified `main` handles general image Q&A.
+  stack. The unified `main` handles general image Q&A; document OCR goes through the
+  separate **paperless-ocr** service (Apple Vision, see above).
 
 ---
 
@@ -478,10 +476,9 @@ print(msg.content[0].text)
 
 - **One text model at a time.** `main` is whatever model is currently loaded;
   switching it (`llm-models`) restarts the text engine (~30–60 s) — there is no silent
-  hot-swap. **GLM-OCR (`ocr`) is the only model that co-resides** (small, on-demand,
-  and off by default — set `ALIAS_OCR` to enable). Under `TEXT_ENGINE=mlx-vlm` the
-  `main` model handles images itself.
-- **On-demand backends** (`ocr`, and the companion services) wake on the first
+  hot-swap. The **BGE embed/rerank pair (Infinity)** is the only on-demand co-resident
+  extra (small). Under `TEXT_ENGINE=mlx-vlm` the `main` model handles images itself.
+- **On-demand backends** (`embed`/`rerank`, and the companion services) wake on the first
   request after idle — expect a one-time spin-up delay, then normal latency.
 - **Long requests:** the gateway timeout is `LLM_REQUEST_TIMEOUT` (default 3600 s
   = 60 min) with **no retries**, sized for long documents / OCR.

@@ -22,7 +22,6 @@ mkdir -p "$(dirname "$LOG")"
 
 IMMICH_LABEL=com.local.immich.ml
 DOCLING_LABEL=com.local.docling.serve
-GLMOCR_LABEL=com.local.glmocr.serve
 
 ts()   { date '+%F %T'; }
 log()  { printf "[%s][watchdog] %s\n" "$(ts)" "$*" >>"$LOG"; }
@@ -91,7 +90,6 @@ while true; do
       warn "memory pressure ${level} — offloading optional services"
       svc_stop "$IMMICH_LABEL" immich-ml
       svc_stop "$DOCLING_LABEL" docling-serve
-      svc_stop "$GLMOCR_LABEL" glm-ocr
       offloaded=1
       normal_since=0
     fi
