@@ -634,8 +634,10 @@ daemon_pid() {
 daemon_loaded()  { /bin/launchctl print "system/$1" >/dev/null 2>&1; }
 daemon_running() { local p; p=$(daemon_pid "$1"); [ -n "$p" ] && [ "$p" != 0 ]; }
 label_disabled() {
+  # launchctl print-disabled prints `"<label>" => disabled` / `=> enabled`
+  # (NOT a `true`/`false` boolean — verified on-device).
   /bin/launchctl print-disabled system 2>/dev/null \
-    | /usr/bin/grep -qE "\"$1\"[[:space:]]*=>[[:space:]]*true"
+    | /usr/bin/grep -qE "\"$1\"[[:space:]]*=>[[:space:]]*disabled"
 }
 
 bootstrap_plist() {

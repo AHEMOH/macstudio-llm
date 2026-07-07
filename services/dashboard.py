@@ -260,7 +260,9 @@ def launchctl_state(label):
     return (pid > 0), pid  # loaded: running / sleeping
 
 
-_DISABLED_RE = re.compile(r'"([^"]+)"\s*=>\s*true')
+# launchctl print-disabled prints `"<label>" => disabled` / `=> enabled`
+# (NOT a `true`/`false` boolean — verified on-device).
+_DISABLED_RE = re.compile(r'"([^"]+)"\s*=>\s*disabled')
 
 
 def disabled_labels():
