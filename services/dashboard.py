@@ -101,7 +101,6 @@ SERVICES = [
     ("com.local.silicon.exporter",  "Silicon-Exporter",            "always"),
     ("com.local.ondemand.exporter", "On-Demand-Exporter",          "always"),
     ("com.local.llm.watchdog",      "Speicher-Watchdog",           "always"),
-    ("com.local.inference.watchdog","Inferenz-Watchdog",           "always"),
     ("com.local.preventsleep",      "Schlaf-Verhinderung",         "always"),
     ("com.local.iogpu.wiredlimit",  "GPU-Wired-Limit",             "scheduled"),
     ("com.local.weekly.autoupdate", "Wöchentliches Update",        "scheduled"),
@@ -129,7 +128,6 @@ LABEL_LOG = {
     "com.local.silicon.exporter": "silicon-exporter.log",
     "com.local.ondemand.exporter": "ondemand-exporter.log",
     "com.local.llm.watchdog": "watchdog.log",
-    "com.local.inference.watchdog": "inference-watchdog.log",
     "com.local.preventsleep": "preventsleep.log",
     "com.local.iogpu.wiredlimit": "iogpu-wired-limit.log",
     "com.local.weekly.autoupdate": "autoupdate.log",
@@ -215,7 +213,7 @@ def active_labels():
         elif lbl in ("com.local.node.exporter", "com.local.silicon.exporter",
                      "com.local.ondemand.exporter"):
             keep = c.get("INSTALL_EXPORTERS", "1") == "1"
-        elif lbl in ("com.local.llm.watchdog", "com.local.inference.watchdog"):
+        elif lbl == "com.local.llm.watchdog":
             keep = c.get("INSTALL_WATCHDOG", "1") == "1"
         elif lbl == "com.local.mqtt.bridge":
             keep = c.get("INSTALL_MQTT", "0") == "1"

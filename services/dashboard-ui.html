@@ -1239,7 +1239,7 @@ const SET_GROUPS = [
   ["Embeddings & Rerank", k => k.startsWith("INFINITY_") || k.includes("INFINITY")],
   ["immich & docling", k => k.includes("IMMICH") || k.includes("DOCLING") || k.startsWith("ML_")],
   ["Exporter & MQTT", k => k.includes("EXPORTER") || k.startsWith("MQTT_") || k === "SILICON_SAMPLE_INTERVAL_MS"],
-  ["Watchdog & Wartung", k => k.startsWith("WATCHDOG_") || k.startsWith("INFERENCE_") || k.startsWith("AUTOUPDATE_")],
+  ["Watchdog & Wartung", k => k.startsWith("WATCHDOG_") || k.startsWith("AUTOUPDATE_")],
   ["Dashboard", k => k.startsWith("DASHBOARD_")],
   ["Paperless-OCR", k => k.startsWith("PAPERLESS_OCR")],
   ["System & Pfade", k => true],

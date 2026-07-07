@@ -31,7 +31,6 @@ LABELS=(
   "com.local.node.exporter"
   "com.local.silicon.exporter"
   "com.local.llm.watchdog"
-  "com.local.inference.watchdog"
   "com.local.preventsleep"
   "com.local.weekly.autoupdate"
 )

@@ -39,7 +39,6 @@ ALWAYS_ON_LABELS=(
   com.local.silicon.exporter
   com.local.ondemand.exporter
   com.local.llm.watchdog
-  com.local.inference.watchdog
   com.local.preventsleep
   com.local.iogpu.wiredlimit
   com.local.weekly.autoupdate
@@ -125,9 +124,6 @@ CONFIG_KEYS=(
   INSTALL_WATCHDOG
   WATCHDOG_PRESSURE_THRESHOLD
   WATCHDOG_AUTO_RESTORE
-  INFERENCE_STALL_TIMEOUT_MIN
-  INFERENCE_WATCHDOG_POLL_SEC
-  INFERENCE_WATCHDOG_GPU_THRESHOLD
   INSTALL_MQTT
   MQTT_HOST
   MQTT_PORT
@@ -249,9 +245,6 @@ config_default() {
     INSTALL_WATCHDOG)            echo 1 ;;
     WATCHDOG_PRESSURE_THRESHOLD) echo warn ;;
     WATCHDOG_AUTO_RESTORE)       echo 0 ;;
-    INFERENCE_STALL_TIMEOUT_MIN)      echo 15 ;;
-    INFERENCE_WATCHDOG_POLL_SEC)      echo 30 ;;
-    INFERENCE_WATCHDOG_GPU_THRESHOLD) echo 0.5 ;;
     INSTALL_MQTT)                echo 0 ;;
     MQTT_HOST)                   echo mqtt.home.arpa ;;
     MQTT_PORT)                   echo 1883 ;;
@@ -347,9 +340,6 @@ config_hint() {
     AUTO_ACCEPT)                 echo "1 = skip all 'press Enter to proceed' prompts in TUI" ;;
     INSTALL_TUI)                 echo "Install mactop + macmon (live TUI for GPU/ANE/CPU/power; needs sudo)" ;;
     WATCHDOG_PRESSURE_THRESHOLD) echo "warn | critical — when watchdog offloads optional services" ;;
-    INFERENCE_STALL_TIMEOUT_MIN) echo "Minutes of stuck inference (GPU active + no GIN 200 + open TCP) before kill" ;;
-    INFERENCE_WATCHDOG_POLL_SEC) echo "How often the inference watchdog polls (seconds)" ;;
-    INFERENCE_WATCHDOG_GPU_THRESHOLD) echo "gpu_active_ratio threshold (0..1) above which the GPU is considered busy" ;;
     SILICON_SAMPLE_INTERVAL_MS)  echo "Silicon sampler cadence in ms (default 10000). macmon averages over the interval — match the MQTT/Prometheus cadence; longer = less load AND more representative values" ;;
     INSTALL_MQTT)                echo "1 = run the MQTT bridge (publishes runtime data + Home Assistant autodiscovery; lets HA switch the main model). Needs MQTT_HOST set" ;;
     MQTT_HOST)                   echo "MQTT broker host/IP for the bridge (e.g. mqtt.home.arpa). Empty = bridge idles" ;;
@@ -582,7 +572,7 @@ load_config() {
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || continue ;;
       com.local.node.exporter|com.local.silicon.exporter|com.local.ondemand.exporter)
         [ "${INSTALL_EXPORTERS:-1}" = 1 ] || continue ;;
-      com.local.llm.watchdog|com.local.inference.watchdog)
+      com.local.llm.watchdog)
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || continue ;;
       com.local.mqtt.bridge)
         [ "${INSTALL_MQTT:-0}" = 1 ] || continue ;;
@@ -638,7 +628,6 @@ label_log() {
     com.local.silicon.exporter)  echo "$LOG_DIR/silicon-exporter.log" ;;
     com.local.ondemand.exporter) echo "$LOG_DIR/ondemand-exporter.log" ;;
     com.local.llm.watchdog)      echo "$LOG_DIR/watchdog.log" ;;
-    com.local.inference.watchdog) echo "$LOG_DIR/inference-watchdog.log" ;;
     com.local.preventsleep)      echo "$LOG_DIR/preventsleep.log" ;;
     com.local.iogpu.wiredlimit)  echo "$LOG_DIR/iogpu-wired-limit.log" ;;
     com.local.weekly.autoupdate) echo "$LOG_DIR/autoupdate.log" ;;
@@ -1336,7 +1325,6 @@ service_py_label() {
     dashboard.py)          echo com.local.dashboard ;;
     silicon-exporter.py)   echo com.local.silicon.exporter ;;
     ondemand-exporter.py)  echo com.local.ondemand.exporter ;;
-    inference-watchdog.py) echo com.local.inference.watchdog ;;
     paperless-ocr.py)      echo com.local.paperless.ocr ;;
     vnc-secfilter.py)      echo com.local.vncfilter ;;
     *) echo "" ;;
@@ -1412,7 +1400,7 @@ render_all_plists() {
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.node.exporter|com.local.silicon.exporter|com.local.ondemand.exporter)
         [ "${INSTALL_EXPORTERS:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
-      com.local.llm.watchdog|com.local.inference.watchdog)
+      com.local.llm.watchdog)
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.mqtt.bridge)
         [ "${INSTALL_MQTT:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
@@ -2497,7 +2485,6 @@ menu_uninstall() {
   /bin/rm -rf "$LIBEXEC_DIR"/start-*.sh "$LIBEXEC_DIR"/ondemand-proxy.py \
               "$LIBEXEC_DIR"/silicon-exporter.py \
               "$LIBEXEC_DIR"/ondemand-exporter.py "$LIBEXEC_DIR"/llm-watchdog.sh \
-              "$LIBEXEC_DIR"/inference-watchdog.py \
               "$LIBEXEC_DIR"/mqtt-bridge.py "$LIBEXEC_DIR"/dashboard.py \
               "$LIBEXEC_DIR"/dashboard-ui.html "$LIBEXEC_DIR"/paperless-ocr.py
   /bin/rm -rf /usr/local/etc/macstudio-models

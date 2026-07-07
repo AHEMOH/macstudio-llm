@@ -97,7 +97,6 @@ Always on (internal / support):
   com.local.immich.proxy           :3003    on-demand proxy (optional)
   com.local.docling.proxy          :5001    on-demand proxy (optional)
   com.local.llm.watchdog                    memory-pressure safety net
-  com.local.inference.watchdog              inference stall killer
   com.local.preventsleep                    caffeinate
 
 Registered but sleeping until requested:
@@ -566,7 +565,7 @@ log this tool installed — the daemons are `com.local.mlxvlm.main`,
 `com.local.infinity.{proxy,serve}`, `com.local.immich.{proxy,ml}`,
 `com.local.docling.{proxy,serve}`, `com.local.node.exporter`,
 `com.local.silicon.exporter`, `com.local.ondemand.exporter`,
-`com.local.llm.watchdog`, `com.local.inference.watchdog`,
+`com.local.llm.watchdog`,
 `com.local.preventsleep`, `com.local.iogpu.wiredlimit`,
 `com.local.weekly.autoupdate`, `com.local.mqtt.bridge`, `com.local.dashboard`,
 `com.local.vncfilter`, `com.local.novnc` and `com.local.paperless.ocr`.
