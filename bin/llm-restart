@@ -19,8 +19,6 @@ label_for() {
   case "$1" in
     main)            echo com.local.mlxvlm.main ;;
     litellm)         echo com.local.litellm.proxy ;;
-    glmocr-proxy)    echo com.local.glmocr.proxy ;;
-    glmocr)          echo com.local.glmocr.serve ;;
     immich-proxy)    echo com.local.immich.proxy ;;
     immich)          echo com.local.immich.ml ;;
     docling-proxy)   echo com.local.docling.proxy ;;
@@ -35,10 +33,10 @@ label_for() {
   esac
 }
 
-ALL_SHORT_NAMES=(main litellm glmocr-proxy glmocr immich-proxy immich docling-proxy docling \
+ALL_SHORT_NAMES=(main litellm immich-proxy immich docling-proxy docling \
                  infinity-proxy infinity \
                  node silicon watchdog preventsleep)
-ALL_ALWAYS_ON=(main litellm glmocr-proxy immich-proxy docling-proxy infinity-proxy node silicon watchdog preventsleep)
+ALL_ALWAYS_ON=(main litellm immich-proxy docling-proxy infinity-proxy node silicon watchdog preventsleep)
 
 if [ $# -eq 0 ] || [ "${1:-}" = all ]; then
   set -- "${ALL_ALWAYS_ON[@]}"

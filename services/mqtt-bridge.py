@@ -618,8 +618,7 @@ class Bridge:
         }, am)
         for oid, name, key, dclass in [
                 ("text_backend", "Text Backend Running", "text_backend_running", "running"),
-                ("litellm", "LiteLLM Gateway", "litellm_up", "connectivity"),
-                ("glmocr_awake", "GLM-OCR Awake", "glmocr_awake", "running")]:
+                ("litellm", "LiteLLM Gateway", "litellm_up", "connectivity")]:
             add("binary_sensor", oid, {
                 "name": name, "state_topic": st,
                 "value_template": f"{{{{ 'ON' if value_json.{key} else 'OFF' }}}}",
@@ -686,7 +685,6 @@ class Bridge:
         text_label = text_daemon_label(engine)
         text_running, _ = launchctl_state(text_label)
         litellm_port = int(conf.get("LITELLM_PORT", "11434") or 11434)
-        glm_running, _ = launchctl_state("com.local.glmocr.serve")
         hf = conf.get("HF_CACHE_DIR", DEFAULT_HF)
         active = conf.get("ALIAS_MAIN", "")
 
@@ -715,7 +713,6 @@ class Bridge:
             "text_engine": engine,
             "text_backend_running": text_running,
             "litellm_up": tcp_listening(litellm_port),
-            "glmocr_awake": glm_running,
         }
         # Headroom under the GPU wired-memory ceiling — what's left for a
         # bigger model / longer context before hitting iogpu.wired_limit_mb.

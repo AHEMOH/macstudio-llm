@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Launched by com.local.infinity.proxy — asyncio TCP proxy that wakes the
 # Infinity embed+rerank backend (com.local.infinity.serve) on demand and stops
-# it after idle. Same on-demand pattern as glmocr/docling (reuses ondemand-proxy.py).
+# it after idle. Same on-demand pattern as docling (reuses ondemand-proxy.py).
 set -eu
 
 CONF=/usr/local/etc/macstudio.conf

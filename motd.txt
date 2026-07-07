@@ -3,8 +3,7 @@
 ══════════════════════════════════════════════════════════════════════
   Primary:    LiteLLM       :@LITELLM_PORT@   (public gateway; alias 'main' → one MLX model)
               mlx_vlm.server :@MAIN_BACKEND_PORT@   (internal; unified text+images engine)
-  On-demand:  GLM-OCR       :@GLMOCR_PUBLIC_PORT@    (auto-wakes for OCR, only model run in parallel)
-              immich-ml     :@ML_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_IMMICH@m)
+  On-demand:  immich-ml     :@ML_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_IMMICH@m)
               docling-serve :@DOCLING_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_DOCLING@m)
   Monitoring (opt-in): node_exporter :@NODE_EXPORTER_PORT@
               silicon       :@SILICON_EXPORTER_PORT@   (GPU, power, thermal, mem-pressure)
@@ -12,12 +11,12 @@
 ══════════════════════════════════════════════════════════════════════
   Commands (type them directly — already on PATH):
     llm-status                      full service + memory overview
-    llm-models                      download MLX models, pick the active main/ocr
+    llm-models                      download MLX models, pick the active main/embed/rerank
                                     (in there: 't' stores your HuggingFace token,
                                      needed for gated repos like Gemma — never in git)
     llm-restart [service|all]       restart services
     llm-update                      run brew+pip+softwareupdate now
-    llm-service-ctl wake  glmocr    force-wake on-demand service
+    llm-service-ctl wake  infinity  force-wake on-demand service
     llm-service-ctl sleep docling   force-sleep on-demand service
     llm-logs [service]              tail /var/log/macstudio/<svc>.log
     sudo mactop                     live GPU/ANE/CPU/RAM/power TUI
@@ -26,12 +25,12 @@
   Using the model (apps point at the LiteLLM gateway, OpenAI/Anthropic API):
     curl http://localhost:@LITELLM_PORT@/v1/chat/completions \
       -d '{"model":"main","messages":[{"role":"user","content":"hi"}]}'
-    Aliases stay stable ('main', 'ocr') — switching the underlying model is an
+    The 'main' alias stays stable — switching the underlying model is an
     explicit step via 'llm-models' and never happens on the fly.
 
   Dashboard:    http://<this-mac>:@DASHBOARD_PORT@   (browser control — token: DASHBOARD_TOKEN in macstudio.conf)
   Settings:     sudo bash /opt/macstudio/setup.sh
-  Logs:         tail -F /var/log/macstudio/mlxvlm-main.log    (or litellm.log / glmocr-serve.log)
+  Logs:         tail -F /var/log/macstudio/mlxvlm-main.log    (or litellm.log / infinity-serve.log)
   Weekly auto:  @AUTOUPDATE_HUMAN@ → /var/log/macstudio/autoupdate.log
 
   Maintenance (FileVault is ON — reboot needs a key):

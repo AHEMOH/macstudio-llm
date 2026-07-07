@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # llm-models — open the model & alias manager (download MLX models from
-# HuggingFace, pick the one active main model, set the ocr model, manage the
+# HuggingFace, pick the one active main model + embed/rerank, manage the
 # catalog). Thin wrapper around `setup.sh --models`.
 set -u
 
