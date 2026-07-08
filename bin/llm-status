@@ -22,6 +22,8 @@ LABELS=(
   "com.local.litellm.proxy"
   "com.local.infinity.proxy"
   "com.local.infinity.serve"
+  "com.local.images.proxy"
+  "com.local.images.serve"
   "com.local.immich.proxy"
   "com.local.immich.ml"
   "com.local.docling.proxy"
