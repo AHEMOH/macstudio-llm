@@ -32,6 +32,7 @@ ALWAYS_ON_LABELS=(
   com.local.mlxvlm.main
   com.local.litellm.proxy
   com.local.infinity.proxy
+  com.local.images.proxy
   com.local.immich.proxy
   com.local.docling.proxy
   com.local.node.exporter
@@ -50,6 +51,7 @@ ALWAYS_ON_LABELS=(
 # On-demand backends (KeepAlive=false, RunAtLoad=false)
 ONDEMAND_LABELS=(
   com.local.infinity.serve
+  com.local.images.serve
   com.local.immich.ml
   com.local.docling.serve
 )
@@ -99,6 +101,15 @@ CONFIG_KEYS=(
   INFINITY_DEVICE
   INFINITY_BATCH_SIZE
   INFINITY_DTYPE
+  INSTALL_IMAGES
+  IMAGES_PUBLIC_PORT
+  IMAGES_BACKEND_PORT
+  IDLE_TIMEOUT_IMAGES
+  STARTUP_TIMEOUT_IMAGES
+  MFLUX_MODEL
+  MFLUX_QUANTIZE
+  MFLUX_STEPS
+  MFLUX_MODEL_DIR
   ML_PUBLIC_PORT
   ML_BACKEND_PORT
   DOCLING_PUBLIC_PORT
@@ -214,6 +225,15 @@ config_default() {
     INFINITY_DEVICE)             echo mps ;;
     INFINITY_BATCH_SIZE)         echo 4 ;;
     INFINITY_DTYPE)              echo float16 ;;
+    INSTALL_IMAGES)              echo 0 ;;
+    IMAGES_PUBLIC_PORT)          echo 5005 ;;
+    IMAGES_BACKEND_PORT)         echo 15005 ;;
+    IDLE_TIMEOUT_IMAGES)         echo 900 ;;
+    STARTUP_TIMEOUT_IMAGES)      echo 60 ;;
+    MFLUX_MODEL)                 echo dev ;;
+    MFLUX_QUANTIZE)              echo 8 ;;
+    MFLUX_STEPS)                 echo "" ;;
+    MFLUX_MODEL_DIR)             echo /Users/mac/.cache/mflux-models ;;
     ML_PUBLIC_PORT)              echo 3003 ;;
     ML_BACKEND_PORT)             echo 13003 ;;
     DOCLING_PUBLIC_PORT)         echo 5001 ;;
@@ -322,6 +342,15 @@ config_hint() {
     INFINITY_DEVICE)             echo "Torch device for Infinity: mps (Apple GPU, default), cpu, or auto" ;;
     INFINITY_BATCH_SIZE)         echo "Infinity max batch size per forward pass (default 4 — plenty for a single user; raise for heavy parallel load, lower still if MPS memory is tight)" ;;
     INFINITY_DTYPE)              echo "Infinity model weight precision: float16 (default — ~half the RAM of float32, ample for BGE) or float32" ;;
+    INSTALL_IMAGES)              echo "1 = run the on-demand FLUX image-generation backend (mflux, MLX-native) exposed via LiteLLM as the 'image' alias for OpenWebUI's native Images feature. Opt-in (default 0) — NOT part of the model catalog (image generation doesn't fit the text/embed/rerank role system; see CLAUDE.md)" ;;
+    IMAGES_PUBLIC_PORT)          echo "Public on-demand-proxy port for the images backend (default 5005)" ;;
+    IMAGES_BACKEND_PORT)         echo "Internal port mflux-server.py binds (127.0.0.1 only, default 15005)" ;;
+    IDLE_TIMEOUT_IMAGES)         echo "Seconds before the images backend sleeps (default 900); -1 = never sleep. Low idle cost either way — mflux-server.py holds no model in memory between requests" ;;
+    STARTUP_TIMEOUT_IMAGES)      echo "Seconds the proxy waits for the images backend to report healthy after waking (default 60 — fast, since health is just 'is Flask up + is the quantized model on disk', not a model load)" ;;
+    MFLUX_MODEL)                 echo "FLUX variant for mflux: dev (gated on HF, better quality) or schnell (ungated, faster, more artifacts on text/hands). Tested 2026-07: dev+4-bit is quality-safe and fits alongside main (28.35 of 32GB); dev+8-bit is closer to full quality but noticeably degrades main during generation (17 tok/s vs 48 baseline) and briefly spikes swap ~3GB — acceptable for infrequent use, revisit if usage grows" ;;
+    MFLUX_QUANTIZE)              echo "mflux quantization bits: 3,4,5,6, or 8. Lower = smaller/faster/safer alongside main, higher = closer to full bf16 quality. See MFLUX_MODEL hint for the 4 vs 8 bit measurements" ;;
+    MFLUX_STEPS)                 echo "Inference steps per image; empty = model default (schnell=4, dev=20)" ;;
+    MFLUX_MODEL_DIR)             echo "Where ensure_mflux_model() saves the pre-quantized checkpoint (mflux-save, one-time during --apply). Subdirectory name is <MFLUX_MODEL>-q<MFLUX_QUANTIZE>" ;;
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
     AUTOUPDATE_WEEKDAY)          echo "launchd weekday: 0=Sun 1=Mon … 6=Sat" ;;
@@ -556,6 +585,8 @@ load_config() {
         [ "${INSTALL_MLX:-1}" = 1 ] || continue ;;
       com.local.infinity.*)
         [ "${INSTALL_EMBED:-1}" = 1 ] || continue ;;
+      com.local.images.*)
+        [ "${INSTALL_IMAGES:-0}" = 1 ] || continue ;;
       com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || continue ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || continue ;;
       com.local.node.exporter|com.local.silicon.exporter|com.local.ondemand.exporter)
@@ -606,6 +637,8 @@ label_log() {
     com.local.litellm.proxy)     echo "$LOG_DIR/litellm.log" ;;
     com.local.infinity.proxy)    echo "$LOG_DIR/infinity-proxy.log" ;;
     com.local.infinity.serve)    echo "$LOG_DIR/infinity-serve.log" ;;
+    com.local.images.proxy)      echo "$LOG_DIR/images-proxy.log" ;;
+    com.local.images.serve)      echo "$LOG_DIR/images-serve.log" ;;
     com.local.immich.proxy)      echo "$LOG_DIR/immich-proxy.log" ;;
     com.local.immich.ml)         echo "$LOG_DIR/immich-ml.log" ;;
     com.local.docling.proxy)     echo "$LOG_DIR/docling-proxy.log" ;;
@@ -1133,6 +1166,13 @@ ensure_python_venvs() {
     _ensure_venv infinity bin:infinity_emb 'infinity-emb[torch,server]' 'click<8.2' 'huggingface_hub[cli]'
   fi
 
+  # FLUX image generation: mflux (MLX-native, no PyTorch/ComfyUI) + flask for the
+  # thin OpenAI-compatible front end in mflux-server.py. On-demand, catalog-
+  # independent (see CLAUDE.md) — only built when INSTALL_IMAGES=1.
+  if [ "${INSTALL_IMAGES:-0}" = 1 ]; then
+    _ensure_venv mflux bin:mflux-generate 'mflux' 'flask' 'huggingface_hub[cli]'
+  fi
+
   # Version-sync: set MLXVLM_VERSION + `--apply` to up/downgrade the text engine.
   if [ -n "${MLXVLM_VERSION:-}" ] && [ -x "$vdir/mlxvlm/bin/python" ]; then
     local cur_m
@@ -1150,6 +1190,42 @@ ensure_python_venvs() {
         warn "mlx-vlm pin install failed; see $LOG_DIR/mlxvlm-pin-install.log"
       fi
     fi
+  fi
+}
+
+ensure_mflux_model() {
+  # Proactively runs mflux-save once so the FIRST real image request is normal
+  # speed (model load + generate), not a one-shot conversion+generate that can
+  # take 15+ minutes and blow past client timeouts. Idempotent — skips if the
+  # target directory already exists. Catalog-independent by design (see
+  # CLAUDE.md: image generation doesn't fit the text/embed/rerank role system).
+  [ "${INSTALL_IMAGES:-0}" = 1 ] || return 0
+  local vdir="${VENV_DIR:-/Users/mac/.macstudio-venvs}"
+  if [ ! -x "$vdir/mflux/bin/mflux-save" ]; then
+    warn "mflux venv missing — ensure_python_venvs should have built it; check $LOG_DIR/mflux-venv-install.log"
+    return 1
+  fi
+  local model="${MFLUX_MODEL:-dev}" quant="${MFLUX_QUANTIZE:-8}"
+  local model_dir="${MFLUX_MODEL_DIR:-/Users/mac/.cache/mflux-models}"
+  local target="$model_dir/${model}-q${quant}"
+  if [ -d "$target" ]; then
+    ok "mflux model present ($target)"
+    return 0
+  fi
+  /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$model_dir"
+  log "quantizing FLUX.1-$model to ${quant}-bit -> $target (one-time: downloads the full checkpoint + quantizes, several minutes)"
+  local logf="$LOG_DIR/mflux-save.log"
+  if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
+        "$vdir/mflux/bin/mflux-save" --model "$model" --path "$target" --quantize "$quant" \
+        >"$logf" 2>&1; then
+    ok "mflux model saved -> $target"
+  else
+    warn "mflux-save failed for model='$model' quantize='$quant'; see $logf"
+    if /usr/bin/grep -qiE '401|403|gated|gating|awaiting|access to|authenticated|restricted' "$logf" 2>/dev/null; then
+      warn "  FLUX.1-dev is gated: accept the licence at https://huggingface.co/black-forest-labs/FLUX.1-dev"
+      warn "  then log in as $TARGET_USER via 'hf auth login --token' (or use MFLUX_MODEL=schnell, ungated)"
+    fi
+    return 1
   fi
 }
 
@@ -1274,8 +1350,18 @@ render_litellm_config() {
       printf '  - model_name: rerank\n    litellm_params:\n      model: infinity/%s\n      api_base: http://127.0.0.1:%s\n      api_key: dummy\n    model_info:\n      mode: rerank\n' \
         "${ALIAS_RERANK}" "${INFINITY_PUBLIC_PORT:-5004}"
     fi
+    # FLUX image generation via the on-demand mflux backend (mflux-server.py).
+    # Uses the SAME generic 'openai/<served-name>' provider the main/main-fast
+    # chat aliases use (not infinity's provider-specific routing) — mflux-server.py
+    # speaks OpenAI's /v1/images/generations shape directly, so LiteLLM just
+    # forwards. Gated purely on INSTALL_IMAGES, not a catalog id: image
+    # generation is deliberately NOT a 4th catalog role (see CLAUDE.md).
+    if [ "${INSTALL_IMAGES:-0}" = 1 ]; then
+      printf '  - model_name: image\n    litellm_params:\n      model: openai/mflux-%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: image_generation\n' \
+        "${MFLUX_MODEL:-dev}" "${IMAGES_PUBLIC_PORT:-5005}"
+    fi
     # No separate 'vision' alias: the unified 'main' already does images, so the chat set
-    # is intentionally main / main-fast (plus the embed / rerank utility aliases above).
+    # is intentionally main / main-fast (plus the embed / rerank / image utility aliases above).
     echo "litellm_settings:"
     echo "  drop_params: true"
     # Long docs/OCR generations can run minutes — raise the gateway timeout and
@@ -1291,7 +1377,7 @@ render_litellm_config() {
   fi
   /usr/bin/install -m 644 "$tmp" "$LITELLM_CONFIG_FILE"
   /bin/rm -f "$tmp"
-  ok "litellm config written → $LITELLM_CONFIG_FILE (main=${ALIAS_MAIN}, embed=${ALIAS_EMBED:-none}, rerank=${ALIAS_RERANK:-none})"
+  ok "litellm config written → $LITELLM_CONFIG_FILE (main=${ALIAS_MAIN}, embed=${ALIAS_EMBED:-none}, rerank=${ALIAS_RERANK:-none}, image=$([ "${INSTALL_IMAGES:-0}" = 1 ] && echo "${MFLUX_MODEL:-dev}-q${MFLUX_QUANTIZE:-8}" || echo none))"
   if daemon_loaded com.local.litellm.proxy; then
     /bin/launchctl kickstart -k system/com.local.litellm.proxy >/dev/null 2>&1 \
       && ok "restarted litellm to pick up new routing"
@@ -1395,6 +1481,11 @@ render_all_plists() {
         # On-demand BGE embedder + reranker (Infinity, MPS). Independent of the
         # text engine, but only reachable through the LiteLLM gateway.
         [ "${INSTALL_EMBED:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
+      com.local.images.*)
+        # On-demand FLUX image generation (mflux, MLX-native). Catalog-
+        # independent (see CLAUDE.md) — fronted through LiteLLM's 'image' alias
+        # like main, not through Infinity's provider-specific routing.
+        [ "${INSTALL_IMAGES:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.node.exporter|com.local.silicon.exporter|com.local.ondemand.exporter)
@@ -1580,6 +1671,7 @@ apply_everything() {
   dbg "step: ensure_novnc_venv";       ensure_novnc_venv || true
   dbg "step: ensure_novnc_assets";     ensure_novnc_assets || true
   dbg "step: ensure_python_venvs";     ensure_python_venvs || true
+  dbg "step: ensure_mflux_model";      ensure_mflux_model || true
   dbg "step: ensure_model_catalog";    ensure_model_catalog
   dbg "step: render_wrappers";        render_wrappers
   dbg "step: render_services";        render_services

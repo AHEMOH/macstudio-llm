@@ -91,6 +91,8 @@ SERVICES = [
     ("com.local.litellm.proxy",     "LiteLLM-Gateway",             "always"),
     ("com.local.infinity.proxy",    "Embed/Rerank Proxy",          "always"),
     ("com.local.infinity.serve",    "Embed/Rerank Backend",        "ondemand"),
+    ("com.local.images.proxy",      "Image-Gen Proxy",             "always"),
+    ("com.local.images.serve",      "Image-Gen Backend (FLUX)",    "ondemand"),
     ("com.local.immich.proxy",      "immich-ml Proxy",             "always"),
     ("com.local.immich.ml",         "immich-ml Backend",           "ondemand"),
     ("com.local.docling.proxy",     "docling Proxy",               "always"),
@@ -121,6 +123,8 @@ LABEL_LOG = {
     "com.local.litellm.proxy": "litellm.log",
     "com.local.infinity.proxy": "infinity-proxy.log",
     "com.local.infinity.serve": "infinity-serve.log",
+    "com.local.images.proxy": "images-proxy.log",
+    "com.local.images.serve": "images-serve.log",
     "com.local.immich.proxy": "immich-proxy.log",
     "com.local.immich.ml": "immich-ml.log",
     "com.local.docling.proxy": "docling-proxy.log",
@@ -207,6 +211,8 @@ def active_labels():
             keep = mlx
         elif lbl.startswith("com.local.infinity."):
             keep = c.get("INSTALL_EMBED", "1") == "1"
+        elif lbl.startswith("com.local.images."):
+            keep = c.get("INSTALL_IMAGES", "0") == "1"
         elif lbl.startswith("com.local.immich."):
             keep = c.get("INSTALL_IMMICH", "1") == "1"
         elif lbl.startswith("com.local.docling."):
@@ -797,6 +803,8 @@ def api_status():
             "main_fast": c.get("PRESET_ALIASES", "1") == "1",
             "embed": c.get("ALIAS_EMBED", ""),
             "rerank": c.get("ALIAS_RERANK", ""),
+            "image": (f'{c.get("MFLUX_MODEL", "dev")}-q{c.get("MFLUX_QUANTIZE", "8")}'
+                      if c.get("INSTALL_IMAGES", "0") == "1" else ""),
         },
         "gateway_up": tcp_listening(c.get("LITELLM_PORT", "11434") or "11434"),
         "gateway_port": c.get("LITELLM_PORT", "11434"),
@@ -913,6 +921,7 @@ def api_links():
         "litellm_port": port("LITELLM_PORT", 11434),
         "docling_port": port("DOCLING_PUBLIC_PORT", 5001) if c.get("INSTALL_DOCLING", "1") == "1" else 0,
         "infinity_port": port("INFINITY_PUBLIC_PORT", 5004) if c.get("INSTALL_EMBED", "1") == "1" else 0,
+        "images_port": port("IMAGES_PUBLIC_PORT", 5005) if c.get("INSTALL_IMAGES", "0") == "1" else 0,
         "vnc_enabled": c.get("INSTALL_REMOTE", "1") == "1",
         "vnc_filter_port": port("VNC_FILTER_PORT", 5901) if c.get("INSTALL_REMOTE", "1") == "1" else 0,
         "novnc_port": port("NOVNC_PORT", 6080) if (c.get("INSTALL_REMOTE", "1") == "1" and c.get("INSTALL_NOVNC", "1") == "1") else 0,

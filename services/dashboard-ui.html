@@ -837,6 +837,9 @@ function viewUebersicht() {
       <div class="card"><div class="label">Embed / Rerank</div>
         <div class="value">${a.embed ? "an" : "aus"}</div>
         <div class="sub">embed: ${esc(a.embed || "aus")} · rerank: ${esc(a.rerank || "aus")}</div></div>
+      <div class="card"><div class="label">Bildgenerierung (FLUX)</div>
+        <div class="value">${a.image ? "an" : "aus"}</div>
+        <div class="sub">${esc(a.image || "deaktiviert (INSTALL_IMAGES)")}</div></div>
       <div class="card"><div class="label">RAM frei</div>
         <div class="value">${fmtMB(m.ram_free_mb)}</div>
         <div class="sub">von ${m.total_ram_gb != null ? m.total_ram_gb + " GB" : "–"} · Druck:
