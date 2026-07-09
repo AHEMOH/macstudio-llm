@@ -1500,12 +1500,16 @@ render_litellm_config() {
     # Text-to-Speech via the on-demand say-tts-server.py backend (plain
     # `say`/AVSpeechSynthesizer, NOT macos-speech-server's bundled avspeech
     # engine — measured faster and bug-free, see wrappers/start-voicetts.sh).
-    # VOICE_TTS_DEFAULT_VOICE is baked into that backend's own environment; a
-    # client can still override per-request with an explicit 'voice' field,
-    # which say-tts-server.py honors directly.
+    # LiteLLM's own /v1/audio/speech routing REQUIRES a 'voice' field before it
+    # will even dispatch the call (Router.aspeech() has no default) — unlike
+    # say-tts-server.py itself, which happily defaults a missing voice to
+    # VOICE_TTS_DEFAULT_VOICE. So that default has to ALSO be declared here as
+    # a static litellm_params default (same mechanism as main/main-fast's
+    # temperature/top_p) — LiteLLM merges it in for any request that omits
+    # 'voice', while a client-supplied 'voice' still overrides it.
     if [ "${INSTALL_VOICE:-0}" = 1 ]; then
-      printf '  - model_name: tts\n    litellm_params:\n      model: openai/say\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: audio_speech\n' \
-        "${VOICETTS_PUBLIC_PORT:-5007}"
+      printf '  - model_name: tts\n    litellm_params:\n      model: openai/say\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n      voice: %s\n    model_info:\n      mode: audio_speech\n' \
+        "${VOICETTS_PUBLIC_PORT:-5007}" "${VOICE_TTS_DEFAULT_VOICE:-Katya (Enhanced)}"
     fi
     # No separate 'vision' alias: the unified 'main' already does images, so the chat set
     # is intentionally main / main-fast (plus the embed / rerank / image utility aliases above).
