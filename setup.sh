@@ -1500,16 +1500,21 @@ render_litellm_config() {
     # Text-to-Speech via the on-demand say-tts-server.py backend (plain
     # `say`/AVSpeechSynthesizer, NOT macos-speech-server's bundled avspeech
     # engine — measured faster and bug-free, see wrappers/start-voicetts.sh).
-    # LiteLLM's own /v1/audio/speech routing REQUIRES a 'voice' field before it
-    # will even dispatch the call (Router.aspeech() has no default) — unlike
-    # say-tts-server.py itself, which happily defaults a missing voice to
-    # VOICE_TTS_DEFAULT_VOICE. So that default has to ALSO be declared here as
-    # a static litellm_params default (same mechanism as main/main-fast's
-    # temperature/top_p) — LiteLLM merges it in for any request that omits
-    # 'voice', while a client-supplied 'voice' still overrides it.
+    # NOTE: LiteLLM's own /v1/audio/speech routing REQUIRES a 'voice' key to be
+    # PRESENT in the client's raw request body — Router.aspeech(voice: str, ...)
+    # has no default, and `data` is parsed straight from the request with no
+    # config-level merge before dispatch (verified against the installed
+    # litellm source) — a totally MISSING 'voice' key 500s inside LiteLLM
+    # itself, before ever reaching say-tts-server.py. A static litellm_params
+    # default here does NOT help (tried, confirmed empirically ineffective for
+    # this specific endpoint/failure mode). The client must always send a
+    # 'voice' key — an EMPTY STRING is fine (say-tts-server.py falls back to
+    # VOICE_TTS_DEFAULT_VOICE for that) — see INTEGRATIONS.md's Open WebUI
+    # section, which documents setting AUDIO_TTS_VOICE explicitly rather than
+    # leaving it unset.
     if [ "${INSTALL_VOICE:-0}" = 1 ]; then
-      printf '  - model_name: tts\n    litellm_params:\n      model: openai/say\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n      voice: %s\n    model_info:\n      mode: audio_speech\n' \
-        "${VOICETTS_PUBLIC_PORT:-5007}" "${VOICE_TTS_DEFAULT_VOICE:-Katya (Enhanced)}"
+      printf '  - model_name: tts\n    litellm_params:\n      model: openai/say\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: audio_speech\n' \
+        "${VOICETTS_PUBLIC_PORT:-5007}"
     fi
     # No separate 'vision' alias: the unified 'main' already does images, so the chat set
     # is intentionally main / main-fast (plus the embed / rerank / image utility aliases above).
