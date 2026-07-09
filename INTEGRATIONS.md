@@ -265,7 +265,53 @@ The models `main` and `main-fast` appear in the model picker.
 For chat use `main`, which may emit reasoning that Open WebUI renders as a foldable
 "thinking" block; `main-fast` is thinking-off, so it returns clean output with no
 thinking block (the fast non-reasoning chat path).
-(Embeddings/STT are not served by this stack.)
+(Embeddings are not served by this stack — Open WebUI doesn't need them for basic
+chat, and this project doesn't expose a document-RAG embedding endpoint.)
+
+### Speech-to-Text (STT) and Text-to-Speech (TTS)
+
+Requires `INSTALL_VOICE=1` on the Mac (`sudo bash setup.sh` → menu 4, or edit
+`/usr/local/etc/macstudio.conf`, then `sudo bash setup.sh --apply`). This adds the
+`stt` and `tts` aliases on the same LiteLLM gateway used for chat — Speech-to-Text
+via FluidAudio's Parakeet model (Apple Neural Engine) and Text-to-Speech via macOS's
+own `say`/AVSpeechSynthesizer.
+
+Since Open WebUI runs on a **separate machine**, this is a manual step on *that*
+machine — `setup.sh` cannot reach it. In Open WebUI's **Admin Settings → Audio**, or
+via environment variables:
+
+- **Speech-to-Text:** Engine `OpenAI`, API Base URL `http://mac.home.arpa:11434/v1`,
+  API Key `sk-local`, Model `stt`.
+  ```
+  AUDIO_STT_ENGINE=openai
+  AUDIO_STT_OPENAI_API_BASE_URL=http://mac.home.arpa:11434/v1
+  AUDIO_STT_OPENAI_API_KEY=sk-local
+  AUDIO_STT_MODEL=stt
+  ```
+- **Text-to-Speech:** Engine `OpenAI`, API Base URL `http://mac.home.arpa:11434/v1`,
+  API Key `sk-local`, Model `tts`.
+  ```
+  AUDIO_TTS_ENGINE=openai
+  AUDIO_TTS_OPENAI_API_BASE_URL=http://mac.home.arpa:11434/v1
+  AUDIO_TTS_OPENAI_API_KEY=sk-local
+  AUDIO_TTS_MODEL=tts
+  AUDIO_TTS_VOICE=            # leave empty to use VOICE_TTS_DEFAULT_VOICE from the Mac
+  ```
+
+**One-time manual step on the Mac** for the best-sounding Russian voice: the default
+(`VOICE_TTS_DEFAULT_VOICE="Katya (Enhanced)"`) is an Apple system voice that is **not**
+installed on a fresh macOS and has **no headless/CLI install path** — Apple only
+offers it through a GUI flow. On the Mac's desktop (directly, or via the noVNC remote
+desktop — see [Remote desktop](#remote-desktop-vnc--browser--install_remote--install_novnc)):
+System Settings → Accessibility → VoiceOver → **Open VoiceOver Utility…** → **Speech** → **Voices** → **+** → language Russian → download **Katya (Enhanced)** (and/or
+**Yuri (Enhanced)**, **Milena (Enhanced)** as alternatives — all were A/B-tested
+2026-07, Katya (Enhanced) sounded best). Until that's done, `tts` still works with
+whatever voice is already installed (e.g. plain `Milena`) — just set
+`VOICE_TTS_DEFAULT_VOICE` to a voice `say -v '<name>' ...` can already speak, or pass
+`voice` explicitly per request.
+
+The first real request after either backend wakes may take a few seconds longer than
+usual while the on-demand proxy starts it.
 
 ---
 

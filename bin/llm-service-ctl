@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # llm-service-ctl — manually wake, sleep, or inspect the on-demand
-# services (infinity, images, immich-ml, docling-serve). Useful to force-warm
-# them before a batch job, or force-sleep them to reclaim RAM immediately.
+# services (infinity, images, voicestt, voicetts, immich-ml, docling-serve).
+# Useful to force-warm them before a batch job, or force-sleep them to
+# reclaim RAM immediately.
 #
 # Usage:
-#   llm-service-ctl wake   infinity|images|immich|docling|all
-#   llm-service-ctl sleep  infinity|images|immich|docling|all
-#   llm-service-ctl status [infinity|images|immich|docling|all]
+#   llm-service-ctl wake   infinity|images|voicestt|voicetts|immich|docling|all
+#   llm-service-ctl sleep  infinity|images|voicestt|voicetts|immich|docling|all
+#   llm-service-ctl status [infinity|images|voicestt|voicetts|immich|docling|all]
 set -u
 
 if [ "$(id -u)" -ne 0 ] && [ "${1:-}" != status ]; then
@@ -16,27 +17,29 @@ fi
 # Bash-3.2 safe lookup (macOS ships /bin/bash 3.2, no assoc arrays).
 label_for() {
   case "$1" in
-    infinity) echo com.local.infinity.serve ;;
-    images)   echo com.local.images.serve ;;
-    immich)   echo com.local.immich.ml ;;
-    docling)  echo com.local.docling.serve ;;
-    *)        echo "" ;;
+    infinity)  echo com.local.infinity.serve ;;
+    images)    echo com.local.images.serve ;;
+    voicestt)  echo com.local.voicestt.serve ;;
+    voicetts)  echo com.local.voicetts.serve ;;
+    immich)    echo com.local.immich.ml ;;
+    docling)   echo com.local.docling.serve ;;
+    *)         echo "" ;;
   esac
 }
 
 usage() {
   cat <<USAGE >&2
 usage:
-  llm-service-ctl wake   infinity|images|immich|docling|all
-  llm-service-ctl sleep  infinity|images|immich|docling|all
-  llm-service-ctl status [infinity|images|immich|docling|all]
+  llm-service-ctl wake   infinity|images|voicestt|voicetts|immich|docling|all
+  llm-service-ctl sleep  infinity|images|voicestt|voicetts|immich|docling|all
+  llm-service-ctl status [infinity|images|voicestt|voicetts|immich|docling|all]
 USAGE
   exit 2
 }
 
 resolve() {
   case "$1" in
-    all) echo infinity images immich docling ;;
+    all) echo infinity images voicestt voicetts immich docling ;;
     *)   echo "$1" ;;
   esac
 }

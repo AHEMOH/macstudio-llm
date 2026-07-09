@@ -27,6 +27,10 @@ label_for() {
     infinity)        echo com.local.infinity.serve ;;
     images-proxy)    echo com.local.images.proxy ;;
     images)          echo com.local.images.serve ;;
+    voicestt-proxy)  echo com.local.voicestt.proxy ;;
+    voicestt)        echo com.local.voicestt.serve ;;
+    voicetts-proxy)  echo com.local.voicetts.proxy ;;
+    voicetts)        echo com.local.voicetts.serve ;;
     node)            echo com.local.node.exporter ;;
     silicon)         echo com.local.silicon.exporter ;;
     watchdog)        echo com.local.llm.watchdog ;;
@@ -37,8 +41,9 @@ label_for() {
 
 ALL_SHORT_NAMES=(main litellm immich-proxy immich docling-proxy docling \
                  infinity-proxy infinity images-proxy images \
+                 voicestt-proxy voicestt voicetts-proxy voicetts \
                  node silicon watchdog preventsleep)
-ALL_ALWAYS_ON=(main litellm immich-proxy docling-proxy infinity-proxy images-proxy node silicon watchdog preventsleep)
+ALL_ALWAYS_ON=(main litellm immich-proxy docling-proxy infinity-proxy images-proxy voicestt-proxy voicetts-proxy node silicon watchdog preventsleep)
 
 if [ $# -eq 0 ] || [ "${1:-}" = all ]; then
   set -- "${ALL_ALWAYS_ON[@]}"
