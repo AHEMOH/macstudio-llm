@@ -1319,6 +1319,27 @@ ensure_voice_project() {
       || warn "git pull for macos-speech-server failed (continuing with existing checkout); see $LOG_DIR/voicestt-clone.log"
   fi
 
+  # Local patch: upstream hardcodes "en" as the ONLY language it ever
+  # advertises over Wyoming, for both Parakeet's ASR model (actually
+  # multilingual, 25 languages incl. Russian) and every AVSpeechSynthesizer
+  # TTS voice (regardless of the voice's real locale — Katya/Milena/Yuri are
+  # ru_RU, but got reported as "en"). This makes Home Assistant's pipeline
+  # language picker only ever offer English, even though transcription/
+  # synthesis themselves already work fine in Russian via the plain HTTP
+  # 'stt'/'tts' aliases. Reset to a clean upstream tree first so re-applying
+  # is idempotent across repeated --apply runs (a raw `git apply` on an
+  # already-patched tree would fail).
+  /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" checkout -- . >/dev/null 2>&1 || true
+  local patch_file="$REPO_DIR/patches/macos-speech-server-wyoming-languages.patch"
+  if [ -f "$patch_file" ]; then
+    if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" apply "$patch_file" \
+          >"$LOG_DIR/voicestt-patch.log" 2>&1; then
+      ok "applied macos-speech-server Wyoming-language patch"
+    else
+      warn "failed to apply macos-speech-server Wyoming-language patch; see $LOG_DIR/voicestt-patch.log (continuing with unpatched upstream — HA's pipeline language picker will only offer English)"
+    fi
+  fi
+
   # Two independent consumers share this ONE backend process now:
   # - LiteLLM's 'stt' alias (OpenWebUI etc.) via the HTTP port ($port),
   #   fronted by com.local.voicestt.proxy.
@@ -1364,21 +1385,30 @@ YAML
       && ok "restarted com.local.voicestt.serve to pick up the updated speech-server.yaml"
   fi
 
-  if [ -x "$dir/.build/release/speech-server" ]; then
-    ok "macos-speech-server already built at $dir"
-    return 0
-  fi
   if [ ! -x /usr/bin/swift ]; then
     warn "Swift toolchain not found — install Xcode Command Line Tools: xcode-select --install"
     return 1
   fi
-  log "building macos-speech-server (swift build -c release; several minutes on first run)"
+  # Always invoke swift build rather than skipping when a binary already
+  # exists — Swift Package Manager's build is incremental (a no-op re-run
+  # takes seconds), and skipping unconditionally would silently leave a
+  # stale binary in place after a git pull or a patch-file change to the
+  # source (found the hard way while developing the language patch above).
+  local bin_before; bin_before=$(hash_file "$dir/.build/release/speech-server")
+  log "building macos-speech-server (swift build -c release; incremental after the first run)"
   if /usr/bin/sudo -u "$TARGET_USER" -H /bin/sh -c "cd '$dir' && swift build -c release" \
         >"$LOG_DIR/voicestt-build.log" 2>&1; then
     ok "macos-speech-server built -> $dir/.build/release/speech-server"
   else
     warn "swift build failed for macos-speech-server; see $LOG_DIR/voicestt-build.log"
     return 1
+  fi
+  # Same reasoning as the yaml restart above: a running instance keeps the
+  # OLD binary loaded in memory until kickstarted, even though the file on
+  # disk is already the new one.
+  if [ "$bin_before" != "$(hash_file "$dir/.build/release/speech-server")" ] && daemon_loaded com.local.voicestt.serve; then
+    /bin/launchctl kickstart -k system/com.local.voicestt.serve >/dev/null 2>&1 \
+      && ok "restarted com.local.voicestt.serve to run the newly built binary"
   fi
 }
 

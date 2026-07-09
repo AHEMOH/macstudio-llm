@@ -268,6 +268,19 @@ plain OpenAI-shaped HTTP) — it's served by the same `macos-speech-server` proc
 that backs the `stt` LiteLLM alias, just on a second port (`VOICE_WYOMING_PUBLIC_PORT`,
 default `10300`, fronted by its own always-on proxy `com.local.voicewyoming.proxy`).
 
+**Non-English languages (e.g. Russian) in the pipeline language picker:**
+Upstream `macos-speech-server` hardcodes "en" as the only language it ever
+advertises over Wyoming — for both the (actually multilingual, 25-language)
+Parakeet ASR model and every AVSpeechSynthesizer TTS voice, regardless of the
+voice's real locale. `setup.sh` applies a local patch
+(`patches/macos-speech-server-wyoming-languages.patch`, auto-applied by
+`ensure_voice_project()` on every `--apply`) that fixes both — after which HA's
+pipeline language dropdown correctly offers Russian (and the other 24 Parakeet
+languages), and voices like Katya/Milena/Yuri show up tagged `ru`. If a fresh
+`--apply` warns that the patch failed to apply (e.g. after an upstream update
+changes the patched lines), the integration still works — the language picker
+just falls back to English-only until the patch is refreshed.
+
 **Adding the integration in Home Assistant** (manual — no auto-discovery):
 
 1. **Settings → Devices & Services → Add Integration**
