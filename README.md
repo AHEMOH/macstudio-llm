@@ -43,9 +43,13 @@ raise a couple of config keys.
   Neural Engine (measured to cause zero slowdown of the main model — the ANE is
   separate silicon from the GPU) and `tts` alias via macOS's own `say`/
   AVSpeechSynthesizer. Point any OpenAI-compatible client (e.g. Open WebUI) at the
-  gateway's `stt`/`tts` models for voice input/output. See
-  [INTEGRATIONS.md](INTEGRATIONS.md#open-webui) for client setup, including a
-  one-time manual step to install a higher-quality system voice.
+  gateway's `stt`/`tts` models for voice input/output, **or** add Home Assistant's
+  native **Wyoming protocol** integration (:10300) for a fully on-device Assist
+  voice pipeline — one port, auto-discovered as both STT and TTS. See
+  [INTEGRATIONS.md](INTEGRATIONS.md#open-webui) for Open WebUI, and
+  [INTEGRATIONS.md](INTEGRATIONS.md#home-assistant-voice-assistant-wyoming) for
+  Home Assistant, including a one-time manual step to install a higher-quality
+  system voice.
 - **Model catalog + `llm-models` TUI**: download pre-converted MLX models from
   HuggingFace, pick the active text / embed / rerank model, manage
   your HF token. Only fully-downloaded models become selectable.
@@ -407,6 +411,7 @@ use the menu) to change a live box.
 | `VOICETTS_PUBLIC_PORT` / `VOICETTS_BACKEND_PORT` | `5007` / `15007` | Text-to-Speech ports (proxy / backend) |
 | `IDLE_TIMEOUT_VOICETTS` / `STARTUP_TIMEOUT_VOICETTS` | `900` / `60` | TTS idle-to-sleep / wake-deadline seconds |
 | `VOICE_TTS_DEFAULT_VOICE` | `Katya (Enhanced)` | macOS voice `say` uses when a request omits one — **requires a one-time manual install**, see [INTEGRATIONS.md](INTEGRATIONS.md#open-webui) |
+| `VOICE_WYOMING_PUBLIC_PORT` / `VOICE_WYOMING_BACKEND_PORT` | `10300` / `15008` | Home Assistant Wyoming-protocol voice pipeline ports (proxy / backend) — see [INTEGRATIONS.md](INTEGRATIONS.md#home-assistant-voice-assistant-wyoming) |
 | `INSTALL_MQTT` | `0` | MQTT bridge → Home Assistant — **off by default** |
 | `MQTT_HOST` / `MQTT_PORT` | `mqtt.home.arpa` / `1883` | Broker (empty host = bridge idles) |
 | `MQTT_USER` / `MQTT_PASS` | _(empty)_ | Broker auth (plaintext in the 644 conf) |
@@ -564,7 +569,8 @@ On the Mac after `--apply`:
 log this tool installed — the daemons are `com.local.mlxvlm.main`,
 `com.local.litellm.proxy`,
 `com.local.infinity.{proxy,serve}`, `com.local.voicestt.{proxy,serve}`,
-`com.local.voicetts.{proxy,serve}`, `com.local.immich.{proxy,ml}`,
+`com.local.voicetts.{proxy,serve}`, `com.local.voicewyoming.proxy`,
+`com.local.immich.{proxy,ml}`,
 `com.local.docling.{proxy,serve}`, `com.local.node.exporter`,
 `com.local.silicon.exporter`, `com.local.ondemand.exporter`,
 `com.local.llm.watchdog`,

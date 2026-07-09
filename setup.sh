@@ -35,6 +35,7 @@ ALWAYS_ON_LABELS=(
   com.local.images.proxy
   com.local.voicestt.proxy
   com.local.voicetts.proxy
+  com.local.voicewyoming.proxy
   com.local.immich.proxy
   com.local.docling.proxy
   com.local.node.exporter
@@ -125,6 +126,8 @@ CONFIG_KEYS=(
   IDLE_TIMEOUT_VOICETTS
   STARTUP_TIMEOUT_VOICETTS
   VOICE_TTS_DEFAULT_VOICE
+  VOICE_WYOMING_PUBLIC_PORT
+  VOICE_WYOMING_BACKEND_PORT
   ML_PUBLIC_PORT
   ML_BACKEND_PORT
   DOCLING_PUBLIC_PORT
@@ -253,13 +256,15 @@ config_default() {
     VOICE_PROJECT_DIR)           echo /Users/mac/projects/macos-speech-server ;;
     VOICESTT_PUBLIC_PORT)        echo 5006 ;;
     VOICESTT_BACKEND_PORT)       echo 15006 ;;
-    IDLE_TIMEOUT_VOICESTT)       echo 900 ;;
+    IDLE_TIMEOUT_VOICESTT)       echo -1 ;;
     STARTUP_TIMEOUT_VOICESTT)    echo 60 ;;
     VOICETTS_PUBLIC_PORT)        echo 5007 ;;
     VOICETTS_BACKEND_PORT)       echo 15007 ;;
     IDLE_TIMEOUT_VOICETTS)       echo 900 ;;
     STARTUP_TIMEOUT_VOICETTS)    echo 60 ;;
     VOICE_TTS_DEFAULT_VOICE)     echo "Katya (Enhanced)" ;;
+    VOICE_WYOMING_PUBLIC_PORT)   echo 10300 ;;
+    VOICE_WYOMING_BACKEND_PORT)  echo 15008 ;;
     ML_PUBLIC_PORT)              echo 3003 ;;
     ML_BACKEND_PORT)             echo 13003 ;;
     DOCLING_PUBLIC_PORT)         echo 5001 ;;
@@ -381,13 +386,15 @@ config_hint() {
     VOICE_PROJECT_DIR)           echo "Where ensure_voice_project() clones+builds FluidAudio's macos-speech-server (git clone + swift build -c release, one-time during --apply, several minutes)" ;;
     VOICESTT_PUBLIC_PORT)        echo "Public on-demand-proxy port for the Speech-to-Text backend (default 5006)" ;;
     VOICESTT_BACKEND_PORT)       echo "Internal port the speech-server binary binds (127.0.0.1 only, default 15006)" ;;
-    IDLE_TIMEOUT_VOICESTT)       echo "Seconds before the STT backend sleeps (default 900); -1 = never sleep. The Parakeet model stays resident once woken (~200MB), unlike the images backend" ;;
+    IDLE_TIMEOUT_VOICESTT)       echo "Seconds before the STT backend sleeps; default -1 = never sleep. Deliberately kept warm — this backend is shared by TWO independent on-demand proxies (com.local.voicestt.proxy for LiteLLM's 'stt' HTTP alias, com.local.voicewyoming.proxy for Home Assistant), and letting either one auto-sleep it would fight the other's wake cycle. Small footprint either way (~200MB Parakeet model)" ;;
     STARTUP_TIMEOUT_VOICESTT)    echo "Seconds the proxy waits for the STT backend to report healthy after waking (default 60)" ;;
     VOICETTS_PUBLIC_PORT)        echo "Public on-demand-proxy port for the Text-to-Speech backend (default 5007)" ;;
     VOICETTS_BACKEND_PORT)       echo "Internal port say-tts-server.py binds (127.0.0.1 only, default 15007)" ;;
     IDLE_TIMEOUT_VOICETTS)       echo "Seconds before the TTS backend sleeps (default 900); -1 = never sleep. Near-zero idle cost either way — say-tts-server.py holds no model in memory between requests" ;;
     STARTUP_TIMEOUT_VOICETTS)    echo "Seconds the proxy waits for the TTS backend to report healthy after waking (default 60 — fast, 'say' needs no model load)" ;;
-    VOICE_TTS_DEFAULT_VOICE)     echo "macOS voice name passed to 'say' when a request omits 'voice' (default 'Katya (Enhanced)' — Russian, chosen 2026-07 in an A/B listening test). NOT installed on a fresh macOS and has no headless install path — see CLAUDE.md/INTEGRATIONS.md for the one-time manual System Settings > Accessibility > VoiceOver > Open VoiceOver Utility > Speech > Voices step. Falls back to whatever 'say -v <name>' recognizes; already-installed voices (e.g. plain 'Milena') work with zero setup" ;;
+    VOICE_TTS_DEFAULT_VOICE)     echo "macOS voice name passed to 'say' when a request omits 'voice' (default 'Katya (Enhanced)' — Russian, chosen 2026-07 in an A/B listening test). Also used as the Wyoming/Home-Assistant TTS voice (avspeech.default_voice in speech-server.yaml). NOT installed on a fresh macOS and has no headless install path — see CLAUDE.md/INTEGRATIONS.md for the one-time manual System Settings > Accessibility > VoiceOver > Open VoiceOver Utility > Speech > Voices step. Falls back to whatever 'say -v <name>' recognizes; already-installed voices (e.g. plain 'Milena') work with zero setup" ;;
+    VOICE_WYOMING_PUBLIC_PORT)   echo "Public port for Home Assistant's native Wyoming-protocol voice integration (default 10300, the Wyoming ecosystem convention) — one port carries BOTH STT and TTS, auto-discovered by HA. Shares the SAME backend as 'stt' (com.local.voicestt.serve), just a second proxy in front of it" ;;
+    VOICE_WYOMING_BACKEND_PORT)  echo "Internal Wyoming port the speech-server binary binds (127.0.0.1 only, default 15008)" ;;
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
     AUTOUPDATE_WEEKDAY)          echo "launchd weekday: 0=Sun 1=Mon … 6=Sat" ;;
@@ -624,7 +631,7 @@ load_config() {
         [ "${INSTALL_EMBED:-1}" = 1 ] || continue ;;
       com.local.images.*)
         [ "${INSTALL_IMAGES:-0}" = 1 ] || continue ;;
-      com.local.voicestt.*|com.local.voicetts.*)
+      com.local.voicestt.*|com.local.voicetts.*|com.local.voicewyoming.*)
         [ "${INSTALL_VOICE:-0}" = 1 ] || continue ;;
       com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || continue ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || continue ;;
@@ -682,6 +689,7 @@ label_log() {
     com.local.voicestt.serve)    echo "$LOG_DIR/voicestt-serve.log" ;;
     com.local.voicetts.proxy)    echo "$LOG_DIR/voicetts-proxy.log" ;;
     com.local.voicetts.serve)    echo "$LOG_DIR/voicetts-serve.log" ;;
+    com.local.voicewyoming.proxy) echo "$LOG_DIR/voicewyoming-proxy.log" ;;
     com.local.immich.proxy)      echo "$LOG_DIR/immich-proxy.log" ;;
     com.local.immich.ml)         echo "$LOG_DIR/immich-ml.log" ;;
     com.local.docling.proxy)     echo "$LOG_DIR/docling-proxy.log" ;;
@@ -1290,6 +1298,7 @@ ensure_voice_project() {
   [ "${INSTALL_VOICE:-0}" = 1 ] || return 0
   local dir="${VOICE_PROJECT_DIR:-/Users/mac/projects/macos-speech-server}"
   local port="${VOICESTT_BACKEND_PORT:-15006}"
+  local wport="${VOICE_WYOMING_BACKEND_PORT:-15008}"
 
   if [ ! -d "$dir/.git" ]; then
     if [ ! -x /usr/bin/git ]; then
@@ -1310,12 +1319,19 @@ ensure_voice_project() {
       || warn "git pull for macos-speech-server failed (continuing with existing checkout); see $LOG_DIR/voicestt-clone.log"
   fi
 
-  # Minimal config: only STT (parakeet) is actually served by LiteLLM's 'stt'
-  # alias; the 'tts' stanza is required by the schema but unused here — points
-  # at the always-present bundled voice so startup never depends on a
-  # manually-downloaded voice asset (see VOICE_TTS_DEFAULT_VOICE for the real,
-  # user-facing TTS voice choice, which is handled entirely by
-  # say-tts-server.py instead).
+  # Two independent consumers share this ONE backend process now:
+  # - LiteLLM's 'stt' alias (OpenWebUI etc.) via the HTTP port ($port),
+  #   fronted by com.local.voicestt.proxy.
+  # - Home Assistant's native Wyoming integration via the Wyoming port
+  #   ($wport), fronted by the SEPARATE com.local.voicewyoming.proxy (same
+  #   BACKEND_LABEL=com.local.voicestt.serve — one Wyoming TCP port carries
+  #   BOTH STT and TTS for HA, auto-discovered; see INTEGRATIONS.md).
+  # The 'tts' stanza's avspeech engine is what HA's Wyoming TTS actually
+  # uses (unlike LiteLLM's 'tts' alias, which bypasses it — see
+  # wrappers/start-voicetts.sh) — pointed at the same VOICE_TTS_DEFAULT_VOICE
+  # for consistency. Its sentence-concatenation silence-dropping bug (see
+  # CLAUDE.md) only matters for multi-sentence input; HA voice-assistant
+  # replies are typically one short sentence, so it's a non-issue here.
   cat >"$dir/speech-server.yaml" <<YAML
 log_level: notice
 servers:
@@ -1324,7 +1340,7 @@ servers:
     port: $port
   wyoming:
     host: 127.0.0.1
-    port: 0
+    port: $wport
 stt:
   engine: parakeet
   parakeet:
@@ -1332,7 +1348,7 @@ stt:
 tts:
   engine: avspeech
   avspeech:
-    default_voice: Milena
+    default_voice: ${VOICE_TTS_DEFAULT_VOICE:-Katya (Enhanced)}
 YAML
   /bin/chmod 644 "$dir/speech-server.yaml"
 
@@ -1642,11 +1658,15 @@ render_all_plists() {
         # independent (see CLAUDE.md) — fronted through LiteLLM's 'image' alias
         # like main, not through Infinity's provider-specific routing.
         [ "${INSTALL_IMAGES:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
-      com.local.voicestt.*|com.local.voicetts.*)
+      com.local.voicestt.*|com.local.voicetts.*|com.local.voicewyoming.*)
         # On-demand Speech-to-Text (FluidAudio/Parakeet, ANE) + Text-to-Speech
         # (plain `say`) — two separate backends fronted through LiteLLM's
         # 'stt'/'tts' aliases like 'image', not through Infinity's
         # provider-specific routing. Catalog-independent (see CLAUDE.md).
+        # com.local.voicewyoming.proxy is a THIRD proxy in front of the SAME
+        # voicestt.serve backend (no separate .serve daemon) — native Home
+        # Assistant voice-pipeline integration (Wyoming protocol carries both
+        # STT and TTS on one port).
         [ "${INSTALL_VOICE:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;

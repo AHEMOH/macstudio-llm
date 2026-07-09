@@ -254,6 +254,51 @@ a local display — the JSON keys above are the contract.
 
 ---
 
+## Home Assistant Voice Assistant (Wyoming)
+
+Separate from the MQTT bridge above — this gives Home Assistant's **Assist** voice
+pipeline on-device Speech-to-Text and Text-to-Speech, running on the Mac's Apple
+Neural Engine. Requires `INSTALL_VOICE=1` (same flag as the Open WebUI STT/TTS setup
+below — this reuses the same backend, just adds a second entry point for it).
+
+Home Assistant speaks the [Wyoming protocol](https://www.home-assistant.io/integrations/wyoming/)
+for local voice pipelines — a single TCP port that HA auto-discovers as *both* an STT
+and a TTS provider. This is a **different protocol from Open WebUI's** (which uses
+plain OpenAI-shaped HTTP) — it's served by the same `macos-speech-server` process
+that backs the `stt` LiteLLM alias, just on a second port (`VOICE_WYOMING_PUBLIC_PORT`,
+default `10300`, fronted by its own always-on proxy `com.local.voicewyoming.proxy`).
+
+**Adding the integration in Home Assistant** (manual — no auto-discovery):
+
+1. **Settings → Devices & Services → Add Integration**
+2. Search for **Wyoming Protocol**
+3. Host: the Mac's IP/hostname (`mac.home.arpa`); Port: `10300`
+4. Home Assistant discovers both an STT and a TTS entity on that one connection
+
+**Using it in a voice pipeline:** Settings → Voice assistants → (create or edit a
+pipeline) → set **Speech-to-text** and **Text-to-speech** to the newly discovered
+`macos-speech-server` entities. Pick a **Conversation agent** separately (this repo
+doesn't wire one up automatically — HA's built-in "OpenAI Conversation" integration
+can point at `main-fast` via the same gateway if you want the Mac's LLM as the
+assistant's brain, but that's a separate, unconfigured step).
+
+**TTS voice for Home Assistant** comes from `speech-server.yaml`'s
+`tts.avspeech.default_voice`, which `ensure_voice_project()` sets to
+`VOICE_TTS_DEFAULT_VOICE` (same voice as Open WebUI's `tts` alias, e.g.
+`Katya (Enhanced)` — see the manual voice-install step below if not chosen yet).
+Note this path goes through `macos-speech-server`'s own bundled AVSpeechSynthesizer
+engine (not the `say`-based backend used for Open WebUI) — its one known quirk (a
+small dropped silence between sentences when concatenating multi-sentence text) is
+a non-issue here, since HA voice-assistant replies are almost always one short
+sentence.
+
+**Network note:** Home Assistant normally runs on a separate device — the Wyoming
+port is fronted by an on-demand proxy that listens on all interfaces
+(`0.0.0.0:10300`), same as every other public port in this stack, so it's reachable
+from HA out of the box as long as both are on the same LAN.
+
+---
+
 ## Open WebUI
 
 **Settings → Connections → OpenAI API**:
