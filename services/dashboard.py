@@ -93,6 +93,10 @@ SERVICES = [
     ("com.local.infinity.serve",    "Embed/Rerank Backend",        "ondemand"),
     ("com.local.images.proxy",      "Image-Gen Proxy",             "always"),
     ("com.local.images.serve",      "Image-Gen Backend (FLUX)",    "ondemand"),
+    ("com.local.voicestt.proxy",    "Sprache-Erkennung Proxy",     "always"),
+    ("com.local.voicestt.serve",    "Sprache-Erkennung Backend (Parakeet)", "ondemand"),
+    ("com.local.voicetts.proxy",    "Sprachausgabe Proxy",         "always"),
+    ("com.local.voicetts.serve",    "Sprachausgabe Backend (say)", "ondemand"),
     ("com.local.immich.proxy",      "immich-ml Proxy",             "always"),
     ("com.local.immich.ml",         "immich-ml Backend",           "ondemand"),
     ("com.local.docling.proxy",     "docling Proxy",               "always"),
@@ -125,6 +129,10 @@ LABEL_LOG = {
     "com.local.infinity.serve": "infinity-serve.log",
     "com.local.images.proxy": "images-proxy.log",
     "com.local.images.serve": "images-serve.log",
+    "com.local.voicestt.proxy": "voicestt-proxy.log",
+    "com.local.voicestt.serve": "voicestt-serve.log",
+    "com.local.voicetts.proxy": "voicetts-proxy.log",
+    "com.local.voicetts.serve": "voicetts-serve.log",
     "com.local.immich.proxy": "immich-proxy.log",
     "com.local.immich.ml": "immich-ml.log",
     "com.local.docling.proxy": "docling-proxy.log",
@@ -213,6 +221,8 @@ def active_labels():
             keep = c.get("INSTALL_EMBED", "1") == "1"
         elif lbl.startswith("com.local.images."):
             keep = c.get("INSTALL_IMAGES", "0") == "1"
+        elif lbl.startswith("com.local.voicestt.") or lbl.startswith("com.local.voicetts."):
+            keep = c.get("INSTALL_VOICE", "0") == "1"
         elif lbl.startswith("com.local.immich."):
             keep = c.get("INSTALL_IMMICH", "1") == "1"
         elif lbl.startswith("com.local.docling."):
@@ -805,6 +815,9 @@ def api_status():
             "rerank": c.get("ALIAS_RERANK", ""),
             "image": (f'{c.get("MFLUX_MODEL", "dev")}-q{c.get("MFLUX_QUANTIZE", "8")}'
                       if c.get("INSTALL_IMAGES", "0") == "1" else ""),
+            "stt": ("parakeet" if c.get("INSTALL_VOICE", "0") == "1" else ""),
+            "tts": (c.get("VOICE_TTS_DEFAULT_VOICE", "")
+                    if c.get("INSTALL_VOICE", "0") == "1" else ""),
         },
         "gateway_up": tcp_listening(c.get("LITELLM_PORT", "11434") or "11434"),
         "gateway_port": c.get("LITELLM_PORT", "11434"),
@@ -922,6 +935,8 @@ def api_links():
         "docling_port": port("DOCLING_PUBLIC_PORT", 5001) if c.get("INSTALL_DOCLING", "1") == "1" else 0,
         "infinity_port": port("INFINITY_PUBLIC_PORT", 5004) if c.get("INSTALL_EMBED", "1") == "1" else 0,
         "images_port": port("IMAGES_PUBLIC_PORT", 5005) if c.get("INSTALL_IMAGES", "0") == "1" else 0,
+        "voicestt_port": port("VOICESTT_PUBLIC_PORT", 5006) if c.get("INSTALL_VOICE", "0") == "1" else 0,
+        "voicetts_port": port("VOICETTS_PUBLIC_PORT", 5007) if c.get("INSTALL_VOICE", "0") == "1" else 0,
         "vnc_enabled": c.get("INSTALL_REMOTE", "1") == "1",
         "vnc_filter_port": port("VNC_FILTER_PORT", 5901) if c.get("INSTALL_REMOTE", "1") == "1" else 0,
         "novnc_port": port("NOVNC_PORT", 6080) if (c.get("INSTALL_REMOTE", "1") == "1" and c.get("INSTALL_NOVNC", "1") == "1") else 0,

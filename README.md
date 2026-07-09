@@ -38,6 +38,14 @@ raise a couple of config keys.
   process, on-demand on :5004. Both small (~2 GB each) — they are the only on-demand
   extra that co-resides with the big main. Reachable via LiteLLM `/v1/embeddings` and
   `/v1/rerank`.
+- **Voice: Speech-to-Text + Text-to-Speech** (opt-in `INSTALL_VOICE=1`, off by
+  default): `stt` alias via **FluidAudio's Parakeet** model running on the Apple
+  Neural Engine (measured to cause zero slowdown of the main model — the ANE is
+  separate silicon from the GPU) and `tts` alias via macOS's own `say`/
+  AVSpeechSynthesizer. Point any OpenAI-compatible client (e.g. Open WebUI) at the
+  gateway's `stt`/`tts` models for voice input/output. See
+  [INTEGRATIONS.md](INTEGRATIONS.md#open-webui) for client setup, including a
+  one-time manual step to install a higher-quality system voice.
 - **Model catalog + `llm-models` TUI**: download pre-converted MLX models from
   HuggingFace, pick the active text / embed / rerank model, manage
   your HF token. Only fully-downloaded models become selectable.
@@ -392,6 +400,13 @@ use the menu) to change a live box.
 | `INSTALL_IMMICH` / `INSTALL_DOCLING` / `INSTALL_TUI` / `INSTALL_WATCHDOG` | `1` | Toggle optional pieces |
 | `INSTALL_EXPORTERS` | `0` | Prometheus exporters — **off by default** |
 | `INSTALL_EMBED` | `1` | BGE embeddings + reranker via Infinity (`embed`/`rerank` aliases) — on by default |
+| `INSTALL_VOICE` | `0` | Speech-to-Text (`stt`) + Text-to-Speech (`tts`) — **off by default** |
+| `VOICE_PROJECT_DIR` | `/Users/mac/projects/macos-speech-server` | Where FluidAudio's `macos-speech-server` is cloned+built |
+| `VOICESTT_PUBLIC_PORT` / `VOICESTT_BACKEND_PORT` | `5006` / `15006` | Speech-to-Text ports (proxy / backend) |
+| `IDLE_TIMEOUT_VOICESTT` / `STARTUP_TIMEOUT_VOICESTT` | `900` / `60` | STT idle-to-sleep / wake-deadline seconds |
+| `VOICETTS_PUBLIC_PORT` / `VOICETTS_BACKEND_PORT` | `5007` / `15007` | Text-to-Speech ports (proxy / backend) |
+| `IDLE_TIMEOUT_VOICETTS` / `STARTUP_TIMEOUT_VOICETTS` | `900` / `60` | TTS idle-to-sleep / wake-deadline seconds |
+| `VOICE_TTS_DEFAULT_VOICE` | `Katya (Enhanced)` | macOS voice `say` uses when a request omits one — **requires a one-time manual install**, see [INTEGRATIONS.md](INTEGRATIONS.md#open-webui) |
 | `INSTALL_MQTT` | `0` | MQTT bridge → Home Assistant — **off by default** |
 | `MQTT_HOST` / `MQTT_PORT` | `mqtt.home.arpa` / `1883` | Broker (empty host = bridge idles) |
 | `MQTT_USER` / `MQTT_PASS` | _(empty)_ | Broker auth (plaintext in the 644 conf) |
@@ -425,7 +440,7 @@ broke a loaded model).
 | `llm-models` | Model & alias manager (download, pick main/embed/rerank, HF token) |
 | `llm-restart [name\|all]` | Restart one or all services |
 | `llm-update` | Run the weekly autoupdate job now |
-| `llm-service-ctl wake\|sleep\|status infinity\|immich\|docling\|all` | Manual on-demand override |
+| `llm-service-ctl wake\|sleep\|status infinity\|immich\|docling\|voicestt\|voicetts\|all` | Manual on-demand override |
 | `llm-logs [name]` | `tail -F` a service log (`mlxvlm-main`, `litellm`, `infinity-serve`, …) |
 | `sudo mactop` / `sudo macmon` | Live Apple-Silicon TUIs |
 
@@ -548,15 +563,17 @@ On the Mac after `--apply`:
 `sudo bash setup.sh` → menu 9. Removes every plist, wrapper, script, config and
 log this tool installed — the daemons are `com.local.mlxvlm.main`,
 `com.local.litellm.proxy`,
-`com.local.infinity.{proxy,serve}`, `com.local.immich.{proxy,ml}`,
+`com.local.infinity.{proxy,serve}`, `com.local.voicestt.{proxy,serve}`,
+`com.local.voicetts.{proxy,serve}`, `com.local.immich.{proxy,ml}`,
 `com.local.docling.{proxy,serve}`, `com.local.node.exporter`,
 `com.local.silicon.exporter`, `com.local.ondemand.exporter`,
 `com.local.llm.watchdog`,
 `com.local.preventsleep`, `com.local.iogpu.wiredlimit`,
 `com.local.weekly.autoupdate`, `com.local.mqtt.bridge`, `com.local.dashboard`,
 `com.local.vncfilter`, `com.local.novnc` and `com.local.paperless.ocr`.
-**Keeps** the Python venvs (`$VENV_DIR`) and the HuggingFace model cache — delete
-those by hand to reclaim disk.
+**Keeps** the Python venvs (`$VENV_DIR`), the HuggingFace model cache, and (if Voice
+was installed) the cloned+built `macos-speech-server` at `$VOICE_PROJECT_DIR` —
+delete those by hand to reclaim disk.
 
 ## Credits / license
 

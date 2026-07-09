@@ -33,6 +33,8 @@ ALWAYS_ON_LABELS=(
   com.local.litellm.proxy
   com.local.infinity.proxy
   com.local.images.proxy
+  com.local.voicestt.proxy
+  com.local.voicetts.proxy
   com.local.immich.proxy
   com.local.docling.proxy
   com.local.node.exporter
@@ -52,6 +54,8 @@ ALWAYS_ON_LABELS=(
 ONDEMAND_LABELS=(
   com.local.infinity.serve
   com.local.images.serve
+  com.local.voicestt.serve
+  com.local.voicetts.serve
   com.local.immich.ml
   com.local.docling.serve
 )
@@ -110,6 +114,17 @@ CONFIG_KEYS=(
   MFLUX_QUANTIZE
   MFLUX_STEPS
   MFLUX_MODEL_DIR
+  INSTALL_VOICE
+  VOICE_PROJECT_DIR
+  VOICESTT_PUBLIC_PORT
+  VOICESTT_BACKEND_PORT
+  IDLE_TIMEOUT_VOICESTT
+  STARTUP_TIMEOUT_VOICESTT
+  VOICETTS_PUBLIC_PORT
+  VOICETTS_BACKEND_PORT
+  IDLE_TIMEOUT_VOICETTS
+  STARTUP_TIMEOUT_VOICETTS
+  VOICE_TTS_DEFAULT_VOICE
   ML_PUBLIC_PORT
   ML_BACKEND_PORT
   DOCLING_PUBLIC_PORT
@@ -234,6 +249,17 @@ config_default() {
     MFLUX_QUANTIZE)              echo 8 ;;
     MFLUX_STEPS)                 echo "" ;;
     MFLUX_MODEL_DIR)             echo /Users/mac/.cache/mflux-models ;;
+    INSTALL_VOICE)               echo 0 ;;
+    VOICE_PROJECT_DIR)           echo /Users/mac/projects/macos-speech-server ;;
+    VOICESTT_PUBLIC_PORT)        echo 5006 ;;
+    VOICESTT_BACKEND_PORT)       echo 15006 ;;
+    IDLE_TIMEOUT_VOICESTT)       echo 900 ;;
+    STARTUP_TIMEOUT_VOICESTT)    echo 60 ;;
+    VOICETTS_PUBLIC_PORT)        echo 5007 ;;
+    VOICETTS_BACKEND_PORT)       echo 15007 ;;
+    IDLE_TIMEOUT_VOICETTS)       echo 900 ;;
+    STARTUP_TIMEOUT_VOICETTS)    echo 60 ;;
+    VOICE_TTS_DEFAULT_VOICE)     echo "Katya (Enhanced)" ;;
     ML_PUBLIC_PORT)              echo 3003 ;;
     ML_BACKEND_PORT)             echo 13003 ;;
     DOCLING_PUBLIC_PORT)         echo 5001 ;;
@@ -351,6 +377,17 @@ config_hint() {
     MFLUX_QUANTIZE)              echo "mflux quantization bits: 3,4,5,6, or 8. Lower = smaller/faster/safer alongside main, higher = closer to full bf16 quality. See MFLUX_MODEL hint for the 4 vs 8 bit measurements" ;;
     MFLUX_STEPS)                 echo "Inference steps per image; empty = model default (schnell=4, dev=20)" ;;
     MFLUX_MODEL_DIR)             echo "Where ensure_mflux_model() saves the pre-quantized checkpoint (mflux-save, one-time during --apply). Subdirectory name is <MFLUX_MODEL>-q<MFLUX_QUANTIZE>" ;;
+    INSTALL_VOICE)               echo "1 = run two on-demand voice backends exposed via LiteLLM as 'stt'/'tts' aliases for OpenWebUI's native voice input/output: Speech-to-Text via FluidAudio's macos-speech-server (Parakeet, Apple Neural Engine — measured zero GPU contention with the resident main LLM) and Text-to-Speech via macOS's own 'say' (faster and bug-free vs. macos-speech-server's bundled TTS, see CLAUDE.md). Opt-in (default 0) — NOT part of the model catalog, same reasoning as INSTALL_IMAGES" ;;
+    VOICE_PROJECT_DIR)           echo "Where ensure_voice_project() clones+builds FluidAudio's macos-speech-server (git clone + swift build -c release, one-time during --apply, several minutes)" ;;
+    VOICESTT_PUBLIC_PORT)        echo "Public on-demand-proxy port for the Speech-to-Text backend (default 5006)" ;;
+    VOICESTT_BACKEND_PORT)       echo "Internal port the speech-server binary binds (127.0.0.1 only, default 15006)" ;;
+    IDLE_TIMEOUT_VOICESTT)       echo "Seconds before the STT backend sleeps (default 900); -1 = never sleep. The Parakeet model stays resident once woken (~200MB), unlike the images backend" ;;
+    STARTUP_TIMEOUT_VOICESTT)    echo "Seconds the proxy waits for the STT backend to report healthy after waking (default 60)" ;;
+    VOICETTS_PUBLIC_PORT)        echo "Public on-demand-proxy port for the Text-to-Speech backend (default 5007)" ;;
+    VOICETTS_BACKEND_PORT)       echo "Internal port say-tts-server.py binds (127.0.0.1 only, default 15007)" ;;
+    IDLE_TIMEOUT_VOICETTS)       echo "Seconds before the TTS backend sleeps (default 900); -1 = never sleep. Near-zero idle cost either way — say-tts-server.py holds no model in memory between requests" ;;
+    STARTUP_TIMEOUT_VOICETTS)    echo "Seconds the proxy waits for the TTS backend to report healthy after waking (default 60 — fast, 'say' needs no model load)" ;;
+    VOICE_TTS_DEFAULT_VOICE)     echo "macOS voice name passed to 'say' when a request omits 'voice' (default 'Katya (Enhanced)' — Russian, chosen 2026-07 in an A/B listening test). NOT installed on a fresh macOS and has no headless install path — see CLAUDE.md/INTEGRATIONS.md for the one-time manual System Settings > Accessibility > VoiceOver > Open VoiceOver Utility > Speech > Voices step. Falls back to whatever 'say -v <name>' recognizes; already-installed voices (e.g. plain 'Milena') work with zero setup" ;;
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
     AUTOUPDATE_WEEKDAY)          echo "launchd weekday: 0=Sun 1=Mon … 6=Sat" ;;
@@ -587,6 +624,8 @@ load_config() {
         [ "${INSTALL_EMBED:-1}" = 1 ] || continue ;;
       com.local.images.*)
         [ "${INSTALL_IMAGES:-0}" = 1 ] || continue ;;
+      com.local.voicestt.*|com.local.voicetts.*)
+        [ "${INSTALL_VOICE:-0}" = 1 ] || continue ;;
       com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || continue ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || continue ;;
       com.local.node.exporter|com.local.silicon.exporter|com.local.ondemand.exporter)
@@ -639,6 +678,10 @@ label_log() {
     com.local.infinity.serve)    echo "$LOG_DIR/infinity-serve.log" ;;
     com.local.images.proxy)      echo "$LOG_DIR/images-proxy.log" ;;
     com.local.images.serve)      echo "$LOG_DIR/images-serve.log" ;;
+    com.local.voicestt.proxy)    echo "$LOG_DIR/voicestt-proxy.log" ;;
+    com.local.voicestt.serve)    echo "$LOG_DIR/voicestt-serve.log" ;;
+    com.local.voicetts.proxy)    echo "$LOG_DIR/voicetts-proxy.log" ;;
+    com.local.voicetts.serve)    echo "$LOG_DIR/voicetts-serve.log" ;;
     com.local.immich.proxy)      echo "$LOG_DIR/immich-proxy.log" ;;
     com.local.immich.ml)         echo "$LOG_DIR/immich-ml.log" ;;
     com.local.docling.proxy)     echo "$LOG_DIR/docling-proxy.log" ;;
@@ -820,6 +863,11 @@ ensure_formulas() {
   if [ "${INSTALL_TUI:-1}" = 1 ] || [ "${INSTALL_EXPORTERS:-1}" = 1 ]; then
     ensure_formula macmon
   fi
+  # Optional for the TTS backend: only needed if a client requests a
+  # response_format afconvert can't produce (mp3/opus/aac/flac) — wav/aiff
+  # work with zero extra dependencies. say-tts-server.py degrades gracefully
+  # (501 with a clear message) if this is missing.
+  [ "${INSTALL_VOICE:-0}" = 1 ] && ensure_formula ffmpeg
 }
 
 ensure_modern_python() {
@@ -1229,6 +1277,83 @@ ensure_mflux_model() {
   fi
 }
 
+ensure_voice_project() {
+  # Clones+builds FluidAudio's macos-speech-server (Swift) for Speech-to-Text
+  # (Parakeet, Apple Neural Engine — measured zero GPU contention with the
+  # resident main LLM, see CLAUDE.md). First "clone an external git repo and
+  # build it" pattern in this repo — immich-ml/docling-serve are pip-based or
+  # user-provided, not a fresh git clone, so there's no prior helper to reuse.
+  # Only STT is served from here: TTS goes through wrappers/start-voicetts.sh
+  # (plain `say`) instead of this project's bundled avspeech TTS engine — see
+  # that wrapper's comment for why (faster, and avoids a real sentence-
+  # boundary silence-dropping bug).
+  [ "${INSTALL_VOICE:-0}" = 1 ] || return 0
+  local dir="${VOICE_PROJECT_DIR:-/Users/mac/projects/macos-speech-server}"
+  local port="${VOICESTT_BACKEND_PORT:-15006}"
+
+  if [ ! -d "$dir/.git" ]; then
+    if [ ! -x /usr/bin/git ]; then
+      warn "git not found; cannot clone macos-speech-server"
+      return 1
+    fi
+    log "cloning macos-speech-server -> $dir"
+    /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$(dirname "$dir")"
+    if ! /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git clone --depth 1 \
+          https://github.com/dokterbob/macos-speech-server "$dir" \
+          >"$LOG_DIR/voicestt-clone.log" 2>&1; then
+      warn "git clone of macos-speech-server failed; see $LOG_DIR/voicestt-clone.log"
+      return 1
+    fi
+  else
+    /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" pull --ff-only \
+      >"$LOG_DIR/voicestt-clone.log" 2>&1 \
+      || warn "git pull for macos-speech-server failed (continuing with existing checkout); see $LOG_DIR/voicestt-clone.log"
+  fi
+
+  # Minimal config: only STT (parakeet) is actually served by LiteLLM's 'stt'
+  # alias; the 'tts' stanza is required by the schema but unused here — points
+  # at the always-present bundled voice so startup never depends on a
+  # manually-downloaded voice asset (see VOICE_TTS_DEFAULT_VOICE for the real,
+  # user-facing TTS voice choice, which is handled entirely by
+  # say-tts-server.py instead).
+  cat >"$dir/speech-server.yaml" <<YAML
+log_level: notice
+servers:
+  http:
+    host: 127.0.0.1
+    port: $port
+  wyoming:
+    host: 127.0.0.1
+    port: 0
+stt:
+  engine: parakeet
+  parakeet:
+    model_version: v3
+tts:
+  engine: avspeech
+  avspeech:
+    default_voice: Milena
+YAML
+  /bin/chmod 644 "$dir/speech-server.yaml"
+
+  if [ -x "$dir/.build/release/speech-server" ]; then
+    ok "macos-speech-server already built at $dir"
+    return 0
+  fi
+  if [ ! -x /usr/bin/swift ]; then
+    warn "Swift toolchain not found — install Xcode Command Line Tools: xcode-select --install"
+    return 1
+  fi
+  log "building macos-speech-server (swift build -c release; several minutes on first run)"
+  if /usr/bin/sudo -u "$TARGET_USER" -H /bin/sh -c "cd '$dir' && swift build -c release" \
+        >"$LOG_DIR/voicestt-build.log" 2>&1; then
+    ok "macos-speech-server built -> $dir/.build/release/speech-server"
+  else
+    warn "swift build failed for macos-speech-server; see $LOG_DIR/voicestt-build.log"
+    return 1
+  fi
+}
+
 catalog_schema_ver() {
   # Read the "# schema: N" header line; default 1 if absent.
   local v; v=$(/usr/bin/awk -F: '/^# schema:/{gsub(/[^0-9]/,"",$2); print $2; exit}' "$1" 2>/dev/null)
@@ -1360,6 +1485,28 @@ render_litellm_config() {
       printf '  - model_name: image\n    litellm_params:\n      model: openai/mflux-%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: image_generation\n' \
         "${MFLUX_MODEL:-dev}" "${IMAGES_PUBLIC_PORT:-5005}"
     fi
+    # Speech-to-Text via the on-demand FluidAudio backend (macos-speech-server,
+    # Parakeet engine, Apple Neural Engine — measured zero GPU contention with
+    # the resident main LLM, unlike a GPU/MLX-based alternative that was tried
+    # and rejected; see CLAUDE.md's "Voice" bullet). Same generic
+    # 'openai/<served-name>' provider as 'image' — the backend speaks OpenAI's
+    # /v1/audio/transcriptions shape directly and, unlike mflux-server.py,
+    # doesn't actually look at the 'model' field (engine choice is fixed by
+    # its own config, rendered by ensure_voice_project()).
+    if [ "${INSTALL_VOICE:-0}" = 1 ]; then
+      printf '  - model_name: stt\n    litellm_params:\n      model: openai/parakeet\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: audio_transcription\n' \
+        "${VOICESTT_PUBLIC_PORT:-5006}"
+    fi
+    # Text-to-Speech via the on-demand say-tts-server.py backend (plain
+    # `say`/AVSpeechSynthesizer, NOT macos-speech-server's bundled avspeech
+    # engine — measured faster and bug-free, see wrappers/start-voicetts.sh).
+    # VOICE_TTS_DEFAULT_VOICE is baked into that backend's own environment; a
+    # client can still override per-request with an explicit 'voice' field,
+    # which say-tts-server.py honors directly.
+    if [ "${INSTALL_VOICE:-0}" = 1 ]; then
+      printf '  - model_name: tts\n    litellm_params:\n      model: openai/say\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: audio_speech\n' \
+        "${VOICETTS_PUBLIC_PORT:-5007}"
+    fi
     # No separate 'vision' alias: the unified 'main' already does images, so the chat set
     # is intentionally main / main-fast (plus the embed / rerank / image utility aliases above).
     echo "litellm_settings:"
@@ -1377,7 +1524,7 @@ render_litellm_config() {
   fi
   /usr/bin/install -m 644 "$tmp" "$LITELLM_CONFIG_FILE"
   /bin/rm -f "$tmp"
-  ok "litellm config written → $LITELLM_CONFIG_FILE (main=${ALIAS_MAIN}, embed=${ALIAS_EMBED:-none}, rerank=${ALIAS_RERANK:-none}, image=$([ "${INSTALL_IMAGES:-0}" = 1 ] && echo "${MFLUX_MODEL:-dev}-q${MFLUX_QUANTIZE:-8}" || echo none))"
+  ok "litellm config written → $LITELLM_CONFIG_FILE (main=${ALIAS_MAIN}, embed=${ALIAS_EMBED:-none}, rerank=${ALIAS_RERANK:-none}, image=$([ "${INSTALL_IMAGES:-0}" = 1 ] && echo "${MFLUX_MODEL:-dev}-q${MFLUX_QUANTIZE:-8}" || echo none), voice=$([ "${INSTALL_VOICE:-0}" = 1 ] && echo "stt+tts (${VOICE_TTS_DEFAULT_VOICE:-default})" || echo none))"
   if daemon_loaded com.local.litellm.proxy; then
     /bin/launchctl kickstart -k system/com.local.litellm.proxy >/dev/null 2>&1 \
       && ok "restarted litellm to pick up new routing"
@@ -1486,6 +1633,12 @@ render_all_plists() {
         # independent (see CLAUDE.md) — fronted through LiteLLM's 'image' alias
         # like main, not through Infinity's provider-specific routing.
         [ "${INSTALL_IMAGES:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
+      com.local.voicestt.*|com.local.voicetts.*)
+        # On-demand Speech-to-Text (FluidAudio/Parakeet, ANE) + Text-to-Speech
+        # (plain `say`) — two separate backends fronted through LiteLLM's
+        # 'stt'/'tts' aliases like 'image', not through Infinity's
+        # provider-specific routing. Catalog-independent (see CLAUDE.md).
+        [ "${INSTALL_VOICE:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.node.exporter|com.local.silicon.exporter|com.local.ondemand.exporter)
@@ -1672,6 +1825,7 @@ apply_everything() {
   dbg "step: ensure_novnc_assets";     ensure_novnc_assets || true
   dbg "step: ensure_python_venvs";     ensure_python_venvs || true
   dbg "step: ensure_mflux_model";      ensure_mflux_model || true
+  dbg "step: ensure_voice_project";    ensure_voice_project || true
   dbg "step: ensure_model_catalog";    ensure_model_catalog
   dbg "step: render_wrappers";        render_wrappers
   dbg "step: render_services";        render_services

@@ -81,7 +81,13 @@ def health_ok() -> bool:
     try:
         with urllib.request.urlopen(HEALTH_URL, timeout=2) as r:
             return 200 <= r.status < 400
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ConnectionError):
+    except urllib.error.HTTPError:
+        # The backend answered over HTTP (even with an error status), which
+        # proves the process is up and serving — some backends (e.g.
+        # macos-speech-server) expose no dedicated health route at all, only
+        # POST-only endpoints that 404/405 on a plain GET.
+        return True
+    except (urllib.error.URLError, TimeoutError, ConnectionError):
         return False
     except Exception:
         return False
