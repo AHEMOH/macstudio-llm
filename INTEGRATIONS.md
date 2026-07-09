@@ -295,7 +295,13 @@ via environment variables:
   AUDIO_TTS_OPENAI_API_BASE_URL=http://mac.home.arpa:11434/v1
   AUDIO_TTS_OPENAI_API_KEY=sk-local
   AUDIO_TTS_MODEL=tts
-  AUDIO_TTS_VOICE=            # leave empty to use VOICE_TTS_DEFAULT_VOICE from the Mac
+  AUDIO_TTS_VOICE=Katya (Enhanced)   # MUST be set to something — LiteLLM's audio_speech
+                                      # routing requires a 'voice' field on every request
+                                      # and 500s if it's entirely missing (a client that
+                                      # sends an empty string is fine; one that omits the
+                                      # key isn't). Match whatever VOICE_TTS_DEFAULT_VOICE
+                                      # is set to on the Mac, or any voice already
+                                      # installed there (e.g. plain 'Milena', no setup).
   ```
 
 **One-time manual step on the Mac** for the best-sounding Russian voice: the default
