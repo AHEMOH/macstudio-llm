@@ -1,0 +1,70 @@
+diff --git a/Sources/speech-server/Services/AVSpeechTTSService.swift b/Sources/speech-server/Services/AVSpeechTTSService.swift
+index 5830351..2a5ddf8 100644
+--- a/Sources/speech-server/Services/AVSpeechTTSService.swift
++++ b/Sources/speech-server/Services/AVSpeechTTSService.swift
+@@ -20,6 +20,13 @@ final class AVSpeechTTSService: TTSService, Sendable {
+     let defaultVoice: String
+     let availableVoices: [String]
+
++    // Voice name -> short (ISO 639-1-ish) language code, e.g. "Katya (Enhanced)" -> "ru".
++    // Used only to advertise real per-voice language support over Wyoming
++    // (Home Assistant filters STT/TTS providers by pipeline language) --
++    // AVSpeechSynthesisVoice.language is a full BCP-47 tag like "ru-RU";
++    // we only need the leading subtag.
++    let voiceLanguages: [String: String]
++
+     // Maps lowercase voice name or full identifier -> canonical identifier.
+     private let voiceLookup: [String: String]
+     private let logger: Logger
+@@ -41,6 +48,13 @@ final class AVSpeechTTSService: TTSService, Sendable {
+         let nameSet = Set(voices.map { $0.name })
+         self.availableVoices = nameSet.sorted()
+
++        // First matching voice wins if duplicate names ever occur.
++        var langLookup: [String: String] = [:]
++        for voice in voices where langLookup[voice.name] == nil {
++            langLookup[voice.name] = String(voice.language.split(separator: "-").first ?? "en")
++        }
++        self.voiceLanguages = langLookup
++
+         // Resolve the default voice: config > system locale default > first available.
+         if let configVoice = settings.defaultVoice {
+             self.defaultVoice = configVoice
+diff --git a/Sources/speech-server/Wyoming/WyomingSession.swift b/Sources/speech-server/Wyoming/WyomingSession.swift
+index bc6db42..39467cf 100644
+--- a/Sources/speech-server/Wyoming/WyomingSession.swift
++++ b/Sources/speech-server/Wyoming/WyomingSession.swift
+@@ -25,7 +25,14 @@ struct STTInfo: Sendable {
+     static let parakeet = STTInfo(
+         modelName: "parakeet-tdt-0.6b",
+         modelDescription: "Parakeet TDT 0.6B on-device ASR via FluidAudio",
+-        languages: ["en"]
++        // v3 (our default) is multilingual across 25 European languages;
++        // NVIDIA/FluidAudio do not vary this list by model_version, so this
++        // is accurate for v3 and only slightly optimistic for v2 (English-only).
++        languages: [
++            "bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de",
++            "el", "hu", "it", "lv", "lt", "mt", "pl", "pt", "ro", "sk",
++            "sl", "es", "sv", "ru", "uk",
++        ]
+     )
+
+     static let qwen3 = STTInfo(
+@@ -381,14 +388,16 @@ actor WyomingSession {
+             "name": .string("macos-speech-server"),
+             "url": .string("https://github.com/dokterbob/macos-speech-server"),
+         ])
++        let avVoiceLanguages = (ttsService as? AVSpeechTTSService)?.voiceLanguages ?? [:]
+         let ttsVoices: [WyomingValue] = ttsService.availableVoices.map { name in
+-            .object([
++            let lang = avVoiceLanguages[name] ?? "en"
++            return .object([
+                 "name": .string(name),
+                 "description": .string(name),
+                 "attribution": serverAttribution,
+                 "installed": .bool(true),
+                 "version": .string("1.0.0"),
+-                "languages": .array([.string("en")]),
++                "languages": .array([.string(lang)]),
+             ])
+         }
