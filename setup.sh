@@ -1332,6 +1332,7 @@ ensure_voice_project() {
   # for consistency. Its sentence-concatenation silence-dropping bug (see
   # CLAUDE.md) only matters for multi-sentence input; HA voice-assistant
   # replies are typically one short sentence, so it's a non-issue here.
+  local yaml_before; yaml_before=$(hash_file "$dir/speech-server.yaml")
   cat >"$dir/speech-server.yaml" <<YAML
 log_level: notice
 servers:
@@ -1351,6 +1352,17 @@ tts:
     default_voice: ${VOICE_TTS_DEFAULT_VOICE:-Katya (Enhanced)}
 YAML
   /bin/chmod 644 "$dir/speech-server.yaml"
+
+  # The binary only reads speech-server.yaml at startup — an already-running
+  # instance won't notice a port/voice change until kickstarted (found the
+  # hard way: added the Wyoming port here, but a live voicestt.serve kept
+  # listening with the OLD config, silently 0-porting Wyoming, until
+  # restarted). Same "config changed -> kickstart" pattern render_litellm_
+  # config() already uses.
+  if [ "$yaml_before" != "$(hash_file "$dir/speech-server.yaml")" ] && daemon_loaded com.local.voicestt.serve; then
+    /bin/launchctl kickstart -k system/com.local.voicestt.serve >/dev/null 2>&1 \
+      && ok "restarted com.local.voicestt.serve to pick up the updated speech-server.yaml"
+  fi
 
   if [ -x "$dir/.build/release/speech-server" ]; then
     ok "macos-speech-server already built at $dir"
