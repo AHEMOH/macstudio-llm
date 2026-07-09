@@ -97,6 +97,7 @@ SERVICES = [
     ("com.local.voicestt.serve",    "Sprache-Erkennung Backend (Parakeet)", "ondemand"),
     ("com.local.voicetts.proxy",    "Sprachausgabe Proxy",         "always"),
     ("com.local.voicetts.serve",    "Sprachausgabe Backend (say)", "ondemand"),
+    ("com.local.voicewyoming.proxy", "Home Assistant Voice (Wyoming) Proxy", "always"),
     ("com.local.immich.proxy",      "immich-ml Proxy",             "always"),
     ("com.local.immich.ml",         "immich-ml Backend",           "ondemand"),
     ("com.local.docling.proxy",     "docling Proxy",               "always"),
@@ -133,6 +134,7 @@ LABEL_LOG = {
     "com.local.voicestt.serve": "voicestt-serve.log",
     "com.local.voicetts.proxy": "voicetts-proxy.log",
     "com.local.voicetts.serve": "voicetts-serve.log",
+    "com.local.voicewyoming.proxy": "voicewyoming-proxy.log",
     "com.local.immich.proxy": "immich-proxy.log",
     "com.local.immich.ml": "immich-ml.log",
     "com.local.docling.proxy": "docling-proxy.log",
@@ -221,7 +223,8 @@ def active_labels():
             keep = c.get("INSTALL_EMBED", "1") == "1"
         elif lbl.startswith("com.local.images."):
             keep = c.get("INSTALL_IMAGES", "0") == "1"
-        elif lbl.startswith("com.local.voicestt.") or lbl.startswith("com.local.voicetts."):
+        elif lbl.startswith("com.local.voicestt.") or lbl.startswith("com.local.voicetts.") \
+                or lbl.startswith("com.local.voicewyoming."):
             keep = c.get("INSTALL_VOICE", "0") == "1"
         elif lbl.startswith("com.local.immich."):
             keep = c.get("INSTALL_IMMICH", "1") == "1"
@@ -937,6 +940,7 @@ def api_links():
         "images_port": port("IMAGES_PUBLIC_PORT", 5005) if c.get("INSTALL_IMAGES", "0") == "1" else 0,
         "voicestt_port": port("VOICESTT_PUBLIC_PORT", 5006) if c.get("INSTALL_VOICE", "0") == "1" else 0,
         "voicetts_port": port("VOICETTS_PUBLIC_PORT", 5007) if c.get("INSTALL_VOICE", "0") == "1" else 0,
+        "voicewyoming_port": port("VOICE_WYOMING_PUBLIC_PORT", 10300) if c.get("INSTALL_VOICE", "0") == "1" else 0,
         "vnc_enabled": c.get("INSTALL_REMOTE", "1") == "1",
         "vnc_filter_port": port("VNC_FILTER_PORT", 5901) if c.get("INSTALL_REMOTE", "1") == "1" else 0,
         "novnc_port": port("NOVNC_PORT", 6080) if (c.get("INSTALL_REMOTE", "1") == "1" and c.get("INSTALL_NOVNC", "1") == "1") else 0,
