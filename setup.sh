@@ -73,6 +73,8 @@ CONFIG_KEYS=(
   TARGET_USER
   TARGET_HOME
   IMMICH_PROJECT_DIR
+  IMMICH_REPO
+  IMMICH_REPO_REF
   DOCLING_PROJECT_DIR
   IOGPU_WIRED_LIMIT_MB
   INSTALL_MLX
@@ -210,6 +212,8 @@ config_default() {
     TARGET_USER)                 echo mac ;;
     TARGET_HOME)                 echo /Users/mac ;;
     IMMICH_PROJECT_DIR)          echo /Users/mac/projects/immich-ml-metal ;;
+    IMMICH_REPO)                 echo https://github.com/sebastianfredette/immich-ml-metal ;;
+    IMMICH_REPO_REF)             echo main ;;
     DOCLING_PROJECT_DIR)         echo /Users/mac/projects/docling-serve ;;
     IOGPU_WIRED_LIMIT_MB)        echo 30720 ;;
     INSTALL_MLX)                 echo 1 ;;
@@ -280,7 +284,7 @@ config_default() {
     SILICON_EXPORTER_PORT)       echo 9101 ;;
     ONDEMAND_EXPORTER_PORT)      echo 9103 ;;
     SILICON_SAMPLE_INTERVAL_MS)  echo 10000 ;;
-    INSTALL_IMMICH)              echo 1 ;;
+    INSTALL_IMMICH)              echo 0 ;;
     INSTALL_DOCLING)             echo 1 ;;
     INSTALL_EXPORTERS)           echo 0 ;;
     INSTALL_TUI)                 echo 1 ;;
@@ -396,6 +400,8 @@ config_hint() {
     VOICE_WYOMING_PUBLIC_PORT)   echo "Public port for Home Assistant's native Wyoming-protocol voice integration (default 10300, the Wyoming ecosystem convention) — one port carries BOTH STT and TTS, auto-discovered by HA. Shares the SAME backend as 'stt' (com.local.voicestt.serve), just a second proxy in front of it" ;;
     VOICE_WYOMING_BACKEND_PORT)  echo "Internal Wyoming port the speech-server binary binds (127.0.0.1 only, default 15008)" ;;
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
+    IMMICH_REPO)                 echo "Git URL of the Metal/ANE Immich-ML backend cloned+built into IMMICH_PROJECT_DIR (default the maintained upstream sebastianfredette/immich-ml-metal; point at your own fork to carry local patches). Hybrid accel: CLIP on the GPU (MLX), face-detect+OCR on the ANE (Apple Vision), face-recog via ONNX/CoreML. Needs Python 3.11 + macOS 26" ;;
+    IMMICH_REPO_REF)             echo "Branch/tag of IMMICH_REPO to check out (default main)" ;;
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
     AUTOUPDATE_WEEKDAY)          echo "launchd weekday: 0=Sun 1=Mon … 6=Sat" ;;
     AUTO_ACCEPT)                 echo "1 = skip all 'press Enter to proceed' prompts in TUI" ;;
@@ -633,7 +639,7 @@ load_config() {
         [ "${INSTALL_IMAGES:-0}" = 1 ] || continue ;;
       com.local.voicestt.*|com.local.voicetts.*|com.local.voicewyoming.*)
         [ "${INSTALL_VOICE:-0}" = 1 ] || continue ;;
-      com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || continue ;;
+      com.local.immich.*)  [ "${INSTALL_IMMICH:-0}"  = 1 ] || continue ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || continue ;;
       com.local.node.exporter|com.local.silicon.exporter|com.local.ondemand.exporter)
         [ "${INSTALL_EXPORTERS:-1}" = 1 ] || continue ;;
@@ -876,6 +882,10 @@ ensure_formulas() {
   # work with zero extra dependencies. say-tts-server.py degrades gracefully
   # (501 with a clear message) if this is missing.
   [ "${INSTALL_VOICE:-0}" = 1 ] && ensure_formula ffmpeg
+  # immich-ml-metal's venv needs python@3.11 specifically (3.13 lacks required wheels).
+  # This is separate from ensure_modern_python()'s python@3.12 (MLX/docling): the immich
+  # backend is built by ensure_immich_project() against 3.11.
+  [ "${INSTALL_IMMICH:-0}" = 1 ] && ensure_formula python@3.11
 }
 
 ensure_modern_python() {
@@ -891,14 +901,93 @@ ensure_modern_python() {
   ensure_formula python@3.12
 }
 
-ensure_immich_venv() {
-  [ "${INSTALL_IMMICH:-1}" = 1 ] || return 0
-  if [ -x "$IMMICH_PROJECT_DIR/.venv/bin/python" ]; then
-    ok "immich-ml venv present"
-    return 0
+ensure_immich_project() {
+  # Clones + builds the Metal/ANE Immich-ML backend (default the maintained upstream
+  # sebastianfredette/immich-ml-metal; IMMICH_REPO overridable to point at a fork).
+  # Hybrid acceleration: CLIP on the GPU via MLX, face-detection + OCR on the Apple
+  # Neural Engine via Apple Vision, face-recognition via ONNX/CoreML — so it mostly
+  # rides the ANE and only bursts the GPU for CLIP (see CLAUDE.md). The SECOND
+  # "clone an external git repo and build it" pattern in this repo (after
+  # ensure_voice_project()), but pip/venv-based rather than swift: upstream requires
+  # python@3.11 (3.13 lacks required wheels). The run contract matches the existing
+  # wrapper/plist unchanged — `python -m src.main`, ML_HOST/ML_PORT, health GET /ping —
+  # so nothing under wrappers/ or daemons/ needs to change.
+  [ "${INSTALL_IMMICH:-0}" = 1 ] || return 0
+  local dir="${IMMICH_PROJECT_DIR:-/Users/mac/projects/immich-ml-metal}"
+  local repo="${IMMICH_REPO:-https://github.com/sebastianfredette/immich-ml-metal}"
+  local ref="${IMMICH_REPO_REF:-main}"
+  local changed=0
+
+  if [ ! -d "$dir/.git" ]; then
+    if [ ! -x /usr/bin/git ]; then
+      warn "git not found; cannot clone immich-ml-metal"
+      return 1
+    fi
+    log "cloning immich-ml-metal ($repo@$ref) -> $dir"
+    /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$(dirname "$dir")"
+    if ! /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git clone --depth 1 --branch "$ref" \
+          "$repo" "$dir" >"$LOG_DIR/immich-clone.log" 2>&1; then
+      warn "git clone of immich-ml-metal failed; see $LOG_DIR/immich-clone.log"
+      return 1
+    fi
+    changed=1
+  else
+    local head_before; head_before=$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" rev-parse HEAD 2>/dev/null)
+    /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" pull --ff-only \
+      >"$LOG_DIR/immich-clone.log" 2>&1 \
+      || warn "git pull for immich-ml-metal failed (continuing with existing checkout); see $LOG_DIR/immich-clone.log"
+    [ "$head_before" != "$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" rev-parse HEAD 2>/dev/null)" ] && changed=1
   fi
-  warn "immich-ml venv missing at $IMMICH_PROJECT_DIR/.venv — create it manually:"
-  warn "  cd $IMMICH_PROJECT_DIR && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+
+  # Project-local .venv built with python@3.11 specifically (like docling-serve's own
+  # .venv, NOT one of the $VENV_DIR MLX-stack venvs). ensure_formulas() installs
+  # python@3.11 when INSTALL_IMMICH=1.
+  if [ ! -x /opt/homebrew/bin/python3.11 ]; then
+    warn "immich-ml needs python@3.11, which is not installed yet."
+    warn "Re-run 'sudo bash setup.sh --apply' after Homebrew is available."
+    return 1
+  fi
+  local req="$dir/requirements.txt"
+  if [ ! -f "$req" ]; then
+    warn "immich-ml checkout has no requirements.txt at $req — unexpected repo layout for '$repo'"
+    return 1
+  fi
+  local req_stamp="$dir/.venv/.requirements.sha256"
+  local req_hash; req_hash=$(hash_file "$req")
+  if [ ! -x "$dir/.venv/bin/python" ]; then
+    log "building immich-ml venv at $dir/.venv (python@3.11; MLX + onnxruntime + insightface + open-clip — several minutes)"
+    /usr/bin/sudo -u "$TARGET_USER" -H /opt/homebrew/bin/python3.11 -m venv "$dir/.venv"
+    changed=1
+  fi
+  # Reinstall only when requirements.txt changed (fresh build, or a pull touched deps).
+  if [ "$req_hash" != "$(/bin/cat "$req_stamp" 2>/dev/null)" ]; then
+    /usr/bin/sudo -u "$TARGET_USER" -H "$dir/.venv/bin/pip" install --upgrade pip wheel >/dev/null 2>&1 \
+      || warn "pip upgrade inside immich-ml venv returned non-zero"
+    log "pip install -r requirements.txt (immich-ml) — downloads MLX/onnxruntime/insightface wheels"
+    if ! /usr/bin/sudo -u "$TARGET_USER" -H "$dir/.venv/bin/pip" install -r "$req" \
+          >"$LOG_DIR/immich-venv-install.log" 2>&1; then
+      warn "immich-ml pip install failed; see $LOG_DIR/immich-venv-install.log"
+      return 1
+    fi
+    /usr/bin/sudo -u "$TARGET_USER" -H /bin/sh -c "printf '%s' '$req_hash' > '$req_stamp'"
+    changed=1
+  fi
+
+  if [ -x "$dir/.venv/bin/python" ]; then
+    ok "immich-ml project ready at $dir (first CLIP request does a one-time model download+convert to MLX, ~1-2 GB into ~/.cache/immich-ml-metal)"
+  else
+    warn "immich-ml venv build reported success but $dir/.venv/bin/python is missing"
+    return 1
+  fi
+
+  # Only refresh a LIVE backend (an idle on-demand backend picks up the new checkout on
+  # its next wake, since the wrapper re-execs from disk). Same "config changed -> kick"
+  # idea ensure_voice_project() uses, but guarded on daemon_running so we don't wake an
+  # idle backend just to have the proxy idle-stop it again.
+  if [ "$changed" = 1 ] && daemon_running com.local.immich.ml; then
+    /bin/launchctl kickstart -k system/com.local.immich.ml >/dev/null 2>&1 \
+      && ok "restarted com.local.immich.ml to pick up the updated checkout/venv"
+  fi
 }
 
 ensure_docling_venv() {
@@ -1710,7 +1799,7 @@ render_all_plists() {
         # Assistant voice-pipeline integration (Wyoming protocol carries both
         # STT and TTS on one port).
         [ "${INSTALL_VOICE:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
-      com.local.immich.*)  [ "${INSTALL_IMMICH:-1}"  = 1 ] || { remove_plist "$label"; continue; } ;;
+      com.local.immich.*)  [ "${INSTALL_IMMICH:-0}"  = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.node.exporter|com.local.silicon.exporter|com.local.ondemand.exporter)
         [ "${INSTALL_EXPORTERS:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
@@ -1886,7 +1975,7 @@ apply_everything() {
   dbg "step: ensure_formulas";         ensure_formulas
   dbg "step: apply_tui_sudoers";       apply_tui_sudoers || true
   dbg "step: ensure_modern_python";    ensure_modern_python || true
-  dbg "step: ensure_immich_venv";      ensure_immich_venv
+  dbg "step: ensure_immich_project";   ensure_immich_project
   dbg "step: ensure_docling_venv";     ensure_docling_venv
   dbg "step: ensure_paperless_ocr_venv"; ensure_paperless_ocr_venv || true
   dbg "step: ensure_paperless_ocr_share"; ensure_paperless_ocr_share || true
@@ -2025,7 +2114,7 @@ menu_select_services() {
       INSTALL_MLX       "$(onoff_label "${INSTALL_MLX:-1}")" \
       "${MAIN_BACKEND_PORT:-18000}" "${LITELLM_PORT:-11434}"
     printf "  2) %-18s [%s]   immich-ml on-demand photo AI (:%s)\n" \
-      INSTALL_IMMICH    "$(onoff_label "${INSTALL_IMMICH:-1}")"    "${ML_PUBLIC_PORT:-3003}"
+      INSTALL_IMMICH    "$(onoff_label "${INSTALL_IMMICH:-0}")"    "${ML_PUBLIC_PORT:-3003}"
     printf "  3) %-18s [%s]   docling-serve on-demand OCR/VLM (:%s)\n" \
       INSTALL_DOCLING   "$(onoff_label "${INSTALL_DOCLING:-1}")"   "${DOCLING_PUBLIC_PORT:-5001}"
     printf "  4) %-18s [%s]   Prometheus exporters (:%s :%s :%s)\n" \

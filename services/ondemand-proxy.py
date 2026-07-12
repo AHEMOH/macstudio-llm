@@ -44,9 +44,35 @@ last_request_ts = 0.0
 # different loop" when two clients race the lock.
 startup_lock: "asyncio.Lock | None" = None
 
+# --- Failure back-off + load-shedding -------------------------------------
+# Added after an immich-ml incident: the backend project was missing, so it
+# could never become healthy. Every incoming connection re-kickstarted it and
+# waited the full STARTUP_TIMEOUT, and clients (an Immich server) reconnected
+# immediately — an endless wake→wait→fail→wake storm that piled blocked clients
+# onto startup_lock (each holding a socket) until the process hit macOS' 256-fd
+# soft limit and wedged with "OSError [Errno 24] Too many open files". These two
+# guards make a never-healthy backend fail FAST and cheap instead:
+#   1. exponential cooldown between wake attempts once a wake has failed, and
+#   2. a cap on how many clients may block waiting for a wake at once.
+FAILURE_BACKOFF_BASE_SEC = 30
+FAILURE_BACKOFF_CAP_SEC = 300
+MAX_PENDING_WAITERS = 8
+consecutive_failures = 0
+cooldown_until = 0.0      # monotonic; skip kickstart while time.monotonic() < this
+pending_waiters = 0       # clients currently blocked in ensure_backend_up()
+
 
 def log(msg: str) -> None:
     print(f"[{time.strftime('%F %T')}][{SERVICE_NAME}-proxy] {msg}", flush=True)
+
+
+def http_503(body: bytes) -> bytes:
+    return (
+        b"HTTP/1.1 503 Service Unavailable\r\n"
+        b"Content-Type: text/plain\r\n"
+        b"Connection: close\r\n"
+        b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+    )
 
 
 def backend_pid() -> int:
@@ -93,11 +119,34 @@ def health_ok() -> bool:
         return False
 
 
+def _note_healthy() -> None:
+    """Clear any accumulated failure back-off once the backend is serving again."""
+    global consecutive_failures, cooldown_until
+    consecutive_failures = 0
+    cooldown_until = 0.0
+
+
 async def ensure_backend_up() -> bool:
     """Wake the backend if needed and block until HEALTH_URL is green."""
+    global consecutive_failures, cooldown_until
+    # Fast path outside the lock: healthy traffic shouldn't serialize behind one
+    # slow probe, and it clears the back-off the moment the backend recovers.
+    if health_ok():
+        _note_healthy()
+        return True
+    # Back-off: a prior wake failed and we're still inside its cooldown window —
+    # don't kickstart again, just fail fast so the client gets a quick 503 and
+    # backs off (this is what stops the wake storm / fd leak).
+    if time.monotonic() < cooldown_until:
+        return False
     async with startup_lock:
+        # Re-check under the lock: another client may have just brought it up, or
+        # opened a fresh cooldown, while we waited for the lock.
         if health_ok():
+            _note_healthy()
             return True
+        if time.monotonic() < cooldown_until:
+            return False
         log(f"waking {BACKEND_LABEL}")
         kickstart_backend()
         deadline = time.monotonic() + STARTUP_TIMEOUT_SEC
@@ -106,8 +155,14 @@ async def ensure_backend_up() -> bool:
             if health_ok():
                 elapsed = STARTUP_TIMEOUT_SEC - (deadline - time.monotonic())
                 log(f"{BACKEND_LABEL} healthy after {elapsed:.1f}s")
+                _note_healthy()
                 return True
-        log(f"{BACKEND_LABEL} did not become healthy within {STARTUP_TIMEOUT_SEC}s")
+        consecutive_failures += 1
+        backoff = min(FAILURE_BACKOFF_CAP_SEC,
+                      FAILURE_BACKOFF_BASE_SEC * (2 ** (consecutive_failures - 1)))
+        cooldown_until = time.monotonic() + backoff
+        log(f"{BACKEND_LABEL} did not become healthy within {STARTUP_TIMEOUT_SEC}s "
+            f"(failure #{consecutive_failures}; backing off {backoff:.0f}s before the next wake)")
         return False
 
 
@@ -129,18 +184,28 @@ async def pipe(src: asyncio.StreamReader, dst: asyncio.StreamWriter) -> None:
 
 
 async def handle_client(client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter) -> None:
-    global last_request_ts
+    global last_request_ts, pending_waiters
     last_request_ts = time.time()
     peer = client_writer.get_extra_info("peername")
     try:
-        if not await ensure_backend_up():
+        # Load-shedding: if the backend is down and the wait queue is already full,
+        # fail this request immediately instead of holding its socket open on the
+        # startup_lock queue. When the backend is healthy, ensure_backend_up() returns
+        # on the fast path so pending_waiters never climbs — a full queue only happens
+        # while the backend is genuinely unavailable.
+        if pending_waiters >= MAX_PENDING_WAITERS:
+            body = f"{SERVICE_NAME} backend starting; too many pending requests, retry shortly".encode()
+            client_writer.write(http_503(body))
+            await client_writer.drain()
+            return
+        pending_waiters += 1
+        try:
+            backend_up = await ensure_backend_up()
+        finally:
+            pending_waiters -= 1
+        if not backend_up:
             body = f"{SERVICE_NAME} backend failed to start".encode()
-            client_writer.write(
-                b"HTTP/1.1 503 Service Unavailable\r\n"
-                b"Content-Type: text/plain\r\n"
-                b"Connection: close\r\n"
-                b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
-            )
+            client_writer.write(http_503(body))
             await client_writer.drain()
             return
         try:
@@ -150,12 +215,7 @@ async def handle_client(client_reader: asyncio.StreamReader, client_writer: asyn
         except Exception as exc:
             log(f"backend connect failed from {peer}: {exc}")
             body = f"{SERVICE_NAME} backend unreachable: {exc}".encode()
-            client_writer.write(
-                b"HTTP/1.1 503 Service Unavailable\r\n"
-                b"Content-Type: text/plain\r\n"
-                b"Connection: close\r\n"
-                b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
-            )
+            client_writer.write(http_503(body))
             await client_writer.drain()
             return
         await asyncio.gather(
@@ -164,8 +224,15 @@ async def handle_client(client_reader: asyncio.StreamReader, client_writer: asyn
             return_exceptions=True,
         )
     finally:
+        # close() schedules the transport shut; wait_closed() ensures the fd is
+        # actually released before this coroutine ends (prevents fd build-up under
+        # a burst of short-lived connections).
         try:
             client_writer.close()
+        except Exception:
+            pass
+        try:
+            await client_writer.wait_closed()
         except Exception:
             pass
         last_request_ts = time.time()
