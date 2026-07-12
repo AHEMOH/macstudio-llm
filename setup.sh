@@ -75,6 +75,7 @@ CONFIG_KEYS=(
   IMMICH_PROJECT_DIR
   IMMICH_REPO
   IMMICH_REPO_REF
+  IMMICH_MLX_VERSION
   DOCLING_PROJECT_DIR
   IOGPU_WIRED_LIMIT_MB
   INSTALL_MLX
@@ -214,6 +215,7 @@ config_default() {
     IMMICH_PROJECT_DIR)          echo /Users/mac/projects/immich-ml-metal ;;
     IMMICH_REPO)                 echo https://github.com/sebastianfredette/immich-ml-metal ;;
     IMMICH_REPO_REF)             echo main ;;
+    IMMICH_MLX_VERSION)          echo 0.30.0 ;;
     DOCLING_PROJECT_DIR)         echo /Users/mac/projects/docling-serve ;;
     IOGPU_WIRED_LIMIT_MB)        echo 30720 ;;
     INSTALL_MLX)                 echo 1 ;;
@@ -402,6 +404,7 @@ config_hint() {
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
     IMMICH_REPO)                 echo "Git URL of the Metal/ANE Immich-ML backend cloned+built into IMMICH_PROJECT_DIR (default the maintained upstream sebastianfredette/immich-ml-metal; point at your own fork to carry local patches). Hybrid accel: CLIP on the GPU (MLX), face-detect+OCR on the ANE (Apple Vision), face-recog via ONNX/CoreML. Needs Python 3.11 + macOS 26" ;;
     IMMICH_REPO_REF)             echo "Branch/tag of IMMICH_REPO to check out (default main)" ;;
+    IMMICH_MLX_VERSION)          echo "MLX version pinned in the immich-ml venv (default 0.30.0). Upstream leaves mlx unpinned; MLX >=0.31 crashes CLIP inference with 'There is no Stream(cpu, 1) in current thread'. Enforced on every --apply. Bump only if upstream adapts to a newer MLX" ;;
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
     AUTOUPDATE_WEEKDAY)          echo "launchd weekday: 0=Sun 1=Mon … 6=Sat" ;;
     AUTO_ACCEPT)                 echo "1 = skip all 'press Enter to proceed' prompts in TUI" ;;
@@ -971,6 +974,27 @@ ensure_immich_project() {
     fi
     /usr/bin/sudo -u "$TARGET_USER" -H /bin/sh -c "printf '%s' '$req_hash' > '$req_stamp'"
     changed=1
+  fi
+
+  # Pin MLX. Upstream's requirements.txt leaves it unpinned (`mlx>=0.22.0`, comment
+  # says "current stable 0.30.x"), so a fresh install pulls the latest — and MLX >=0.31
+  # crashes CLIP inference in the pool threads with
+  #   libc++abi: std::runtime_error: There is no Stream(cpu, 1) in current thread
+  # (the per-thread stream init in src/main.py:_init_ml_thread only warms the GPU
+  # stream, not the CPU one newer MLX now demands). 0.30.0 is verified working (text +
+  # 6-face detect + CoreML recog, 2026-07-12). Enforced on every apply so a re-clone or
+  # a `pip install -r` can't silently reintroduce the crash. Bump IMMICH_MLX_VERSION if
+  # upstream adapts to a newer MLX.
+  local want_mlx="${IMMICH_MLX_VERSION:-0.30.0}"
+  local have_mlx; have_mlx=$(/usr/bin/sudo -u "$TARGET_USER" -H "$dir/.venv/bin/python" -c 'import mlx.core as mx; print(mx.__version__)' 2>/dev/null)
+  if [ -n "$want_mlx" ] && [ "$have_mlx" != "$want_mlx" ]; then
+    log "pinning mlx ${have_mlx:-none} -> $want_mlx (upstream leaves it unpinned; >=0.31 crashes CLIP pool threads — see comment)"
+    if /usr/bin/sudo -u "$TARGET_USER" -H "$dir/.venv/bin/pip" install "mlx==$want_mlx" >>"$LOG_DIR/immich-venv-install.log" 2>&1; then
+      ok "mlx pinned to $want_mlx"
+      changed=1
+    else
+      warn "mlx pin to $want_mlx failed; see $LOG_DIR/immich-venv-install.log"
+    fi
   fi
 
   if [ -x "$dir/.venv/bin/python" ]; then
