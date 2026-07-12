@@ -306,9 +306,17 @@ present):
 | **node_exporter** | `brew install node_exporter` | if `INSTALL_EXPORTERS=1` (off by default) |
 | **mactop + macmon** | `brew install mactop macmon` | if `INSTALL_TUI=1` |
 | **docling-serve venv** | `pip install 'docling[…]' 'docling-serve[ui]'` | if `INSTALL_DOCLING=1` |
+| **python@3.11** | `brew install python@3.11` (immich-ml's venv needs 3.11; 3.13 lacks wheels) | if `INSTALL_IMMICH=1` |
+| **immich-ml project** | `git clone` `IMMICH_REPO` + `python3.11 -m venv .venv && pip install -r requirements.txt` | if `INSTALL_IMMICH=1` |
 
-The **immich-ml venv** is the only thing not auto-built (needs your fork in
-`IMMICH_PROJECT_DIR`); the script prints the command to finish it.
+The **immich-ml backend** (`IMMICH_PROJECT_DIR`) is now auto-cloned from `IMMICH_REPO`
+(default the maintained upstream **`sebastianfredette/immich-ml-metal`**) and its venv
+built with **Python 3.11** — no manual fork step anymore. It's a Metal/ANE drop-in for
+Immich's own ML service: CLIP embeddings run on the GPU (MLX — brief bursts during photo
+imports/backfill), face-detection + OCR on the **Apple Neural Engine** (Apple Vision),
+face-recognition via ONNX/CoreML. **Needs macOS 26+**, and the on-demand backend sleeps
+when idle, so it only touches the GPU during active jobs. Point your Immich server at
+`http://<mac>:3003` — see INTEGRATIONS.md.
 
 ## Hardware assumptions
 
@@ -397,14 +405,16 @@ use the menu) to change a live box.
 | `INFINITY_DTYPE` | `float16` | Infinity model precision (`float16` ~half the RAM \| `float32`) |
 | `INFINITY_BATCH_SIZE` | `4` | Infinity max batch size (single-user default; raise for parallel load) |
 | `ML_PUBLIC_PORT` / `ML_BACKEND_PORT` | `3003` / `13003` | immich-ml (optional) |
+| `IMMICH_REPO` / `IMMICH_REPO_REF` | `sebastianfredette/immich-ml-metal` / `main` | immich-ml source repo + branch (override to use a fork) |
 | `DOCLING_PUBLIC_PORT` / `DOCLING_BACKEND_PORT` | `5001` / `15001` | docling-serve (optional) |
 | `IDLE_TIMEOUT_IMMICH` / `IDLE_TIMEOUT_DOCLING` | `900` | Idle-to-sleep seconds (`-1` = never) |
 | `AUTOUPDATE_WEEKDAY` / `_HOUR` / `_MINUTE` | `6` / `6` / `0` | Weekly schedule (Sat 06:00) |
 | `NODE_EXPORTER_PORT` / `SILICON_EXPORTER_PORT` / `ONDEMAND_EXPORTER_PORT` | `9100` / `9101` / `9103` | Prometheus exporters (only if `INSTALL_EXPORTERS=1`) |
-| `INSTALL_IMMICH` / `INSTALL_DOCLING` / `INSTALL_TUI` / `INSTALL_WATCHDOG` | `1` | Toggle optional pieces |
+| `INSTALL_DOCLING` / `INSTALL_TUI` / `INSTALL_WATCHDOG` | `1` | Toggle optional pieces |
 | `INSTALL_EXPORTERS` | `0` | Prometheus exporters — **off by default** |
 | `INSTALL_EMBED` | `1` | BGE embeddings + reranker via Infinity (`embed`/`rerank` aliases) — on by default |
 | `INSTALL_VOICE` | `0` | Speech-to-Text (`stt`) + Text-to-Speech (`tts`) — **off by default** |
+| `INSTALL_IMMICH` | `0` | Metal/ANE Immich-ML backend (:3003) — **off by default** (needs macOS 26 + a running Immich server) |
 | `VOICE_PROJECT_DIR` | `/Users/mac/projects/macos-speech-server` | Where FluidAudio's `macos-speech-server` is cloned+built |
 | `VOICESTT_PUBLIC_PORT` / `VOICESTT_BACKEND_PORT` | `5006` / `15006` | Speech-to-Text ports (proxy / backend) |
 | `IDLE_TIMEOUT_VOICESTT` / `STARTUP_TIMEOUT_VOICESTT` | `900` / `60` | STT idle-to-sleep / wake-deadline seconds |

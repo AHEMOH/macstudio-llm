@@ -227,7 +227,7 @@ def active_labels():
                 or lbl.startswith("com.local.voicewyoming."):
             keep = c.get("INSTALL_VOICE", "0") == "1"
         elif lbl.startswith("com.local.immich."):
-            keep = c.get("INSTALL_IMMICH", "1") == "1"
+            keep = c.get("INSTALL_IMMICH", "0") == "1"
         elif lbl.startswith("com.local.docling."):
             keep = c.get("INSTALL_DOCLING", "1") == "1"
         elif lbl in ("com.local.node.exporter", "com.local.silicon.exporter",

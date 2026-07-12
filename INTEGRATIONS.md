@@ -516,6 +516,53 @@ paperless-gpt only if you also want LLM-generated titles/tags. The API token sit
 
 ---
 
+## Immich — Metal/ANE machine learning (`INSTALL_IMMICH`)
+
+Runs a **hardware-accelerated drop-in replacement** for Immich's own machine-learning
+container, so smart search (CLIP), face detection, and OCR use Apple Silicon instead of
+CPU. It is **not** a LiteLLM alias — your Immich server talks to it directly on **:3003**.
+Off by default; opt in with `INSTALL_IMMICH=1` (TUI menu 2, or the conf) and re-apply.
+
+**Requirements & what `--apply` does.** Needs **macOS 26+**. `setup.sh --apply`
+auto-installs `python@3.11`, clones `IMMICH_REPO` (default the maintained upstream
+`sebastianfredette/immich-ml-metal`) into `IMMICH_PROJECT_DIR`, and builds its venv —
+no manual step. Acceleration is hybrid: **CLIP → GPU (MLX)**, **face-detection + OCR →
+Apple Neural Engine (Apple Vision)**, **face-recognition → ONNX/CoreML**.
+
+**Point your Immich server at the Mac.** In the Immich **machine-learning** container's
+environment (edit in your compose / Portainer stack, not host-side):
+
+```yaml
+# Immich server / machine-learning service env:
+IMMICH_MACHINE_LEARNING_URL: http://mac.home.arpa:3003
+# Older Immich releases use this name instead:
+# MACHINE_LEARNING_URL: http://mac.home.arpa:3003
+```
+
+Then in the Immich web UI: **Administration → Settings → Machine Learning** — confirm it's
+enabled and the URL matches. Run *Smart Search* and *Face Detection* jobs to backfill.
+
+**On-demand behaviour.** The public :3003 proxy always listens; the backend wakes on the
+first request and **idle-sleeps after `IDLE_TIMEOUT_IMMICH`** (900 s) to release the GPU —
+so GPU contention with the resident main LLM is limited to active import/backfill windows
+(CLIP is bursty). The **first CLIP request ever** does a one-time model download+convert to
+MLX (~1–2 GB into `~/.cache/immich-ml-metal`, a few minutes) — later requests are fast.
+
+**Smoke test (on the Mac or any LAN host):**
+
+```bash
+sudo llm-service-ctl wake immich          # force the backend up
+curl -s http://mac.home.arpa:3003/ping    # -> pong (through the proxy)
+llm-logs immich-ml                        # watch model load / MLX + Vision activity
+```
+
+Notes: the backend self-describes as experimental/alpha — treat it as an optional
+companion. If face-detection/OCR (Apple Vision) misbehave from the system daemon context
+(the Mac runs headless with a dummy-plug and no auto-login), that's the known watch-item;
+CLIP (MLX) and face-recognition (ONNX/CoreML) don't need a GUI session.
+
+---
+
 ## OpenAI SDK (Python / JS / anything OpenAI-compatible)
 
 ```python
