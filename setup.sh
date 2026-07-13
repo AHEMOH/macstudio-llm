@@ -1763,20 +1763,25 @@ render_litellm_config() {
       emit_model main-fast "$main_served" "${MAIN_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" 1 "${GEMMA_TOP_K:-64}"
     fi
     # Embeddings + reranking now served by the SAME resident omlx process as
-    # main (mlx-<id> served-name, MAIN_BACKEND_PORT), via the generic
-    # 'openai/<served-name>' provider — the SAME mechanism 'main'/'image' use.
-    # 'embed's /v1/embeddings shape is well-established for this provider;
-    # 'rerank' via a bare 'openai/' provider is NOT a standardized OpenAI
-    # endpoint — if issues surface, check the installed litellm venv's rerank
-    # provider table for whether 'openai/' actually forwards /rerank-shaped
-    # calls, or whether a different provider prefix is needed. Emitted only
-    # when the catalog id resolves (download first).
+    # main (mlx-<id> served-name, MAIN_BACKEND_PORT). 'embed' uses the generic
+    # 'openai/<served-name>' provider — the SAME mechanism 'main'/'image' use —
+    # confirmed working (verified live 2026-07-13: 1024-dim vectors from
+    # /v1/embeddings). 'rerank' CANNOT use a bare 'openai/' provider — LiteLLM's
+    # rerank_api/main.py has no OpenAI branch and raises "Unsupported provider:
+    # openai" (confirmed live 2026-07-13). It uses the 'infinity/<served-name>'
+    # provider instead: despite the name, LiteLLM's InfinityRerankConfig is
+    # just a generic Cohere/Jina-shaped /rerank client (posts to
+    # "<api_base>/rerank"), and oMLX's own /v1/rerank route is explicitly
+    # documented as "Cohere/Jina-compatible" — so pointing the infinity
+    # provider's api_base at the SAME :18000/v1 (oMLX's port, not a separate
+    # Infinity daemon) works. Emitted only when the catalog id resolves
+    # (download first).
     if [ -n "$embed_served" ]; then
       printf '  - model_name: embed\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: embedding\n' \
         "$embed_served" "${MAIN_BACKEND_PORT:-18000}"
     fi
     if [ -n "$rerank_served" ]; then
-      printf '  - model_name: rerank\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: rerank\n' \
+      printf '  - model_name: rerank\n    litellm_params:\n      model: infinity/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: rerank\n' \
         "$rerank_served" "${MAIN_BACKEND_PORT:-18000}"
     fi
     # FLUX image generation via the on-demand mflux backend (mflux-server.py).
