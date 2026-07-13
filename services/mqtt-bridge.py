@@ -54,6 +54,7 @@ REBOOT_PENDING_FILE = "/var/macstudio/reboot-pending"
 AUTOUPDATE_LOG = "/var/log/macstudio/autoupdate.log"
 DEFAULT_HF = "/Users/mac/.cache/huggingface"
 DEFAULT_VENVS = "/Users/mac/.macstudio-venvs"
+DEFAULT_OMLX_PROJECT_DIR = "/Users/mac/projects/omlx"
 
 LAUNCHCTL = "/bin/launchctl"
 SYSCTL = "/usr/sbin/sysctl"
@@ -62,6 +63,7 @@ SW_VERS = "/usr/bin/sw_vers"
 SUDO = "/usr/bin/sudo"
 BREW = "/opt/homebrew/bin/brew"
 IOREG = "/usr/sbin/ioreg"
+GIT = "/usr/bin/git"
 
 KEEPALIVE = 60          # MQTT keepalive seconds
 SLOW_INTERVAL = 6 * 3600  # version/update poll cadence
@@ -74,8 +76,9 @@ THERMAL_LABEL = {0: "Nominal", 1: "Fair", 2: "Serious", 3: "Critical", 4: "Unkno
 MEM_LABEL = {0: "Normal", 1: "Warn", 2: "Critical"}
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 # Mirror set_model_alias's BROKEN refusal: a bare BROKEN blocks everywhere; an
-# engine-tagged BROKEN[<engine>] blocks only for that engine (so BROKEN[mlx-lm]
-# is fine — and selectable — under mlx-vlm).
+# engine-tagged BROKEN[<engine>] blocks only for that engine — every slot
+# (main/embed/rerank) now runs on the one omlx engine, so only BROKEN[omlx]
+# (or a bare BROKEN) actually blocks anything today.
 BARE_BROKEN_RE = re.compile(r"BROKEN([^[]|$)", re.IGNORECASE)
 
 
@@ -376,8 +379,8 @@ def text_model_options(hf_cache, engine):
 
 
 def text_daemon_label(engine=None):
-    """launchd label of the text daemon (mlx-vlm is the only engine)."""
-    return "com.local.mlxvlm.main"
+    """launchd label of the text daemon (oMLX is the only engine)."""
+    return "com.local.omlx.main"
 
 
 def ram_free_mb():
@@ -464,6 +467,26 @@ def pypi_latest(pkg):
         import urllib.request
         with urllib.request.urlopen(f"https://pypi.org/pypi/{pkg}/json", timeout=8) as r:
             return json.load(r)["info"]["version"]
+    except Exception:
+        return None
+
+
+def omlx_installed_ref(project_dir):
+    # oMLX is a pinned git tag, not a PyPI package — report the tag if HEAD is
+    # exactly on one, else the short commit (mirrors setup.sh's menu_updates()).
+    return (run_out([GIT, "-C", project_dir, "describe", "--tags", "--exact-match"])
+            or run_out([GIT, "-C", project_dir, "rev-parse", "--short", "HEAD"])
+            or "?")
+
+
+def github_latest_tag(owner_repo):
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{owner_repo}/releases/latest",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "macstudio-llm"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            return json.load(r)["tag_name"]
     except Exception:
         return None
 
@@ -656,7 +679,7 @@ class Bridge:
     def _refresh_options(self):
         conf = parse_conf()
         hf = conf.get("HF_CACHE_DIR", DEFAULT_HF)
-        opts = text_model_options(hf, conf.get("TEXT_ENGINE", "mlx-vlm"))
+        opts = text_model_options(hf, conf.get("TEXT_ENGINE", "omlx"))
         active = conf.get("ALIAS_MAIN", "")
         if active and active not in opts:
             opts = [active] + opts
@@ -681,7 +704,7 @@ class Bridge:
         sil = scrape_silicon(sil_port)
         self.mqtt.publish(self.sil_avail_topic, "online" if sil else "offline", retain=True)
 
-        engine = conf.get("TEXT_ENGINE", "mlx-vlm")
+        engine = conf.get("TEXT_ENGINE", "omlx")
         text_label = text_daemon_label(engine)
         text_running, _ = launchctl_state(text_label)
         litellm_port = int(conf.get("LITELLM_PORT", "11434") or 11434)
@@ -738,9 +761,7 @@ class Bridge:
         result = {"updates_available": 0,
                   "macos_version": run_out([SW_VERS, "-productVersion"]) or "?"}
         n = 0
-        for vn, pkg, key in [("mlxlm", "mlx-lm", "mlx_lm"),
-                             ("mlxvlm", "mlx-vlm", "mlx_vlm"),
-                             ("litellm", "litellm", "litellm")]:
+        for vn, pkg, key in [("litellm", "litellm", "litellm")]:
             py = os.path.join(venv_dir, vn, "bin", "python")
             installed = "?"
             if os.path.exists(py):
@@ -751,6 +772,14 @@ class Bridge:
             result[key] = {"installed": installed, "latest": latest or "?"}
             if installed not in ("?", None) and latest and installed != latest:
                 n += 1
+        # oMLX isn't on PyPI — it's a pinned git tag, checked against GitHub releases.
+        omlx_dir = conf.get("OMLX_PROJECT_DIR", DEFAULT_OMLX_PROJECT_DIR)
+        omlx_repo = conf.get("OMLX_REPO", "https://github.com/jundot/omlx")
+        installed = omlx_installed_ref(omlx_dir) if os.path.isdir(omlx_dir) else "?"
+        latest = github_latest_tag(omlx_repo.rstrip("/").split("github.com/", 1)[-1])
+        result["omlx"] = {"installed": installed, "latest": latest or "?"}
+        if installed not in ("?", None) and latest and installed != latest:
+            n += 1
         brew_list = []
         out = run_out([SUDO, "-u", target_user, "-H", BREW, "outdated", "--quiet"], timeout=60)
         if out:
@@ -866,7 +895,7 @@ class Bridge:
 
     def init_model_status(self):
         conf = parse_conf()
-        engine = conf.get("TEXT_ENGINE", "mlx-vlm")
+        engine = conf.get("TEXT_ENGINE", "omlx")
         label = text_daemon_label(engine)
         running, _ = launchctl_state(label)
         self.mqtt.publish(self.model_state_topic, conf.get("ALIAS_MAIN", ""), retain=True)

@@ -1,4 +1,4 @@
-# schema: 14
+# schema: 15
 # MacStudio LLM — model catalog (seed)
 #
 # Pipe-delimited, shell-readable, TUI-editable (see `llm-models`). This file is a
@@ -10,30 +10,36 @@
 # HuggingFace, repo-ids are `org/name` (not URLs). Gated repos (gated=yes) need an HF
 # token (`llm-models` -> t) + accepting the licence on the model page.
 #
-# Roles (the backend is fixed per role):
-#   role=text   -> alias 'main' (mlx-vlm / mlx_vlm.server — UNIFIED text+images, KV-quant;
-#                  needs a VLM arch like gemma-4). mlx-vlm is the only text engine.
-#   role=embed  -> Infinity (alias 'embed', on-demand BGE DENSE embeddings for RAG, Torch MPS).
-#   role=rerank -> Infinity (alias 'rerank', on-demand BGE cross-encoder reranker, Torch MPS).
+# Roles (the backend is fixed per role — ALL THREE now served by the SAME resident
+# oMLX process, see CLAUDE.md):
+#   role=text   -> alias 'main' (oMLX — UNIFIED text+images+embed+rerank in one process,
+#                  SSD paged-prefix-cache, continuous batching; needs a VLM arch like
+#                  gemma-4). oMLX is the only text engine.
+#   role=embed  -> alias 'embed' (BGE DENSE embeddings for RAG, served by the SAME oMLX
+#                  process as main — no separate backend/venv).
+#   role=rerank -> alias 'rerank' (BGE cross-encoder reranker, same oMLX process).
 #
 # A note containing BROKEN (or BROKEN[<engine>]) makes a model non-selectable for that
-# engine (main -> mlx-vlm; embed/rerank -> infinity). Sampling cols 14-17
-# (temperature/top_p/frequency_penalty/presence_penalty) = per-model defaults injected
-# into the LiteLLM 'main' alias (clients can override). Empty for embed/rerank.
+# engine (every slot now checks BROKEN[omlx] — main/embed/rerank share one engine).
+# Sampling cols 14-17 (temperature/top_p/frequency_penalty/presence_penalty) = per-model
+# defaults injected into the LiteLLM 'main' alias (clients can override). Empty for
+# embed/rerank.
 #
-# This seed is intentionally LEAN: gemma-4 QAT mains (mlx-vlm, text+image+tools) + a BGE
+# This seed is intentionally LEAN: gemma-4 QAT mains (text+image+tools) + a BGE
 # embed/rerank pair. gemma4-26b-qat is the default main. (The main does images itself, so
 # there is no separate OCR alias; document OCR uses paperless-ocr's Apple Vision path.)
 #
 # columns:
 # id|hf_repo|role|engine|quant|gb|gated|reasoning_parser|tool_parser|max_kv_size|max_num_seqs|rating|notes|temperature|top_p|frequency_penalty|presence_penalty
-# ── Gemma-4 QAT mains (mlx-vlm 0.6.3) — unified text+image+tools, KV-quant ──
+# ── Gemma-4 QAT mains (oMLX) — unified text+image+tools, same process also serves embed/rerank ──
 # Google QAT 4-bit builds (gemma4_unified, image-text-to-text). QAT beats naive PTQ 4-bit
-# (the plain -4bit mlx builds have a PLE-quant garbage-output bug). Verified on Mac 2026-07-04
-# on mlx-vlm 0.6.3: text+tools+vision all pass, vision 4/4 colors.
-gemma4-12b-qat|mlx-community/gemma-4-12B-it-qat-4bit|text|mlxvlm|4bit|11|yes|gemma4|gemma4|131072|1|4|QAT 12B dense unified, multimodal text+image+tools. mlx-vlm 0.6.3: text 19 tok/s, tools OK, vision 4/4. gated; native max 262144|1.0|0.95|0.3|0.3
-gemma4-26b-qat|mlx-community/gemma-4-26B-A4B-it-qat-4bit|text|mlxvlm|4bit|16|yes|gemma4|gemma4|131072|1|5|DEFAULT main. QAT 26B-A4B MoE (~4B active), multimodal text+image+tools. mlx-vlm 0.6.3: text 32 tok/s, tools OK, vision 4/4 - faster AND stronger than 12B. gated; native max 262144|1.0|0.95|0.3|0.3
-gemma4-e4b-qat|mlx-community/gemma-4-E4B-it-qat-4bit|text|mlxvlm|4bit|8|yes|gemma4|gemma4|131072|1|3|QAT E4B edge main, multimodal text+image+tools. mlx-vlm 0.6.3: text 34 tok/s, tools OK, vision 4/4. fast/light ~7.5 GB. gated|1.0|0.95|0.3|0.3
-gemma4-e2b-qat|mlx-community/gemma-4-E2B-it-qat-4bit|text|mlxvlm|4bit|6|yes|gemma4|gemma4|131072|1|3|QAT E2B smallest multimodal, text+image+tools. mlx-vlm 0.6.3: text 53 tok/s (fastest), tools OK, vision 4/4. ~5.2 GB. gated|1.0|0.95|0.3|0.3
-bge-m3|BAAI/bge-m3|embed|infinity|fp16|2|no|||||5|Multilingual DENSE embedder (BGE-M3, 1024-dim, 8192 ctx) for RAG. On-demand via Infinity on Torch MPS, paired with bge-reranker-v2-m3. LiteLLM alias 'embed' (/v1/embeddings). Not gated.||||
-bge-reranker-v2-m3|BAAI/bge-reranker-v2-m3|rerank|infinity|fp16|2|no|||||5|Multilingual cross-encoder RERANKER (bge-reranker-v2-m3) matching bge-m3. On-demand via Infinity on Torch MPS. LiteLLM alias 'rerank' (/v1/rerank, /rerank). Not gated.||||
+# (the plain -4bit mlx builds have a PLE-quant garbage-output bug). Correctness (vision 4/4,
+# tool calling, thinking toggle) verified against oMLX in a sandboxed eval 2026-07-13; the
+# tok/s figures below are the prior mlx-vlm 0.6.3 baseline (2026-07-04) carried over from
+# before the cutover — re-verify on oMLX in production and refresh these notes once measured.
+gemma4-12b-qat|mlx-community/gemma-4-12B-it-qat-4bit|text|omlx|4bit|11|yes|gemma4|gemma4|131072|1|4|QAT 12B dense unified, multimodal text+image+tools. Prior mlx-vlm 0.6.3 baseline: text 19 tok/s, tools OK, vision 4/4 — re-verify on oMLX. gated; native max 262144|1.0|0.95|0.3|0.3
+gemma4-26b-qat|mlx-community/gemma-4-26B-A4B-it-qat-4bit|text|omlx|4bit|16|yes|gemma4|gemma4|131072|1|5|DEFAULT main. QAT 26B-A4B MoE (~4B active), multimodal text+image+tools. Prior mlx-vlm 0.6.3 baseline: text 32 tok/s, tools OK, vision 4/4; sandboxed oMLX eval measured ~48 tok/s fixed-length decode (no regression) plus a real ~15x TTFT win on repeated long prompts via the SSD paged-prefix-cache — re-verify in production. gated; native max 262144|1.0|0.95|0.3|0.3
+gemma4-e4b-qat|mlx-community/gemma-4-E4B-it-qat-4bit|text|omlx|4bit|8|yes|gemma4|gemma4|131072|1|3|QAT E4B edge main, multimodal text+image+tools. Prior mlx-vlm 0.6.3 baseline: text 34 tok/s, tools OK, vision 4/4 — re-verify on oMLX. fast/light ~7.5 GB. gated|1.0|0.95|0.3|0.3
+gemma4-e2b-qat|mlx-community/gemma-4-E2B-it-qat-4bit|text|omlx|4bit|6|yes|gemma4|gemma4|131072|1|3|QAT E2B smallest multimodal, text+image+tools. Prior mlx-vlm 0.6.3 baseline: text 53 tok/s (fastest), tools OK, vision 4/4 — re-verify on oMLX. ~5.2 GB. gated|1.0|0.95|0.3|0.3
+bge-m3|BAAI/bge-m3|embed|omlx|fp16|2|no|||||5|Multilingual DENSE embedder (BGE-M3, 1024-dim, 8192 ctx) for RAG. Served by the SAME resident oMLX process as main (no separate backend/venv) via --model-dir. LiteLLM alias 'embed' (/v1/embeddings). Cross-lingual correctness verified in a sandboxed eval 2026-07-13 (cosine ~0.97 for a translation pair vs ~0.62 unrelated). Needed a --model-dir symlink under a mlx-tagged name — oMLX's HF-cache auto-discovery only trusts mlx-community/*-style repos. Not gated.||||
+bge-reranker-v2-m3|BAAI/bge-reranker-v2-m3|rerank|omlx|fp16|2|no|||||5|Multilingual cross-encoder RERANKER (bge-reranker-v2-m3) matching bge-m3. Served by the SAME resident oMLX process as main via --model-dir. LiteLLM alias 'rerank' — well-calibrated ordering verified in the sandboxed eval, but only at the raw-oMLX level; rerank via LiteLLM's bare 'openai/' provider is NOT a standardized OpenAI endpoint and needs re-verification through the gateway in production. Not gated.||||

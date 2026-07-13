@@ -3,7 +3,7 @@
 #
 # Usage:
 #   llm-logs                              # list available logs
-#   llm-logs mlxvlm-main                  # tail -F mlxvlm-main.log
+#   llm-logs omlx-main                    # tail -F omlx-main.log
 #   llm-logs immich-proxy  docling-proxy  # tail -F multiple at once
 set -u
 

@@ -317,8 +317,7 @@
         </select></div>
       <div><label class="muted" style="font-size:12px">Engine</label>
         <select id="edEngine">
-          <option value="mlxvlm">mlxvlm</option>
-          <option value="infinity">infinity</option>
+          <option value="omlx">omlx</option>
         </select></div>
       <div><label class="muted" style="font-size:12px">Quant</label>
         <input type="text" id="edQuant" placeholder="4bit" autocomplete="off"></div>
@@ -347,9 +346,10 @@
       <div><label class="muted" style="font-size:12px">presence_penalty</label>
         <input type="text" id="edPres" autocomplete="off"></div>
     </div>
-    <p class="muted" style="font-size:12px;margin-top:10px">Hinweis: Die Kontextlänge (max_kv_size)
-      wird über <code>MLXVLM_MAIN_MAX_KV_SIZE</code> gesetzt, KV-Quantisierung über
-      <code>MLXVLM_MAIN_KV_BITS</code>. Sampling-Änderungen an einem aktiven Modell greifen erst nach erneutem Aktivieren.</p>
+    <p class="muted" style="font-size:12px;margin-top:10px">Hinweis: Die Kontextlänge des aktiven
+      Main-Modells wird über <code>OMLX_MAX_CONTEXT_WINDOW</code> gesetzt (in ~/.omlx/settings.json
+      vorbelegt), der RAM-Deckel über <code>OMLX_MEMORY_GUARD_GB</code>. Sampling-Änderungen an einem
+      aktiven Modell greifen erst nach erneutem Aktivieren.</p>
     <div class="row">
       <button id="editCancel">Abbrechen</button>
       <button class="primary" id="editSave">Speichern</button>
@@ -379,8 +379,7 @@
         <div><label class="muted" style="font-size:12px">Engine (leer = automatisch)</label>
           <select id="addEngine">
             <option value="">automatisch</option>
-            <option value="mlxvlm">mlxvlm</option>
-            <option value="infinity">infinity</option>
+            <option value="omlx">omlx</option>
           </select></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end">
@@ -1021,7 +1020,7 @@ function openEditModal(m) {
   $("#editSub").textContent = m.id + " — " + m.repo;
   $("#edRepo").value = m.repo || "";
   $("#edRole").value = m.role || "text";
-  $("#edEngine").value = m.engine || "mlxvlm";
+  $("#edEngine").value = m.engine || "omlx";
   $("#edQuant").value = m.quant || "";
   $("#edGb").value = m.gb || "";
   $("#edKv").value = m.max_kv_size || "";
@@ -1242,9 +1241,8 @@ const SET_GROUPS = [
   ["Dienste (Install-Schalter)", k => k.startsWith("INSTALL_")],
   ["Modelle & Aliase", k => k.startsWith("ALIAS_") || k === "MODEL_PIN_MAIN"],
   ["Text-Engine", k => k === "TEXT_ENGINE" || k.startsWith("MAIN_") || k === "LLM_REQUEST_TIMEOUT"
-      || k.startsWith("MLXVLM_")
+      || k.startsWith("OMLX_")
       || k === "GEMMA_TOP_K" || k === "PRESET_ALIASES" || k === "LITELLM_PORT"],
-  ["Embeddings & Rerank", k => k.startsWith("INFINITY_") || k.includes("INFINITY")],
   ["immich & docling", k => k.includes("IMMICH") || k.includes("DOCLING") || k.startsWith("ML_")],
   ["Exporter & MQTT", k => k.includes("EXPORTER") || k.startsWith("MQTT_") || k === "SILICON_SAMPLE_INTERVAL_MS"],
   ["Watchdog & Wartung", k => k.startsWith("WATCHDOG_") || k.startsWith("AUTOUPDATE_")],
@@ -1318,7 +1316,7 @@ function viewEinstellungen() {
                            || r.key === "WATCHDOG_AUTO_RESTORE" || r.key.endsWith("_FLASH_ATTENTION"));
         let input;
         if (r.key === "TEXT_ENGINE") {
-          input = `<select data-key="${esc(r.key)}">` + ["mlx-vlm"].map(o =>
+          input = `<select data-key="${esc(r.key)}">` + ["omlx"].map(o =>
             `<option value="${o}" ${r.value === o ? "selected" : ""}>${o}</option>`).join("") + "</select>";
         } else if (isBool) {
           input = `<label class="switch"><input type="checkbox" data-key="${esc(r.key)}" ${r.value === "1" ? "checked" : ""}><span></span></label>`;
@@ -1397,7 +1395,7 @@ function viewLogs() {
     try { d = await api("/api/logs"); } catch (e) { return; }
     const sel = $("#logSelect");
     const names = d.logs.map(l => l.name);
-    if (!lv.name || !names.includes(lv.name)) lv.name = names.includes("mlxvlm-main.log") ? "mlxvlm-main.log" : names[0];
+    if (!lv.name || !names.includes(lv.name)) lv.name = names.includes("omlx-main.log") ? "omlx-main.log" : names[0];
     sel.innerHTML = d.logs.map(l =>
       `<option value="${esc(l.name)}" ${l.name === lv.name ? "selected" : ""}>${esc(l.name)} (${fmtBytes(l.size)})</option>`).join("");
     sel.onchange = () => { lv.name = sel.value; reload(); };

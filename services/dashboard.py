@@ -87,10 +87,8 @@ JOB_RC_RE = re.compile(r"^__JOB_RC__=(\d+)\s*$", re.MULTILINE)
 # Service registry: label -> (German display name, kind). `kind` drives the UI
 # actions (always-on -> restart/stop; on-demand -> wake/stop; scheduled -> none).
 SERVICES = [
-    ("com.local.mlxvlm.main",       "Text-Engine (mlx-vlm)",       "always"),
+    ("com.local.omlx.main",         "LLM-Engine (oMLX)",           "always"),
     ("com.local.litellm.proxy",     "LiteLLM-Gateway",             "always"),
-    ("com.local.infinity.proxy",    "Embed/Rerank Proxy",          "always"),
-    ("com.local.infinity.serve",    "Embed/Rerank Backend",        "ondemand"),
     ("com.local.images.proxy",      "Image-Gen Proxy",             "always"),
     ("com.local.images.serve",      "Image-Gen Backend (FLUX)",    "ondemand"),
     ("com.local.voicestt.proxy",    "Sprache-Erkennung Proxy",     "always"),
@@ -120,14 +118,12 @@ ALL_LABELS = {lbl for lbl, _n, _k in SERVICES}
 # Services with a persistent power off/on control (frees memory for good vs.
 # a transient stop that KeepAlive respawns instantly). Mirrors setup.sh's
 # POWER_LABELS whitelist for --set-service-power.
-POWER_LABELS = {"com.local.mlxvlm.main", "com.local.infinity.proxy"}
+POWER_LABELS = {"com.local.omlx.main"}
 
 # label -> log file (mirror setup.sh label_log()).
 LABEL_LOG = {
-    "com.local.mlxvlm.main": "mlxvlm-main.log",
+    "com.local.omlx.main": "omlx-main.log",
     "com.local.litellm.proxy": "litellm.log",
-    "com.local.infinity.proxy": "infinity-proxy.log",
-    "com.local.infinity.serve": "infinity-serve.log",
     "com.local.images.proxy": "images-proxy.log",
     "com.local.images.serve": "images-serve.log",
     "com.local.voicestt.proxy": "voicestt-proxy.log",
@@ -215,12 +211,10 @@ def active_labels():
     mlx = c.get("INSTALL_MLX", "1") == "1"
     out = []
     for lbl, _name, _kind in SERVICES:
-        if lbl == "com.local.mlxvlm.main":
+        if lbl == "com.local.omlx.main":
             keep = mlx
         elif lbl.startswith("com.local.litellm."):
             keep = mlx
-        elif lbl.startswith("com.local.infinity."):
-            keep = c.get("INSTALL_EMBED", "1") == "1"
         elif lbl.startswith("com.local.images."):
             keep = c.get("INSTALL_IMAGES", "0") == "1"
         elif lbl.startswith("com.local.voicestt.") or lbl.startswith("com.local.voicetts.") \
@@ -810,7 +804,7 @@ def api_status():
         "hostname": host_name(),
         "time": int(time.time()),
         "boot_epoch": boot_time_epoch(),
-        "engine": c.get("TEXT_ENGINE", "mlx-vlm"),
+        "engine": c.get("TEXT_ENGINE", "omlx"),
         "aliases": {
             "main": c.get("ALIAS_MAIN", ""),
             "main_fast": c.get("PRESET_ALIASES", "1") == "1",
@@ -843,7 +837,7 @@ def api_status():
 def api_models():
     c = conf()
     hf = c.get("HF_CACHE_DIR", DEFAULT_HF) or DEFAULT_HF
-    engine = c.get("TEXT_ENGINE", "mlx-vlm") or "mlx-vlm"
+    engine = c.get("TEXT_ENGINE", "omlx") or "omlx"
     rows = []
     for r in read_catalog():
         st = model_status(r["repo"], hf)
@@ -854,9 +848,10 @@ def api_models():
         # the catalog's gb column is unknown ("?"). Display-only; the TUI-owned
         # catalog is never rewritten.
         row["disk_bytes"] = model_downloaded_bytes(r["repo"], hf) if st in ("ok", "partial") else 0
-        row["broken_main"] = is_broken_for(notes, "mlx-vlm") if r["role"] == "text" else None
+        # Every slot (main/embed/rerank) now runs on the one omlx engine.
+        row["broken_main"] = is_broken_for(notes, "omlx") if r["role"] == "text" else None
         if r["role"] in ("embed", "rerank"):
-            row["broken"] = is_broken_for(notes, "infinity")
+            row["broken"] = is_broken_for(notes, "omlx")
         else:
             row["broken"] = row["broken_main"]
         row["slots"] = [s for s, key in (
@@ -936,7 +931,6 @@ def api_links():
     return {
         "litellm_port": port("LITELLM_PORT", 11434),
         "docling_port": port("DOCLING_PUBLIC_PORT", 5001) if c.get("INSTALL_DOCLING", "1") == "1" else 0,
-        "infinity_port": port("INFINITY_PUBLIC_PORT", 5004) if c.get("INSTALL_EMBED", "1") == "1" else 0,
         "images_port": port("IMAGES_PUBLIC_PORT", 5005) if c.get("INSTALL_IMAGES", "0") == "1" else 0,
         "voicestt_port": port("VOICESTT_PUBLIC_PORT", 5006) if c.get("INSTALL_VOICE", "0") == "1" else 0,
         "voicetts_port": port("VOICETTS_PUBLIC_PORT", 5007) if c.get("INSTALL_VOICE", "0") == "1" else 0,

@@ -1,43 +1,46 @@
 # Mac Studio Headless LLM Server
 
 Headless Apple Silicon Mac as an **MLX inference server**: **one unified
-multimodal model permanently warm** — by default **gemma-4-26b on `mlx_vlm.server`**,
-which handles **text *and* images in the same chat** plus tool calling, with KV-cache
-quantization — a **LiteLLM gateway** that gives apps stable aliases, and an on-demand
-**BGE embeddings + reranker** pair (for RAG). Plus optional companion services (image AI,
-document conversion) that sleep when idle and wake on first request. Runs fully
-unattended: no GUI, no login, auto-restart on power loss, weekly self-update.
+multimodal model permanently warm** — by default **gemma-4-26b on `oMLX`**,
+which handles **text *and* images in the same chat** plus tool calling, plus
+**BGE embeddings + reranker** in that SAME resident process (for RAG) — a
+**LiteLLM gateway** that gives apps stable aliases. Plus optional companion
+services (image AI, document conversion) that sleep when idle and wake on
+first request. Runs fully unattended: no GUI, no login, auto-restart on power
+loss, weekly self-update.
 
 Designed for a 32 GB M1 Max but scales unchanged to bigger Apple Silicon — just
 raise a couple of config keys.
 
-> **Text engine — mlx-vlm.** The always-on text backend is Apple mlx-vlm's
-> `mlx_vlm.server` (pinned `MLXVLM_VERSION=0.6.3`), serving **one unified multimodal
-> model** that handles **text *and* images in the same chat** plus tool calling, with
-> KV-cache quantization (bigger context on 32 GB). The default main is `gemma4-26b-qat`
+> **Text engine — oMLX.** The always-on backend is **oMLX**
+> (pinned `OMLX_REPO_REF=v0.5.1`), serving **one unified multimodal
+> model** that handles **text *and* images in the same chat** plus tool calling —
+> AND, in the SAME process, the BGE embed/rerank pair — with an SSD
+> paged-prefix-cache and continuous batching. The default main is `gemma4-26b-qat`
 > (verified: `gemma4-{26b,12b,e4b,e2b}-qat`, text+tools+vision, vision 4/4). Only **one
-> big model** is in memory (the small BGE embed/rerank pair is the only on-demand
-> extra).
+> process** is in memory — there is no second backend for embed/rerank anymore.
 
 ## What this gives you
 
-- **`mlx_vlm.server`** always on (internal :18000): **one** unified multimodal
-  model that does **text *and* images in the same chat** plus tool calling, with
-  **KV-cache quantization** (`MLXVLM_MAIN_KV_BITS`/`_KV_SCHEME`) and a context/OOM
-  cap (`MLXVLM_MAIN_MAX_KV_SIZE`). Reasoning is on by default
-  (`MLXVLM_MAIN_ENABLE_THINKING`); tool calling is auto-detected from the model's
-  chat template. Version pinned via `MLXVLM_VERSION` (0.6.3).
+- **oMLX** always on (internal :18000): **one** unified multimodal
+  model that does **text *and* images in the same chat** plus tool calling, plus
+  the BGE embed/rerank pair, ALL in one process. Soft RAM ceiling
+  (`OMLX_MEMORY_GUARD_GB`) and a per-model context cap (`OMLX_MAX_CONTEXT_WINDOW`,
+  pre-seeded into `~/.omlx/settings.json`). Reasoning is left to the model/client
+  by default; tool calling is auto-detected from the model's chat template.
+  Version pinned via `OMLX_REPO_REF` (v0.5.1).
 - **LiteLLM gateway** on the public port (:11434): apps talk OpenAI `/v1` (and
   Anthropic `/v1/messages`) to the stable aliases — `main` (text + images, reasons by
   default), `main-fast` (same model, thinking-off), `embed` (BGE-M3 embeddings)
-  and `rerank` (BGE reranker). The underlying model is swappable without the app
-  noticing.
-- **Embeddings + rerank** (opt-in `INSTALL_EMBED=1`, on by default): **BAAI/bge-m3**
+  and `rerank` (BGE reranker) — all FOUR served by the same resident oMLX
+  process. The underlying model is swappable without the app noticing.
+- **Embeddings + rerank** (aliases `embed`/`rerank`, on by default — no separate
+  install toggle, they live inside the one MLX-stack process): **BAAI/bge-m3**
   (1024-dim multilingual dense embeddings, `embed` alias) + **BAAI/bge-reranker-v2-m3**
-  (cross-encoder, `rerank` alias) served together by **Infinity** in one Torch-MPS
-  process, on-demand on :5004. Both small (~2 GB each) — they are the only on-demand
-  extra that co-resides with the big main. Reachable via LiteLLM `/v1/embeddings` and
-  `/v1/rerank`.
+  (cross-encoder, `rerank` alias) served by the SAME resident oMLX process as
+  `main`, discoverable via a `--model-dir` symlink farm. No separate backend,
+  port, or idle/wake cycle — they're always available whenever `main` is.
+  Reachable via LiteLLM `/v1/embeddings` and `/v1/rerank`.
 - **Voice: Speech-to-Text + Text-to-Speech** (opt-in `INSTALL_VOICE=1`, off by
   default): `stt` alias via **FluidAudio's Parakeet** model running on the Apple
   Neural Engine (measured to cause zero slowdown of the main model — the ANE is
@@ -60,7 +63,7 @@ raise a couple of config keys.
   sleeps after 15 min, freeing RAM.
 - **Weekly auto-update** (Sat 06:00): **OS + brew system packages only**
   (`brew update`, macOS security updates). The model/LLM stack is **frozen** —
-  `mlx-vlm` is pinned via `MLXVLM_VERSION`, and `litellm`/models are never
+  `oMLX` is pinned via `OMLX_REPO_REF`, and `litellm`/models are never
   auto-upgraded (a surprise version jump once broke a model). The run logs which
   LLM versions are available but held. Bump them deliberately via
   **Check for updates** → set the pin → Install/update.
@@ -100,15 +103,14 @@ Public (apps point here):
                                              embed / rerank
                                              (OpenAI /v1 + Anthropic /v1/messages)
 Always on (internal / support):
-  com.local.mlxvlm.main            :18000   the ONE unified multimodal main (mlx_vlm.server)
-  com.local.infinity.proxy         :5004    on-demand proxy for embed + rerank (Infinity)
+  com.local.omlx.main              :18000   the ONE unified process: main text+images
+                                             + embed + rerank (oMLX)
   com.local.immich.proxy           :3003    on-demand proxy (optional)
   com.local.docling.proxy          :5001    on-demand proxy (optional)
   com.local.llm.watchdog                    memory-pressure safety net
   com.local.preventsleep                    caffeinate
 
 Registered but sleeping until requested:
-  com.local.infinity.serve         :15004   Infinity embed + rerank backend (Torch MPS)
   com.local.immich.ml              :13003   immich-ml backend (optional)
   com.local.docling.serve          :15001   docling-serve backend (optional)
 
@@ -127,7 +129,9 @@ Scheduled (Sat 06:00 default):
 ```
 
 The main model is kept warm; switching it is an **explicit** action (pick in
-`llm-models` → `mlx_vlm.server` restarts, ~30–60 s) — never a silent hot-swap.
+`llm-models` → `omlx.main` restarts, ~30–60 s) — never a silent hot-swap.
+Switching `embed`/`rerank` to an already-downloaded model does **not** restart
+the daemon.
 
 > **Connecting apps?** See **[INTEGRATIONS.md](INTEGRATIONS.md)** for the
 > endpoint reference and ready-to-paste configs (Open WebUI, paperless-gpt,
@@ -172,7 +176,7 @@ ssh mac@mac.home.arpa 'echo ok'
 On fresh macOS, `/usr/bin/git` is a stub that triggers a GUI prompt. The
 one-liner installs the Command Line Tools headlessly first, then clones and
 runs the installer. `setup.sh` then auto-installs Homebrew, **python@3.12**, and
-builds the MLX venvs (`mlxvlm`, `litellm`).
+builds the MLX venvs (`omlx`, `litellm`).
 
 ```bash
 # SSH into the Mac, then (one-time CLT bootstrap so `git clone` works):
@@ -207,7 +211,8 @@ llm-models                    # opens the model & alias manager
 ```
 
 Only `STATUS=ok` (fully downloaded + verified) models are selectable. After
-`s`, `mlx_vlm.server` restarts and loads the model.
+`s`, `omlx.main` restarts and loads the model. After `m`/`k`, embed/rerank
+become available on the SAME running process — no restart.
 
 ### 5. Use it
 
@@ -228,7 +233,7 @@ curl http://mac.home.arpa:11434/v1/chat/completions \
         {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}]}]}'
 ```
 
-Tool calling and reasoning separation are automatic on `mlx_vlm.server` (per the
+Tool calling and reasoning separation are automatic on `oMLX` (per the
 model's chat template) — no per-model flags needed.
 
 ### 6. Update later
@@ -255,8 +260,8 @@ preset on the same model), **`embed`** (alias `embed`) and **`rerank`**
 | Key | Action |
 |---|---|
 | `d <id>` | **Download** the repo from HuggingFace (live progress), then verify |
-| `s <id>` | Set as the active **text/main** model (role=text only) → `mlx_vlm.server` restarts |
-| `m <id>` / `k <id>` | Set the active **embed** / **rerank** model |
+| `s <id>` | Set as the active **text/main** model (role=text only) → `omlx.main` restarts |
+| `m <id>` / `k <id>` | Set the active **embed** / **rerank** model (no restart if already downloaded) |
 | `a` / `e <id>` / `x <id>` | Add / edit / remove a catalog entry |
 | `r <id>` | Delete the locally-downloaded files |
 | `t` | Store/clear your **HuggingFace token** (`hf auth login`) |
@@ -264,15 +269,15 @@ preset on the same model), **`embed`** (alias `embed`) and **`rerank`**
 
 Per-model columns the catalog carries: `role`, `engine`, `quant`, `gb`,
 `gated`, `reasoning_parser`, `tool_parser`, `max_kv_size`, `max_num_seqs`,
-`rating`, `notes`, sampling defaults. `mlx_vlm.server` auto-detects reasoning and
+`rating`, `notes`, sampling defaults. `oMLX` auto-detects reasoning and
 the tool parser from the model, so those columns are informational. A model is
-refused for a slot when its `notes` carry a `BROKEN` flag (or `BROKEN[<engine>]`
-for the engine that slot runs).
+refused for a slot when its `notes` carry a `BROKEN` flag (or `BROKEN[omlx]` —
+every slot runs on the one `omlx` engine now).
 
 **Per-model sampling** (temperature/top_p/…) defaults are injected into the
 LiteLLM `main` alias; clients can override per request. `main`/`main-fast` use
 Gemma's reference sampling (temp 1.0 / top_p 0.95 from the catalog + `top_k`=`GEMMA_TOP_K`
-via `extra_body`). The generation ceiling for `main` is `MLXVLM_MAX_TOKENS`.
+via `extra_body`).
 
 **HuggingFace token:** set it via `llm-models` → `t`. It is stored in the user's
 HF cache (`$HF_CACHE_DIR/.../token`, mode 600) — **never** in `macstudio.conf`
@@ -283,10 +288,10 @@ BGE embed/rerank pair). Add more via `llm-models`:
 
 | id | role | ~GB | notes |
 |---|---|---|---|
-| `gemma4-26b-qat` | text | 16 | **default main** — QAT 26B-A4B MoE on mlx-vlm, unified text+images+tools, KV-quant (~32 tok/s); German (**gated**) |
-| `gemma4-12b-qat` / `-e4b-qat` / `-e2b-qat` | text | 8 / 4 / 3 | QAT variants on mlx-vlm — multimodal, faster/smaller; **gated** |
-| `bge-m3` | embed | 2 | **default embed** — 1024-dim multilingual dense embeddings (Infinity) |
-| `bge-reranker-v2-m3` | rerank | 2 | **default rerank** — cross-encoder reranker (Infinity) |
+| `gemma4-26b-qat` | text | 16 | **default main** — QAT 26B-A4B MoE on oMLX, unified text+images+tools (~48 tok/s in a sandboxed eval); German (**gated**) |
+| `gemma4-12b-qat` / `-e4b-qat` / `-e2b-qat` | text | 8 / 4 / 3 | QAT variants on oMLX — multimodal, faster/smaller; **gated** |
+| `bge-m3` | embed | 2 | **default embed** — 1024-dim multilingual dense embeddings (same oMLX process) |
+| `bge-reranker-v2-m3` | rerank | 2 | **default rerank** — cross-encoder reranker (same oMLX process) |
 
 All Gemma-4 rows are multimodal text+images — **none support audio**.
 
@@ -299,10 +304,9 @@ present):
 |---|---|---|
 | **Xcode Command Line Tools** | `softwareupdate -i` (headless) | unless present |
 | **Homebrew** | official installer, `NONINTERACTIVE=1`, as `TARGET_USER` | if absent |
-| **python@3.12** | `brew install python@3.12` (MLX/docling wheels need ≥3.10) | if `INSTALL_MLX=1`, `INSTALL_EMBED=1` or `INSTALL_DOCLING=1` |
-| **mlxvlm venv** | `pip install mlx-vlm==$MLXVLM_VERSION huggingface_hub[cli]` in `$VENV_DIR/mlxvlm` | if `INSTALL_MLX=1` |
+| **python@3.12** | `brew install python@3.12` (MLX/docling wheels need ≥3.10) | if `INSTALL_MLX=1` or `INSTALL_DOCLING=1` |
+| **omlx project + venv** | `git clone` `OMLX_REPO`@`OMLX_REPO_REF` + `pip install -e .` (editable, alpha-stage, not on PyPI) in `$VENV_DIR/omlx` | if `INSTALL_MLX=1` |
 | **litellm venv** | `pip install 'litellm[proxy]'` in `$VENV_DIR/litellm` | if `INSTALL_MLX=1` |
-| **infinity venv** | `pip install 'infinity-emb[all]' huggingface_hub[cli]` in `$VENV_DIR/infinity` | if `INSTALL_EMBED=1` |
 | **node_exporter** | `brew install node_exporter` | if `INSTALL_EXPORTERS=1` (off by default) |
 | **mactop + macmon** | `brew install mactop macmon` | if `INSTALL_TUI=1` |
 | **docling-serve venv** | `pip install 'docling[…]' 'docling-serve[ui]'` | if `INSTALL_DOCLING=1` |
@@ -332,11 +336,11 @@ when idle, so it only touches the GPU during active jobs. Point your Immich serv
 | 96 GB     | 92160                  | 6 GB        |
 | 192 GB    | 184320                 | 12 GB       |
 
-**Memory note (32 GB):** `mlx_vlm.server` quantizes the KV cache
-(`MLXVLM_MAIN_KV_BITS`, default 8-bit) and caps context with
-`MLXVLM_MAIN_MAX_KV_SIZE` (default 65536) as an OOM guard. Only **one** big model
-fits, so the BGE embed/rerank pair (~2 GB each) co-resides as the small on-demand
-extra; a second big model does not fit.
+**Memory note (32 GB):** `oMLX` has a soft RAM ceiling
+(`OMLX_MEMORY_GUARD_GB`, default 30) and caps context per-model with
+`OMLX_MAX_CONTEXT_WINDOW` (default 65536) via `~/.omlx/settings.json`. Only
+**one** process fits — the BGE embed/rerank pair lives inside that SAME
+process (no second backend to co-reside); a second big main does not fit.
 
 ## `setup.sh` — one file, whole lifecycle
 
@@ -377,33 +381,27 @@ use the menu) to change a live box.
 |---|---|---|
 | `TARGET_USER` | `mac` | Unix user that owns the venvs + daemons |
 | `IOGPU_WIRED_LIMIT_MB` | `30720` | GPU wired memory ceiling |
-| `INSTALL_MLX` | `1` | The MLX stack (mlx_vlm.server + LiteLLM gateway) — primary backend |
-| `VENV_DIR` | `/Users/mac/.macstudio-venvs` | Where the mlxvlm/litellm venvs live |
+| `INSTALL_MLX` | `1` | The MLX stack (oMLX + LiteLLM gateway) — primary backend, now including embed/rerank |
+| `VENV_DIR` | `/Users/mac/.macstudio-venvs` | Where the omlx/litellm venvs live |
 | `HF_CACHE_DIR` | `/Users/mac/.cache/huggingface` | HF model cache (`HF_HOME`) + token store |
 | `ALIAS_MAIN` | `gemma4-26b-qat` | Catalog id of the active unified text+images main (a VLM arch like gemma-4) |
-| `ALIAS_EMBED` | `bge-m3` | Catalog id of the on-demand embedder (Infinity, alias `embed`). Empty = no embed alias |
-| `ALIAS_RERANK` | `bge-reranker-v2-m3` | Catalog id of the on-demand reranker (Infinity, alias `rerank`). Empty = no rerank alias |
+| `ALIAS_EMBED` | `bge-m3` | Catalog id of the embedder (served by the SAME oMLX process, alias `embed`). Empty = no embed alias |
+| `ALIAS_RERANK` | `bge-reranker-v2-m3` | Catalog id of the reranker (served by the SAME oMLX process, alias `rerank`). Empty = no rerank alias |
 | `MODEL_PIN_MAIN` | `1` | Keep the main model permanently warm |
 | `LITELLM_PORT` | `11434` | Public gateway port (apps use this) |
-| `MAIN_BACKEND_PORT` | `18000` | Internal port `mlx_vlm.server` binds |
-| `MAIN_MAX_NUM_SEQS` | `4` | Max concurrent sequences for the main backend |
+| `MAIN_BACKEND_PORT` | `18000` | Internal port `oMLX` binds (serves main + embed + rerank) |
 | `LLM_REQUEST_TIMEOUT` | `3600` | Per-request timeout (s) for the text engine **and** LiteLLM; long docs/OCR |
-| `TEXT_ENGINE` | `mlx-vlm` | The text engine (`mlx_vlm.server`) — one unified multimodal main (text+images+tools, KV-quant) |
-| `MLXVLM_VERSION` | `0.6.3` | Pinned mlx-vlm for the `mlxvlm` venv (the text engine) |
-| `MLXVLM_MAX_TOKENS` | `16384` | mlx-vlm default `--max-tokens` = generation ceiling for `main`. The preset aliases use their own caps |
-| `MLXVLM_MAIN_KV_BITS` / `_KV_SCHEME` | `8` / `uniform` | KV-quant for the mlx-vlm unified main (`turboquant` for fractional bits) |
-| `MLXVLM_MAIN_MAX_KV_SIZE` | `65536` | mlx-vlm main context/OOM cap (`--max-kv-size`); raise to exploit KV-quant for big context |
-| `MLXVLM_MAIN_ENABLE_THINKING` | `1` | mlx-vlm main thinks by default (so `main` reasons). `main-fast` is forced thinking-off at the proxy; clients can override per request |
-| `MLXVLM_DRAFT_MODEL` / `_KIND` / `_BLOCK_SIZE` | _(empty)_ | Optional MTP speculative-decoding drafter (`--draft-model`/`--draft-kind`); empty = **off** (helps only bigger dense/MoE mains; broken on e2b/e4b) |
+| `TEXT_ENGINE` | `omlx` | The engine (`oMLX`) — one unified process for main (text+images+tools) + embed + rerank |
+| `OMLX_REPO` / `OMLX_REPO_REF` | `github.com/jundot/omlx` / `v0.5.1` | Git source + pinned tag for the `omlx` venv (alpha-stage, not on PyPI) |
+| `OMLX_PROJECT_DIR` | `/Users/mac/projects/omlx` | Where the oMLX git checkout lives |
+| `OMLX_MODEL_DIR` | `/Users/mac/.cache/omlx-models` | `--model-dir` symlink farm making every downloaded model discoverable |
+| `OMLX_MEMORY_GUARD_GB` | `30` | Soft RAM ceiling for the one oMLX process (`--memory-guard-gb`) |
+| `OMLX_MAX_CONTEXT_WINDOW` | `65536` | Per-model context cap for `main`, pre-seeded into `~/.omlx/settings.json` (NOT a CLI flag) |
+| `OMLX_SSD_CACHE_DIR` / `_MAX_SIZE` | `~/.cache/omlx-ssd-cache` / `20GB` | SSD paged-prefix-cache — real speedup on repeated long prompts. Empty dir = disabled |
+| `OMLX_HOT_CACHE_MAX_SIZE` | _(empty)_ | In-memory hot-cache max size. Empty = oMLX default |
+| `OMLX_MAX_CONCURRENT_REQUESTS` | `8` | Max concurrent in-flight requests (continuous batching) |
 | `GEMMA_TOP_K` | `64` | Gemma reference top_k for `main`/`main-fast` (via `extra_body`; top_k is not a native OpenAI param). `0`/empty = off; inert at temperature 0 |
 | `PRESET_ALIASES` | `1` | Expose the `main-fast` preset alias (same loaded model as `main`, thinking-off) |
-| `INFINITY_PUBLIC_PORT` | `5004` | Public embed/rerank port (proxy) |
-| `INFINITY_BACKEND_PORT` | `15004` | Internal Infinity backend port |
-| `IDLE_TIMEOUT_INFINITY` | `900` | Seconds before the embed/rerank backend sleeps; **`-1` = never** |
-| `STARTUP_TIMEOUT_INFINITY` | `180` | Infinity wake-up deadline (Torch/MPS load) |
-| `INFINITY_DEVICE` | `mps` | Infinity compute device (`mps` Apple GPU \| `cpu`) |
-| `INFINITY_DTYPE` | `float16` | Infinity model precision (`float16` ~half the RAM \| `float32`) |
-| `INFINITY_BATCH_SIZE` | `4` | Infinity max batch size (single-user default; raise for parallel load) |
 | `ML_PUBLIC_PORT` / `ML_BACKEND_PORT` | `3003` / `13003` | immich-ml (optional) |
 | `IMMICH_REPO` / `IMMICH_REPO_REF` | `sebastianfredette/immich-ml-metal` / `main` | immich-ml source repo + branch (override to use a fork) |
 | `DOCLING_PUBLIC_PORT` / `DOCLING_BACKEND_PORT` | `5001` / `15001` | docling-serve (optional) |
@@ -412,7 +410,6 @@ use the menu) to change a live box.
 | `NODE_EXPORTER_PORT` / `SILICON_EXPORTER_PORT` / `ONDEMAND_EXPORTER_PORT` | `9100` / `9101` / `9103` | Prometheus exporters (only if `INSTALL_EXPORTERS=1`) |
 | `INSTALL_DOCLING` / `INSTALL_TUI` / `INSTALL_WATCHDOG` | `1` | Toggle optional pieces |
 | `INSTALL_EXPORTERS` | `0` | Prometheus exporters — **off by default** |
-| `INSTALL_EMBED` | `1` | BGE embeddings + reranker via Infinity (`embed`/`rerank` aliases) — on by default |
 | `INSTALL_VOICE` | `0` | Speech-to-Text (`stt`) + Text-to-Speech (`tts`) — **off by default** |
 | `INSTALL_IMMICH` | `0` | Metal/ANE Immich-ML backend (:3003) — **off by default** (needs macOS 26 + a running Immich server) |
 | `VOICE_PROJECT_DIR` | `/Users/mac/projects/macos-speech-server` | Where FluidAudio's `macos-speech-server` is cloned+built |
@@ -433,17 +430,19 @@ use the menu) to change a live box.
 ## Updating & version pinning
 
 The weekly job updates **only the OS and brew system packages**; everything that
-serves a model (`mlx-vlm`, `litellm`, `immich-ml`, `docling`, and the model
+serves a model (`oMLX`, `litellm`, `immich-ml`, `docling`, and the model
 weights) stays put until you change it on purpose (a floating auto-upgrade once
 broke a loaded model).
 
 - **See what's available** (read-only): `sudo bash setup.sh --check-updates`
-  (or main-menu *Check for updates*). Shows installed vs PyPI (stable + newest
-  incl. pre-release) for the LLM stack, `brew outdated`, and macOS updates.
-- **Upgrade the text engine on purpose:** set `MLXVLM_VERSION` (menu 4, or edit
-  `macstudio.conf`) then `sudo bash setup.sh --apply`. The installer reinstalls
-  that exact version and restarts `mlx_vlm.server`. It's an isolated venv, so
-  up/down-grades are clean and reversible.
+  (or main-menu *Check for updates*). Shows the installed vs latest GitHub tag
+  for oMLX (it isn't on PyPI), installed vs PyPI for `litellm`, `brew
+  outdated`, and macOS updates.
+- **Upgrade the engine on purpose:** set `OMLX_REPO_REF` (menu 4, or edit
+  `macstudio.conf`) then `sudo bash setup.sh --apply`. The installer checks out
+  that exact tag, reinstalls the venv, and restarts `com.local.omlx.main`. It's
+  an isolated venv + pinned git checkout, so up/down-grades are clean and
+  reversible.
 - `litellm` stays at its built version; bump manually in the venv if ever needed
   (`<venv>/bin/pip install -U …`).
 
@@ -455,14 +454,14 @@ broke a loaded model).
 | `llm-models` | Model & alias manager (download, pick main/embed/rerank, HF token) |
 | `llm-restart [name\|all]` | Restart one or all services |
 | `llm-update` | Run the weekly autoupdate job now |
-| `llm-service-ctl wake\|sleep\|status infinity\|immich\|docling\|voicestt\|voicetts\|all` | Manual on-demand override |
-| `llm-logs [name]` | `tail -F` a service log (`mlxvlm-main`, `litellm`, `infinity-serve`, …) |
+| `llm-service-ctl wake\|sleep\|status images\|immich\|docling\|voicestt\|voicetts\|all` | Manual on-demand override |
+| `llm-logs [name]` | `tail -F` a service log (`omlx-main`, `litellm`, `images-serve`, …) |
 | `sudo mactop` / `sudo macmon` | Live Apple-Silicon TUIs |
 
 To watch **what the model is doing right now** from the TUI: `sudo bash setup.sh`
 → *View logs* → type `f <n>` to **follow live** (Ctrl-C returns to the menu);
-the `mlxvlm-main.log` follow is filtered to request/completion lines. Or on the CLI:
-`llm-logs mlxvlm-main`.
+the `omlx-main.log` follow is filtered to request/completion lines. Or on the CLI:
+`llm-logs omlx-main`.
 
 ## Web dashboard (browser control)
 
@@ -522,13 +521,14 @@ for the Apple-Silicon + on-demand panels.
 
 ## How on-demand works
 
-The proxy plist always owns the public port (e.g. Infinity :5004); the real
-backend plist (`com.local.infinity.serve`) is registered with
+The proxy plist always owns the public port (e.g. immich-ml :3003); the real
+backend plist (`com.local.immich.ml`) is registered with
 `KeepAlive=false, RunAtLoad=false` and stays stopped. On the
 first TCP connection the proxy kickstarts the backend, polls its health endpoint,
 then streams traffic. A 30 s loop stops the backend after `IDLE_TIMEOUT_*`
 seconds of idle (set `-1` to keep it warm forever). Transparent to clients apart
-from a short cold-start latency.
+from a short cold-start latency. (`main`/`embed`/`rerank` are NOT on-demand —
+`com.local.omlx.main` is always-on and serves all three from one process.)
 
 ## File layout
 
@@ -537,7 +537,7 @@ from a short cold-start latency.
 ├── setup.sh            single TUI / --apply entry point
 ├── motd.txt            SSH-login banner template
 ├── models/catalog.tsv  model catalog seed
-├── wrappers/           scripts plists execute (start-mlxvlm-main, start-litellm, start-infinity, …)
+├── wrappers/           scripts plists execute (start-omlx-main, start-litellm, …)
 ├── bin/                user commands (llm-*)
 ├── daemons/            plist templates (@VAR@ substitution)
 ├── services/           proxy, exporters, watchdogs, autoupdate
@@ -553,7 +553,7 @@ On the Mac after `--apply`:
 /usr/local/etc/macstudio.conf   config (source of truth)
 /usr/local/etc/macstudio-models/catalog.tsv   live model catalog (TUI-managed)
 /usr/local/etc/litellm.config.yaml            generated alias routing
-/Users/mac/.macstudio-venvs/    mlxvlm / litellm venvs
+/Users/mac/.macstudio-venvs/    omlx / litellm venvs
 /Users/mac/.cache/huggingface/  downloaded models + HF token
 /Library/LaunchDaemons/         com.local.*.plist
 /var/log/macstudio/             per-service logs
@@ -565,20 +565,20 @@ On the Mac after `--apply`:
 |---|---|
 | `llm-models` / `llm-status` say "setup.sh not found" | Old build — `git pull && sudo bash setup.sh --apply`. |
 | `hf auth login` / `hf download` fail with help text | huggingface_hub ≥ 1.0 renamed the CLI to `hf`. `git pull && --apply`. |
-| `main` flapping in `mlxvlm-main.log` | No model downloaded yet, or `ALIAS_MAIN` points at a model that isn't `ok`. Run `llm-models` → `d` then `s`. |
-| Short answer comes back empty from a reasoning model | The model spent the token budget thinking. Raise `MLXVLM_MAX_TOKENS` or use the thinking-off `main-fast` alias. |
-| Need image/vision input | The unified mlx-vlm `main` is multimodal — send `image_url` straight to `main` (or `main-fast`), image **before** the text. For bulk document OCR into paperless, use the separate paperless-ocr service. |
+| `main` flapping in `omlx-main.log` | No model downloaded yet, or `ALIAS_MAIN` points at a model that isn't `ok`. Run `llm-models` → `d` then `s`. |
+| Short answer comes back empty from a reasoning model | The model spent the token budget thinking. Use the thinking-off `main-fast` alias. |
+| Need image/vision input | The unified oMLX `main` is multimodal — send `image_url` straight to `main` (or `main-fast`), image **before** the text. For bulk document OCR into paperless, use the separate paperless-ocr service. |
 | Download is slow / rate-limited | Set your HF token: `llm-models` → `t`. |
-| `memory_pressure` reports `Warn` with a model loaded | Use a smaller model, lower `MLXVLM_MAIN_MAX_KV_SIZE`, or `IOGPU_WIRED_LIMIT_MB` by 1024, via `setup.sh` menu 4. |
+| `memory_pressure` reports `Warn` with a model loaded | Use a smaller model, lower `OMLX_MAX_CONTEXT_WINDOW`/`OMLX_MEMORY_GUARD_GB`, or `IOGPU_WIRED_LIMIT_MB` by 1024, via `setup.sh` menu 4. |
 | Mac doesn't come back after reboot / power loss | **FileVault is ON** and no console operator. Use `sudo fdesetup authrestart` for planned reboots; never plain `sudo reboot` on a headless FileVault Mac. |
 | `/var/macstudio/reboot-pending` exists | Weekly autoupdate needs a restart it refused to do (FileVault). Clear with `sudo fdesetup authrestart`. |
 
 ## Uninstalling
 
 `sudo bash setup.sh` → menu 9. Removes every plist, wrapper, script, config and
-log this tool installed — the daemons are `com.local.mlxvlm.main`,
+log this tool installed — the daemons are `com.local.omlx.main`,
 `com.local.litellm.proxy`,
-`com.local.infinity.{proxy,serve}`, `com.local.voicestt.{proxy,serve}`,
+`com.local.voicestt.{proxy,serve}`,
 `com.local.voicetts.{proxy,serve}`, `com.local.voicewyoming.proxy`,
 `com.local.immich.{proxy,ml}`,
 `com.local.docling.{proxy,serve}`, `com.local.node.exporter`,
@@ -587,7 +587,8 @@ log this tool installed — the daemons are `com.local.mlxvlm.main`,
 `com.local.preventsleep`, `com.local.iogpu.wiredlimit`,
 `com.local.weekly.autoupdate`, `com.local.mqtt.bridge`, `com.local.dashboard`,
 `com.local.vncfilter`, `com.local.novnc` and `com.local.paperless.ocr`.
-**Keeps** the Python venvs (`$VENV_DIR`), the HuggingFace model cache, and (if Voice
+**Keeps** the Python venvs (`$VENV_DIR`), the oMLX git checkout
+(`$OMLX_PROJECT_DIR`), the HuggingFace model cache, and (if Voice
 was installed) the cloned+built `macos-speech-server` at `$VOICE_PROJECT_DIR` —
 delete those by hand to reclaim disk.
 

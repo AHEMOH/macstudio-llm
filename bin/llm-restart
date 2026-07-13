@@ -17,14 +17,12 @@ fi
 # Short-name → launchd label (Bash-3.2 safe; macOS ships /bin/bash 3.2).
 label_for() {
   case "$1" in
-    main)            echo com.local.mlxvlm.main ;;
+    main)            echo com.local.omlx.main ;;
     litellm)         echo com.local.litellm.proxy ;;
     immich-proxy)    echo com.local.immich.proxy ;;
     immich)          echo com.local.immich.ml ;;
     docling-proxy)   echo com.local.docling.proxy ;;
     docling)         echo com.local.docling.serve ;;
-    infinity-proxy)  echo com.local.infinity.proxy ;;
-    infinity)        echo com.local.infinity.serve ;;
     images-proxy)    echo com.local.images.proxy ;;
     images)          echo com.local.images.serve ;;
     voicestt-proxy)  echo com.local.voicestt.proxy ;;
@@ -41,10 +39,10 @@ label_for() {
 }
 
 ALL_SHORT_NAMES=(main litellm immich-proxy immich docling-proxy docling \
-                 infinity-proxy infinity images-proxy images \
+                 images-proxy images \
                  voicestt-proxy voicestt voicetts-proxy voicetts voicewyoming-proxy \
                  node silicon watchdog preventsleep)
-ALL_ALWAYS_ON=(main litellm immich-proxy docling-proxy infinity-proxy images-proxy voicestt-proxy voicetts-proxy voicewyoming-proxy node silicon watchdog preventsleep)
+ALL_ALWAYS_ON=(main litellm immich-proxy docling-proxy images-proxy voicestt-proxy voicetts-proxy voicewyoming-proxy node silicon watchdog preventsleep)
 
 if [ $# -eq 0 ] || [ "${1:-}" = all ]; then
   set -- "${ALL_ALWAYS_ON[@]}"

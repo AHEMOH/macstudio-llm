@@ -29,9 +29,8 @@ MOTD_BACKUP=/etc/motd.macstudio.bak
 # --- Labels & their plist source filenames ---------------------------------
 # Always-on services
 ALWAYS_ON_LABELS=(
-  com.local.mlxvlm.main
+  com.local.omlx.main
   com.local.litellm.proxy
-  com.local.infinity.proxy
   com.local.images.proxy
   com.local.voicestt.proxy
   com.local.voicetts.proxy
@@ -53,7 +52,6 @@ ALWAYS_ON_LABELS=(
 )
 # On-demand backends (KeepAlive=false, RunAtLoad=false)
 ONDEMAND_LABELS=(
-  com.local.infinity.serve
   com.local.images.serve
   com.local.voicestt.serve
   com.local.voicetts.serve
@@ -61,11 +59,11 @@ ONDEMAND_LABELS=(
   com.local.docling.serve
 )
 ALL_LABELS=( "${ALWAYS_ON_LABELS[@]}" "${ONDEMAND_LABELS[@]}" )
-# Labels the dashboard/TUI may power off/on to free RAM. Whitelisted — these
-# are the only two daemons with KeepAlive=true that hold significant memory;
-# a plain `launchctl stop` on them is undone by launchd within a second, so
-# freeing memory for good requires the persistent disable+bootout below.
-POWER_LABELS=(com.local.mlxvlm.main com.local.infinity.proxy)
+# Label the dashboard/TUI may power off/on to free RAM. Whitelisted — this is
+# the only daemon with KeepAlive=true that holds significant memory; a plain
+# `launchctl stop` on it is undone by launchd within a second, so freeing
+# memory for good requires the persistent disable+bootout below.
+POWER_LABELS=(com.local.omlx.main)
 
 # --- Config keys with defaults --------------------------------------------
 # (order preserved, used for save_config and menu_settings)
@@ -84,31 +82,23 @@ CONFIG_KEYS=(
   ALIAS_MAIN
   MODEL_PIN_MAIN
   MAIN_BACKEND_PORT
-  MAIN_MAX_NUM_SEQS
   LLM_REQUEST_TIMEOUT
   TEXT_ENGINE
-  MLXVLM_VERSION
-  MLXVLM_MAIN_KV_BITS
-  MLXVLM_MAIN_KV_SCHEME
-  MLXVLM_MAIN_MAX_KV_SIZE
-  MLXVLM_MAIN_ENABLE_THINKING
-  MLXVLM_MAX_TOKENS
-  MLXVLM_DRAFT_MODEL
-  MLXVLM_DRAFT_KIND
-  MLXVLM_DRAFT_BLOCK_SIZE
+  OMLX_REPO
+  OMLX_REPO_REF
+  OMLX_PROJECT_DIR
+  OMLX_MODEL_DIR
+  OMLX_MEMORY_GUARD_GB
+  OMLX_SSD_CACHE_DIR
+  OMLX_SSD_CACHE_MAX_SIZE
+  OMLX_HOT_CACHE_MAX_SIZE
+  OMLX_MAX_CONCURRENT_REQUESTS
+  OMLX_MAX_CONTEXT_WINDOW
   GEMMA_TOP_K
   PRESET_ALIASES
   LITELLM_PORT
-  INSTALL_EMBED
   ALIAS_EMBED
   ALIAS_RERANK
-  INFINITY_PUBLIC_PORT
-  INFINITY_BACKEND_PORT
-  IDLE_TIMEOUT_INFINITY
-  STARTUP_TIMEOUT_INFINITY
-  INFINITY_DEVICE
-  INFINITY_BATCH_SIZE
-  INFINITY_DTYPE
   INSTALL_IMAGES
   IMAGES_PUBLIC_PORT
   IMAGES_BACKEND_PORT
@@ -224,31 +214,23 @@ config_default() {
     ALIAS_MAIN)                  echo gemma4-26b-qat ;;
     MODEL_PIN_MAIN)              echo 1 ;;
     MAIN_BACKEND_PORT)           echo 18000 ;;
-    MAIN_MAX_NUM_SEQS)           echo 4 ;;
     LLM_REQUEST_TIMEOUT)         echo 3600 ;;
-    TEXT_ENGINE)                 echo mlx-vlm ;;
-    MLXVLM_VERSION)              echo 0.6.3 ;;
-    MLXVLM_MAIN_KV_BITS)         echo 8 ;;
-    MLXVLM_MAIN_KV_SCHEME)       echo uniform ;;
-    MLXVLM_MAIN_MAX_KV_SIZE)     echo 65536 ;;
-    MLXVLM_MAIN_ENABLE_THINKING) echo 1 ;;
-    MLXVLM_MAX_TOKENS)           echo 16384 ;;
-    MLXVLM_DRAFT_MODEL)          echo "" ;;
-    MLXVLM_DRAFT_KIND)           echo mtp ;;
-    MLXVLM_DRAFT_BLOCK_SIZE)     echo "" ;;
+    TEXT_ENGINE)                 echo omlx ;;
+    OMLX_REPO)                   echo https://github.com/jundot/omlx ;;
+    OMLX_REPO_REF)               echo v0.5.1 ;;
+    OMLX_PROJECT_DIR)            echo /Users/mac/projects/omlx ;;
+    OMLX_MODEL_DIR)              echo /Users/mac/.cache/omlx-models ;;
+    OMLX_MEMORY_GUARD_GB)        echo 30 ;;
+    OMLX_SSD_CACHE_DIR)          echo /Users/mac/.cache/omlx-ssd-cache ;;
+    OMLX_SSD_CACHE_MAX_SIZE)     echo 20GB ;;
+    OMLX_HOT_CACHE_MAX_SIZE)     echo "" ;;
+    OMLX_MAX_CONCURRENT_REQUESTS) echo 8 ;;
+    OMLX_MAX_CONTEXT_WINDOW)     echo 65536 ;;
     GEMMA_TOP_K)                 echo 64 ;;
     PRESET_ALIASES)              echo 1 ;;
     LITELLM_PORT)                echo 11434 ;;
-    INSTALL_EMBED)               echo 1 ;;
     ALIAS_EMBED)                 echo bge-m3 ;;
     ALIAS_RERANK)                echo bge-reranker-v2-m3 ;;
-    INFINITY_PUBLIC_PORT)        echo 5004 ;;
-    INFINITY_BACKEND_PORT)       echo 15004 ;;
-    IDLE_TIMEOUT_INFINITY)       echo 900 ;;
-    STARTUP_TIMEOUT_INFINITY)    echo 180 ;;
-    INFINITY_DEVICE)             echo mps ;;
-    INFINITY_BATCH_SIZE)         echo 4 ;;
-    INFINITY_DTYPE)              echo float16 ;;
     INSTALL_IMAGES)              echo 0 ;;
     IMAGES_PUBLIC_PORT)          echo 5005 ;;
     IMAGES_BACKEND_PORT)         echo 15005 ;;
@@ -351,34 +333,29 @@ config_default() {
 config_hint() {
   case "$1" in
     IOGPU_WIRED_LIMIT_MB)        echo "GPU wired memory ceiling in MB (28672–30720 on 32 GB; 2048 headroom for OS)" ;;
-    INSTALL_MLX)                 echo "1 = install the MLX stack (mlx_vlm.server unified text+images main + LiteLLM gateway) as the primary backend" ;;
-    VENV_DIR)                    echo "Where the mlxvlm/litellm/infinity Python venvs live (owned by TARGET_USER)" ;;
+    INSTALL_MLX)                 echo "1 = install the MLX stack (oMLX — unified text+images+embed+rerank main + LiteLLM gateway) as the primary backend" ;;
+    VENV_DIR)                    echo "Where the omlx/litellm Python venvs live (owned by TARGET_USER)" ;;
     HF_CACHE_DIR)                echo "HuggingFace model cache (HF_HOME) — where downloaded MLX models land" ;;
     ALIAS_MAIN)                  echo "Catalog id of the ONE active main/text model (manage via 'llm-models')" ;;
     MODEL_PIN_MAIN)              echo "1 = keep the main model permanently warm (agentic main load)" ;;
-    MAIN_BACKEND_PORT)           echo "Internal port the text engine (mlx_vlm.server) binds; LiteLLM fronts it" ;;
-    MAIN_MAX_NUM_SEQS)           echo "Fallback for concurrent decode streams" ;;
+    MAIN_BACKEND_PORT)           echo "Internal port the text engine (oMLX) binds; LiteLLM fronts it" ;;
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
-    TEXT_ENGINE)                 echo "Engine serving 'main': mlx-vlm (mlx_vlm.server — UNIFIED text+images, KV-quant, single-stream; needs a VLM main like gemma-4). The only supported engine" ;;
-    MLXVLM_VERSION)              echo "Pinned mlx-vlm for the 'mlxvlm' venv (unified text+vision main). 0.6.3 = the release that FIXED Gemma-4 unified silently dropping images (0.6.2 answered text-only, no error). Bump deliberately + --apply" ;;
-    MLXVLM_MAIN_KV_BITS)         echo "KV-cache quant bits for the mlx-vlm unified main: 8 (recommended), 4, or 3.5 with turboquant. empty=off. (Only when TEXT_ENGINE=mlx-vlm)" ;;
-    MLXVLM_MAIN_KV_SCHEME)       echo "mlx-vlm main KV quant scheme: uniform | turboquant (fractional bits like 3.5)" ;;
-    MLXVLM_MAIN_MAX_KV_SIZE)     echo "mlx-vlm main CONTEXT cap (--max-kv-size) = the OOM guard (bounds prompt+KV, unlike MLXVLM_MAX_TOKENS which only caps generation). Default 65536 (64K) — swap-safe with headroom. Verified swap-safe 2026-07-04 on both 26B-A4B and 12B @ 8-bit KV. 128K is also memory-safe on 26B-A4B (~8.7min prefill at 125K, ~96M swap) but leaves no co-residence headroom at the ceiling; on dense 12B a ~121K prompt fits in RAM but prefill takes ~19min — impractical. Raise to 131072 for max solo context on 26B. empty = model native 262144 (256K, OOM-risky uncapped)" ;;
-    MLXVLM_MAIN_ENABLE_THINKING) echo "mlx-vlm main: 1 = think by default (default — so 'main' reasons; OpenWebUI shows it), 0 = off. main-fast is forced thinking-off at the proxy regardless; clients can override per request" ;;
-    MLXVLM_MAX_TOKENS)           echo "mlx-vlm server default --max-tokens = generation ceiling for main (default 16384 = effectively unrestricted for chat/long text; model stops at EOS)" ;;
-    MLXVLM_DRAFT_MODEL)          echo "mlx-vlm speculative-decoding (MTP) drafter HF repo for the main (--draft-model). empty = OFF (default, recommended). WORKLOAD-DEPENDENT — not a free win: best-case high-acceptance code-gen gave +18% (12B) / +8% (26B-A4B), but a broader decode test 2026-07-04 (long generative output, temp0) showed MTP NET-NEGATIVE — 12B ~23→~19 tok/s (−17%), 26B-A4B fine on short prompts (+7%) but 47→36 tok/s (−23%) on a 6.5K-token prompt (drafter prefill + rejected drafts cost more than they save when acceptance is low). Enable ONLY for a verified high-acceptance workload; leave OFF for general chat. Use the matching assistant, e.g. mlx-community/gemma-4-12B-it-qat-assistant-4bit or gemma-4-26B-A4B-it-qat-assistant-4bit. E2B/E4B MTP is BROKEN in mlx-vlm 0.6.3 (reshape crash) — leave empty for those. Must be downloaded first (hf download); if missing, the main starts WITHOUT the drafter" ;;
-    MLXVLM_DRAFT_KIND)           echo "mlx-vlm drafter family (--draft-kind): mtp (Gemma-4) | dflash | eagle3. Default mtp. Only used when MLXVLM_DRAFT_MODEL is set" ;;
-    MLXVLM_DRAFT_BLOCK_SIZE)     echo "mlx-vlm drafter block size (--draft-block-size); empty = drafter's configured default. Only used when MLXVLM_DRAFT_MODEL is set" ;;
+    TEXT_ENGINE)                 echo "Engine serving 'main'/'embed'/'rerank': omlx (UNIFIED text+images+embed+rerank in ONE process, SSD paged-prefix-cache, continuous batching). The only supported engine" ;;
+    OMLX_REPO)                   echo "Git URL of oMLX (jundot/omlx), cloned+editable-installed into OMLX_PROJECT_DIR" ;;
+    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.5.1, alpha-stage) — bump deliberately + --apply, mirrors MLXVLM_VERSION's old pin discipline" ;;
+    OMLX_PROJECT_DIR)            echo "Where ensure_omlx_project() clones+builds oMLX (git clone + pip install -e, one-time + on ref bump during --apply)" ;;
+    OMLX_MODEL_DIR)              echo "--model-dir symlink farm (mlx-<catalog-id> per downloaded row) that makes every model — main AND embed/rerank — discoverable by the one resident oMLX process" ;;
+    OMLX_MEMORY_GUARD_GB)        echo "oMLX's soft RAM ceiling (--memory-guard-gb) — matches the project's 30GB wired-memory hard rule. oMLX has no hard --max-kv-size-equivalent flag" ;;
+    OMLX_SSD_CACHE_DIR)          echo "oMLX's paged-prefix SSD cache directory (--paged-ssd-cache-dir) — gives ~15x TTFT on repeated long prompts. Empty = disabled" ;;
+    OMLX_SSD_CACHE_MAX_SIZE)     echo "Max size of the SSD paged-prefix cache (--paged-ssd-cache-max-size), e.g. 20GB" ;;
+    OMLX_HOT_CACHE_MAX_SIZE)     echo "oMLX in-memory hot-cache max size (--hot-cache-max-size). Empty = oMLX default" ;;
+    OMLX_MAX_CONCURRENT_REQUESTS) echo "oMLX max concurrent in-flight requests (--max-concurrent-requests, continuous batching). Default 8" ;;
+    OMLX_MAX_CONTEXT_WINDOW)     echo "Per-model context cap for the active main, pre-seeded into ~/.omlx/settings.json (NOT a CLI flag — oMLX has no --max-kv-size equivalent). Default 65536 (64K), preserving today's documented ceiling" ;;
     GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off" ;;
     PRESET_ALIASES)              echo "1 = also expose the 'main-fast' preset alias (same loaded model as 'main' but thinking-OFF at the proxy — fast non-reasoning chat / tools / web / cron / email)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
-    INSTALL_EMBED)               echo "1 = run the on-demand Infinity backend serving the BGE embedder + reranker (LiteLLM aliases 'embed' + 'rerank'). Needs INSTALL_MLX=1 for the LiteLLM gateway" ;;
-    ALIAS_EMBED)                 echo "Catalog id of the embedding model (role=embed, engine infinity) -> LiteLLM alias 'embed'. empty = embeddings off" ;;
-    ALIAS_RERANK)                echo "Catalog id of the reranker (role=rerank, engine infinity) -> LiteLLM alias 'rerank'. empty = rerank off" ;;
-    IDLE_TIMEOUT_INFINITY)       echo "Seconds before the Infinity (embed+rerank) backend sleeps (default 900); -1 = never sleep" ;;
-    INFINITY_DEVICE)             echo "Torch device for Infinity: mps (Apple GPU, default), cpu, or auto" ;;
-    INFINITY_BATCH_SIZE)         echo "Infinity max batch size per forward pass (default 4 — plenty for a single user; raise for heavy parallel load, lower still if MPS memory is tight)" ;;
-    INFINITY_DTYPE)              echo "Infinity model weight precision: float16 (default — ~half the RAM of float32, ample for BGE) or float32" ;;
+    ALIAS_EMBED)                 echo "Catalog id of the embedding model (role=embed, engine omlx, served by the SAME process as main) -> LiteLLM alias 'embed'. empty = embeddings off" ;;
+    ALIAS_RERANK)                echo "Catalog id of the reranker (role=rerank, engine omlx, served by the SAME process as main) -> LiteLLM alias 'rerank'. empty = rerank off" ;;
     INSTALL_IMAGES)              echo "1 = run the on-demand FLUX image-generation backend (mflux, MLX-native) exposed via LiteLLM as the 'image' alias for OpenWebUI's native Images feature. Opt-in (default 0) — NOT part of the model catalog (image generation doesn't fit the text/embed/rerank role system; see CLAUDE.md)" ;;
     IMAGES_PUBLIC_PORT)          echo "Public on-demand-proxy port for the images backend (default 5005)" ;;
     IMAGES_BACKEND_PORT)         echo "Internal port mflux-server.py binds (127.0.0.1 only, default 15005)" ;;
@@ -632,12 +609,10 @@ load_config() {
   local _lbl
   for _lbl in "${ALL_LABELS[@]}"; do
     case "$_lbl" in
-      com.local.mlxvlm.main)
+      com.local.omlx.main)
         [ "${INSTALL_MLX:-1}" = 1 ] || continue ;;
       com.local.litellm.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || continue ;;
-      com.local.infinity.*)
-        [ "${INSTALL_EMBED:-1}" = 1 ] || continue ;;
       com.local.images.*)
         [ "${INSTALL_IMAGES:-0}" = 1 ] || continue ;;
       com.local.voicestt.*|com.local.voicetts.*|com.local.voicewyoming.*)
@@ -688,10 +663,8 @@ save_config_key() {
 # --- label → log file mapping ---------------------------------------------
 label_log() {
   case "$1" in
-    com.local.mlxvlm.main)       echo "$LOG_DIR/mlxvlm-main.log" ;;
+    com.local.omlx.main)         echo "$LOG_DIR/omlx-main.log" ;;
     com.local.litellm.proxy)     echo "$LOG_DIR/litellm.log" ;;
-    com.local.infinity.proxy)    echo "$LOG_DIR/infinity-proxy.log" ;;
-    com.local.infinity.serve)    echo "$LOG_DIR/infinity-serve.log" ;;
     com.local.images.proxy)      echo "$LOG_DIR/images-proxy.log" ;;
     com.local.images.serve)      echo "$LOG_DIR/images-serve.log" ;;
     com.local.voicestt.proxy)    echo "$LOG_DIR/voicestt-proxy.log" ;;
@@ -892,7 +865,7 @@ ensure_formulas() {
 }
 
 ensure_modern_python() {
-  # The MLX stack (mlx-vlm, litellm) and docling-serve all need
+  # The MLX stack (omlx, litellm) and docling-serve all need
   # Python ≥ 3.10; macOS ships /usr/bin/python3 at 3.9. Install python@3.12
   # via brew so those venvs have a compatible interpreter. Skip only if both
   # the MLX stack and docling are off.
@@ -1236,6 +1209,103 @@ catalog_engine() { catalog_field "$1" 4; }
 catalog_gb()     { catalog_field "$1" 6; }
 catalog_gated()  { catalog_field "$1" 7; }
 
+# ensure_omlx_model_dir — build/refresh the --model-dir symlink farm. EVERY
+# omlx-engine catalog row that's fully downloaded gets a mlx-<id> entry —
+# including gemma4 rows that would auto-discover fine via HF-cache scanning
+# alone — so served-name is ALWAYS "mlx-<catalog-id>", independent of
+# model_discovery.py's _is_hf_cache_mlx_compatible() heuristic (alpha-stage;
+# this is exactly the heuristic that silently skipped raw BAAI/* checkpoints
+# in the sandboxed eval). Symlinking ALL downloaded rows (not just the
+# currently active ALIAS_MAIN/EMBED/RERANK) is what lets set_model_alias
+# switch embed/rerank to an already-downloaded model WITHOUT restarting.
+ensure_omlx_model_dir() {
+  [ "${INSTALL_MLX:-1}" = 1 ] || return 0
+  local root="${OMLX_MODEL_DIR:-$TARGET_HOME/.cache/omlx-models}"
+  local hf="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}"
+  /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$root"
+  [ -f "$CATALOG_FILE" ] || return 0
+  local id repo role engine rest any=0
+  while IFS='|' read -r id repo role engine rest; do
+    case "$id" in ''|\#*) continue ;; esac
+    [ "$engine" = omlx ] || continue
+    [ "$(model_status "$repo")" = ok ] || continue
+    _omlx_symlink_one "$id" "$repo" "$root" "$hf" && any=1
+  done <"$CATALOG_FILE"
+  [ "$any" = 1 ] || dbg "no downloaded omlx-engine catalog rows yet"
+}
+
+# _omlx_symlink_one <catalog-id> <hf-repo> <model-dir-root> <hf-cache-dir>
+# Wipes and rebuilds ONE mlx-<id> dir from the UNION of every snapshot
+# directory under the repo's HF-cache entry — not just what refs/main points
+# at — because a repo's cache CAN be split across snapshots (observed for
+# BAAI/bge-m3 in the sandboxed eval: one snapshot had config.json+tokenizer
+# files, a DIFFERENT one had only model.safetensors). Wipe+recreate (not
+# incremental) so an edited `repo` column never leaves stale symlinks behind.
+_omlx_symlink_one() {
+  local id=$1 repo=$2 root=$3 hf=$4
+  local snaproot="$hf/hub/models--${repo//\//--}/snapshots"
+  [ -d "$snaproot" ] || return 1
+  local target="$root/mlx-$id"
+  /usr/bin/sudo -u "$TARGET_USER" -H /bin/rm -rf "$target"
+  /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$target"
+  local snap f base n
+  for snap in "$snaproot"/*/; do
+    [ -d "$snap" ] || continue
+    for f in "$snap"*; do
+      [ -e "$f" ] || continue
+      base=$(basename "$f")
+      [ -e "$target/$base" ] || /usr/bin/sudo -u "$TARGET_USER" -H /bin/ln -s "$f" "$target/$base"
+    done
+  done
+  n=$(/usr/bin/find "$target" -type l 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')
+  ok "omlx model-dir: mlx-$id -> $repo ($n files)"
+}
+
+# ensure_omlx_settings — pre-seed OMLX_MAX_CONTEXT_WINDOW for the ACTIVE main
+# model into oMLX's per-model settings file (~/.omlx/settings.json — NOT a
+# CLI flag; oMLX has no --max-kv-size equivalent, only --memory-guard-gb
+# [soft RAM ceiling] + this per-model cap). Targeted merge of one key, never
+# a wholesale clobber, since oMLX itself may write other keys to this file
+# at runtime.
+ensure_omlx_settings() {
+  [ "${INSTALL_MLX:-1}" = 1 ] || return 0
+  [ -n "${OMLX_MAX_CONTEXT_WINDOW:-}" ] || return 0
+  local id="${ALIAS_MAIN:-}"
+  [ -n "$id" ] || return 0
+  local served="mlx-$id"
+  local dir="${TARGET_HOME:-/Users/mac}/.omlx"
+  local file="$dir/settings.json"
+  /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$dir"
+  local before; before=$(hash_file "$file")
+  local tmp; tmp=$(/usr/bin/mktemp)
+  /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env \
+    OMLX_SETTINGS_FILE="$file" OMLX_MODEL_KEY="$served" OMLX_CTX="$OMLX_MAX_CONTEXT_WINDOW" \
+    /usr/bin/python3 - >"$tmp" <<'PY'
+import json, os
+path, key, ctx = os.environ["OMLX_SETTINGS_FILE"], os.environ["OMLX_MODEL_KEY"], int(os.environ["OMLX_CTX"])
+try:
+    with open(path) as f: data = json.load(f)
+except (OSError, ValueError):
+    data = {}
+data.setdefault(key, {})
+data[key]["max_context_window"] = ctx
+print(json.dumps(data, indent=2))
+PY
+  if [ "$before" != "$(hash_file "$tmp")" ]; then
+    /bin/mv -f "$tmp" "$file"
+    /bin/chmod 644 "$file"
+    /usr/sbin/chown "$TARGET_USER" "$file" 2>/dev/null || true
+    ok "omlx settings: $served max_context_window=$OMLX_MAX_CONTEXT_WINDOW -> $file"
+    if daemon_running com.local.omlx.main; then
+      /bin/launchctl kickstart -k system/com.local.omlx.main >/dev/null 2>&1 \
+        && ok "restarted com.local.omlx.main to apply the new context window"
+    fi
+  else
+    /bin/rm -f "$tmp"
+    dbg "omlx settings up to date"
+  fi
+}
+
 # model_local_dir <hf_repo> — the HF hub snapshot dir for a repo, or empty.
 model_local_dir() {
   local repo=$1
@@ -1259,6 +1329,95 @@ model_status() {
     echo partial
   else
     echo none
+  fi
+}
+
+ensure_omlx_project() {
+  # Clones + builds oMLX (github.com/jundot/omlx) — replaces mlx-vlm (main) AND
+  # Infinity (embed/rerank) with ONE process. Alpha-stage, not on PyPI:
+  # installed from source via `pip install -e .`. Git checkout lives at
+  # OMLX_PROJECT_DIR (~/projects/omlx — same convention as
+  # ensure_immich_project/ensure_voice_project); the venv it installs INTO is
+  # the SHARED $VENV_DIR/omlx (matches mlxvlm/litellm/infinity/mflux — every
+  # wrapper execs "$VENV_DIR/<name>/bin/...", zero special-casing needed).
+  #
+  # OMLX_REPO_REF is a PINNED TAG (v0.5.1), not a floating branch — mirrors
+  # MLXVLM_VERSION's old pin discipline. Unlike ensure_immich_project's
+  # `git pull --ff-only` (tracks a moving branch), we `fetch` + explicit
+  # `checkout "$ref"` every run — a no-op when already on that tag.
+  [ "${INSTALL_MLX:-1}" = 1 ] || return 0
+  local dir="${OMLX_PROJECT_DIR:-$TARGET_HOME/projects/omlx}"
+  local repo="${OMLX_REPO:-https://github.com/jundot/omlx}"
+  local ref="${OMLX_REPO_REF:-v0.5.1}"
+  local vdir="${VENV_DIR:-/Users/mac/.macstudio-venvs}/omlx"
+  local changed=0
+
+  if [ ! -x /opt/homebrew/bin/python3.12 ]; then
+    warn "oMLX needs python@3.12, which is not installed yet."
+    warn "Re-run 'sudo bash setup.sh --apply' after Homebrew is available."
+    return 1
+  fi
+
+  if [ ! -d "$dir/.git" ]; then
+    if [ ! -x /usr/bin/git ]; then
+      warn "git not found; cannot clone omlx"
+      return 1
+    fi
+    log "cloning oMLX ($repo@$ref) -> $dir"
+    /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$(dirname "$dir")"
+    if ! /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git clone --branch "$ref" \
+          "$repo" "$dir" >"$LOG_DIR/omlx-clone.log" 2>&1; then
+      warn "git clone of omlx failed; see $LOG_DIR/omlx-clone.log"
+      return 1
+    fi
+    changed=1
+  else
+    local head_before; head_before=$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" rev-parse HEAD 2>/dev/null)
+    /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" fetch --tags origin "$ref" \
+      >"$LOG_DIR/omlx-clone.log" 2>&1 \
+      || warn "git fetch for omlx failed (continuing with existing checkout); see $LOG_DIR/omlx-clone.log"
+    /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" checkout "$ref" \
+      >>"$LOG_DIR/omlx-clone.log" 2>&1 \
+      || warn "git checkout $ref for omlx failed; see $LOG_DIR/omlx-clone.log"
+    [ "$head_before" != "$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" rev-parse HEAD 2>/dev/null)" ] && changed=1
+  fi
+
+  local pyproject="$dir/pyproject.toml"
+  if [ ! -f "$pyproject" ]; then
+    warn "omlx checkout has no pyproject.toml at $pyproject — unexpected repo layout"
+    return 1
+  fi
+  local stamp="$vdir/.pyproject.sha256"
+  local want_hash; want_hash=$(hash_file "$pyproject")
+  if [ ! -x "$vdir/bin/python" ]; then
+    log "building omlx venv at $vdir (python@3.12)"
+    /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$(dirname "$vdir")"
+    /usr/bin/sudo -u "$TARGET_USER" -H /opt/homebrew/bin/python3.12 -m venv "$vdir"
+    changed=1
+  fi
+  if [ "$want_hash" != "$(/bin/cat "$stamp" 2>/dev/null)" ]; then
+    /usr/bin/sudo -u "$TARGET_USER" -H "$vdir/bin/pip" install --upgrade pip wheel >/dev/null 2>&1 \
+      || warn "pip upgrade inside omlx venv returned non-zero"
+    log "pip install -e '$dir' (omlx, editable — resolves pinned mlx/mlx-lm/mlx-vlm/mlx-embeddings commits from pyproject.toml; several minutes)"
+    if ! /usr/bin/sudo -u "$TARGET_USER" -H "$vdir/bin/pip" install -e "$dir" \
+          >"$LOG_DIR/omlx-venv-install.log" 2>&1; then
+      warn "omlx pip install failed; see $LOG_DIR/omlx-venv-install.log"
+      return 1
+    fi
+    /usr/bin/sudo -u "$TARGET_USER" -H /bin/sh -c "printf '%s' '$want_hash' > '$stamp'"
+    changed=1
+  fi
+
+  if [ -x "$vdir/bin/omlx" ]; then
+    ok "omlx venv ready at $vdir (pinned $ref)"
+  else
+    warn "omlx pip install succeeded but $vdir/bin/omlx is missing — check the console-script name (pyproject.toml [project.scripts]) hasn't changed upstream"
+    return 1
+  fi
+
+  if [ "$changed" = 1 ] && daemon_running com.local.omlx.main; then
+    /bin/launchctl kickstart -k system/com.local.omlx.main >/dev/null 2>&1 \
+      && ok "restarted com.local.omlx.main to pick up the updated checkout/venv"
   fi
 }
 
@@ -1312,53 +1471,17 @@ ensure_python_venvs() {
     fi
   }
 
-  # The text engine is mlx_vlm.server (venv 'mlxvlm', unified text+vision main),
-  # pinned via MLXVLM_VERSION: 0.6.3 is the release that fixed Gemma-4 unified
-  # SILENTLY DROPPING image/video inputs (0.6.2 had the bug — a main would answer
-  # text-only with no error). litellm floats.
+  # litellm floats (no engine pin needed — it's the gateway, not the engine).
+  # The text/embed/rerank engine is oMLX (venv 'omlx', cloned+editable-installed
+  # by ensure_omlx_project() below — alpha-stage/not-on-PyPI, so it needs its
+  # own git-clone flow, not this generic pip-spec helper).
   _ensure_venv litellm bin:litellm       'litellm[proxy]'
-  local mlxvlm_spec="mlx-vlm"
-  [ -n "${MLXVLM_VERSION:-}" ] && mlxvlm_spec="mlx-vlm==${MLXVLM_VERSION}"
-  _ensure_venv mlxvlm  mod:mlx_vlm        "$mlxvlm_spec" 'huggingface_hub[cli]'
-
-  # Embeddings + reranker: BGE pair served by Infinity (infinity-emb) on MPS,
-  # on-demand. Independent of the text engine; pulls torch, so only built when
-  # INSTALL_EMBED=1. The wrapper execs the 'infinity_emb' console script.
-  #   - extras [torch,server] (NOT [all]): the torch/MPS backend + the v2 HTTP
-  #     server, WITHOUT 'optimum'. optimum 2.x dropped the `bettertransformer`
-  #     submodule that this infinity-emb build imports, so [all] yields a backend
-  #     that crashes on startup. We don't use BetterTransformer (CUDA-only varlen)
-  #     — the wrapper also passes --no-bettertransformer.
-  #   - click<8.2: typer 0.12.x is incompatible with click >= 8.2 ("Secondary
-  #     flag is not valid for non-boolean flag"); pin keeps the CLI parseable.
-  if [ "${INSTALL_EMBED:-1}" = 1 ]; then
-    _ensure_venv infinity bin:infinity_emb 'infinity-emb[torch,server]' 'click<8.2' 'huggingface_hub[cli]'
-  fi
 
   # FLUX image generation: mflux (MLX-native, no PyTorch/ComfyUI) + flask for the
   # thin OpenAI-compatible front end in mflux-server.py. On-demand, catalog-
   # independent (see CLAUDE.md) — only built when INSTALL_IMAGES=1.
   if [ "${INSTALL_IMAGES:-0}" = 1 ]; then
     _ensure_venv mflux bin:mflux-generate 'mflux' 'flask' 'huggingface_hub[cli]'
-  fi
-
-  # Version-sync: set MLXVLM_VERSION + `--apply` to up/downgrade the text engine.
-  if [ -n "${MLXVLM_VERSION:-}" ] && [ -x "$vdir/mlxvlm/bin/python" ]; then
-    local cur_m
-    cur_m=$(/usr/bin/sudo -u "$TARGET_USER" -H "$vdir/mlxvlm/bin/python" -c \
-      'import importlib.metadata as m; print(m.version("mlx-vlm"))' 2>/dev/null)
-    if [ -n "$cur_m" ] && [ "$cur_m" != "$MLXVLM_VERSION" ]; then
-      log "mlx-vlm pin: $cur_m -> $MLXVLM_VERSION (reinstalling)"
-      if /usr/bin/sudo -u "$TARGET_USER" -H "$vdir/mlxvlm/bin/pip" install "mlx-vlm==${MLXVLM_VERSION}" \
-            >"$LOG_DIR/mlxvlm-pin-install.log" 2>&1; then
-        ok "mlx-vlm pinned to $MLXVLM_VERSION"
-        daemon_loaded com.local.mlxvlm.main \
-          && /bin/launchctl kickstart -k system/com.local.mlxvlm.main >/dev/null 2>&1 \
-          && ok "restarted mlx_vlm.server to apply the version change"
-      else
-        warn "mlx-vlm pin install failed; see $LOG_DIR/mlxvlm-pin-install.log"
-      fi
-    fi
   fi
 }
 
@@ -1559,8 +1682,9 @@ ensure_model_catalog() {
 }
 
 # Generate /usr/local/etc/litellm.config.yaml from the active alias
-# assignments. Roles: `main` (the ONE loaded mlx_vlm.server text+images model) and
-# the embed/rerank Infinity aliases. Only rewrites + reloads on a real change.
+# assignments. Roles: `main` (the ONE loaded oMLX text+images model) and the
+# embed/rerank aliases — served by the SAME resident oMLX process. Only
+# rewrites + reloads on a real change.
 render_litellm_config() {
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   local main_repo embed_repo rerank_repo tmp
@@ -1570,9 +1694,16 @@ render_litellm_config() {
     warn "(download a model and set it as main via 'llm-models')"
     return 0
   fi
-  # Embeddings + reranking (BGE pair) served by the on-demand Infinity backend.
+  # Every model — main AND embed/rerank — is served by the SAME resident omlx
+  # process now, discoverable via its uniform mlx-<catalog-id> --model-dir
+  # entry (ensure_omlx_model_dir()). Served names are a deterministic function
+  # of the catalog id, not a transform of the HF repo string.
+  local main_served="mlx-${ALIAS_MAIN}"
   embed_repo=$(catalog_repo "${ALIAS_EMBED:-}")
   rerank_repo=$(catalog_repo "${ALIAS_RERANK:-}")
+  local embed_served="" rerank_served=""
+  [ -n "$embed_repo" ]  && embed_served="mlx-${ALIAS_EMBED}"
+  [ -n "$rerank_repo" ] && rerank_served="mlx-${ALIAS_RERANK}"
 
   # Per-model DEFAULT sampling (schema v7, cols 14-17) for the active main model.
   # We inject per-model default sampling into the LiteLLM alias; clients can
@@ -1584,20 +1715,19 @@ render_litellm_config() {
   m_freq=$(catalog_field "${ALIAS_MAIN:-}" 16)
   m_pres=$(catalog_field "${ALIAS_MAIN:-}" 17)
 
-  # emit_model <alias> <repo> <port> [temp] [top_p] [freq_pen] [pres_pen] [max_tok] [nothink] [top_k]
+  # emit_model <alias> <served-name> <port> [temp] [top_p] [freq_pen] [pres_pen] [max_tok] [nothink] [top_k]
   # One LiteLLM model_list entry; optional sampling lines only when non-empty.
   # extra_body carries up to two things, merged into ONE object:
   #   nothink (arg 9) non-empty -> suppress the model's reasoning at the proxy (so clients
   #     like OpenWebUI never see a thinking block, and short-output tasks like paperless
-  #     extraction aren't eaten by hidden think tokens). The wire form is ENGINE-SPECIFIC:
-  #     mlx_vlm.server reads a TOP-LEVEL `enable_thinking`; mlx_lm.server reads it inside
-  #     `chat_template_kwargs`.
+  #     extraction aren't eaten by hidden think tokens). oMLX's wire form is the NESTED
+  #     `chat_template_kwargs.enable_thinking` (confirmed via source read of omlx/server.py
+  #     AND live-tested) — unlike mlx_vlm.server's old top-level `enable_thinking` key.
   #   top_k (arg 10) non-empty -> Gemma's reference sampling. top_k is NOT a native OpenAI
   #     param, so it MUST ride in extra_body (catalog has no top_k column). At temperature 0
   #     it is inert, so we don't bother passing it to deterministic aliases.
   # LiteLLM forwards extra_body verbatim (drop_params leaves it untouched).
-  # mlx-vlm uses the TOP-LEVEL enable_thinking wire form.
-  local _nothink_body='{"enable_thinking": false}'
+  local _nothink_body='{"chat_template_kwargs": {"enable_thinking": false}}'
   emit_model() {
     printf '  - model_name: %s\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' "$1" "$2" "$3"
     [ -n "${4:-}" ] && printf '      temperature: %s\n' "$4"
@@ -1607,7 +1737,7 @@ render_litellm_config() {
     [ -n "${8:-}" ] && printf '      max_tokens: %s\n' "$8"
     local _eb=""
     if [ -n "${9:-}" ] && [ -n "${10:-}" ]; then
-      _eb=$(printf '{"enable_thinking": false, "top_k": %s}' "${10}")
+      _eb=$(printf '{"chat_template_kwargs": {"enable_thinking": false}, "top_k": %s}' "${10}")
     elif [ -n "${9:-}" ]; then
       _eb="$_nothink_body"
     elif [ -n "${10:-}" ]; then
@@ -1625,33 +1755,36 @@ render_litellm_config() {
     # thinking is left to the model/client (a reasoning model thinks by default; a client
     # can pass enable_thinking per request).
     # main-fast: thinking ALWAYS off at the proxy (emit_model arg 9).
-    emit_model main "$main_repo" "${MAIN_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" "" "${GEMMA_TOP_K:-64}"
+    emit_model main "$main_served" "${MAIN_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" "" "${GEMMA_TOP_K:-64}"
     # main-fast = SAME loaded gemma model as 'main' (shares :18000 -> only ONE resident),
     # exactly 'main' sampling but thinking OFF at the proxy
     # (fast, non-reasoning chat / tools / web / cron / email). (main-metadata was retired.)
     if [ "${PRESET_ALIASES:-1}" = 1 ]; then
-      emit_model main-fast "$main_repo" "${MAIN_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" 1 "${GEMMA_TOP_K:-64}"
+      emit_model main-fast "$main_served" "${MAIN_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" 1 "${GEMMA_TOP_K:-64}"
     fi
-    # Embeddings + reranking via the on-demand Infinity backend (BGE pair on MPS).
-    # LiteLLM's 'infinity/<served-name>' provider posts to <api_base>/embeddings and
-    # <api_base>/rerank (api_base = the on-demand PROXY port — the FIRST call wakes the
-    # backend). The served-name after 'infinity/' MUST equal start-infinity.sh's
-    # --served-model-name (i.e. the catalog id). model_info.mode lets LiteLLM route and
-    # list them correctly. Emitted only when the catalog id resolves (download first).
-    if [ "${INSTALL_EMBED:-1}" = 1 ] && [ -n "$embed_repo" ]; then
-      printf '  - model_name: embed\n    litellm_params:\n      model: infinity/%s\n      api_base: http://127.0.0.1:%s\n      api_key: dummy\n    model_info:\n      mode: embedding\n' \
-        "${ALIAS_EMBED}" "${INFINITY_PUBLIC_PORT:-5004}"
+    # Embeddings + reranking now served by the SAME resident omlx process as
+    # main (mlx-<id> served-name, MAIN_BACKEND_PORT), via the generic
+    # 'openai/<served-name>' provider — the SAME mechanism 'main'/'image' use.
+    # 'embed's /v1/embeddings shape is well-established for this provider;
+    # 'rerank' via a bare 'openai/' provider is NOT a standardized OpenAI
+    # endpoint — if issues surface, check the installed litellm venv's rerank
+    # provider table for whether 'openai/' actually forwards /rerank-shaped
+    # calls, or whether a different provider prefix is needed. Emitted only
+    # when the catalog id resolves (download first).
+    if [ -n "$embed_served" ]; then
+      printf '  - model_name: embed\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: embedding\n' \
+        "$embed_served" "${MAIN_BACKEND_PORT:-18000}"
     fi
-    if [ "${INSTALL_EMBED:-1}" = 1 ] && [ -n "$rerank_repo" ]; then
-      printf '  - model_name: rerank\n    litellm_params:\n      model: infinity/%s\n      api_base: http://127.0.0.1:%s\n      api_key: dummy\n    model_info:\n      mode: rerank\n' \
-        "${ALIAS_RERANK}" "${INFINITY_PUBLIC_PORT:-5004}"
+    if [ -n "$rerank_served" ]; then
+      printf '  - model_name: rerank\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: rerank\n' \
+        "$rerank_served" "${MAIN_BACKEND_PORT:-18000}"
     fi
     # FLUX image generation via the on-demand mflux backend (mflux-server.py).
-    # Uses the SAME generic 'openai/<served-name>' provider the main/main-fast
-    # chat aliases use (not infinity's provider-specific routing) — mflux-server.py
-    # speaks OpenAI's /v1/images/generations shape directly, so LiteLLM just
-    # forwards. Gated purely on INSTALL_IMAGES, not a catalog id: image
-    # generation is deliberately NOT a 4th catalog role (see CLAUDE.md).
+    # Uses the SAME generic 'openai/<served-name>' provider every other alias
+    # uses — mflux-server.py speaks OpenAI's /v1/images/generations shape
+    # directly, so LiteLLM just forwards. Gated purely on INSTALL_IMAGES, not
+    # a catalog id: image generation is deliberately NOT a 4th catalog role
+    # (see CLAUDE.md).
     if [ "${INSTALL_IMAGES:-0}" = 1 ]; then
       printf '  - model_name: image\n    litellm_params:\n      model: openai/mflux-%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: image_generation\n' \
         "${MFLUX_MODEL:-dev}" "${IMAGES_PUBLIC_PORT:-5005}"
@@ -1799,25 +1932,20 @@ render_all_plists() {
     fi
     # Skip optional services per config
     case "$label" in
-      com.local.mlxvlm.main)
-        # Text engine: mlx_vlm.server (unified text+vision). The one always-on main.
+      com.local.omlx.main)
+        # Text/embed/rerank engine: oMLX (unified text+vision+embed+rerank,
+        # ONE resident process). The one always-on main.
         [ "${INSTALL_MLX:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.litellm.*)
         [ "${INSTALL_MLX:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
-      com.local.infinity.*)
-        # On-demand BGE embedder + reranker (Infinity, MPS). Independent of the
-        # text engine, but only reachable through the LiteLLM gateway.
-        [ "${INSTALL_EMBED:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.images.*)
         # On-demand FLUX image generation (mflux, MLX-native). Catalog-
-        # independent (see CLAUDE.md) — fronted through LiteLLM's 'image' alias
-        # like main, not through Infinity's provider-specific routing.
+        # independent (see CLAUDE.md) — fronted through LiteLLM's 'image' alias.
         [ "${INSTALL_IMAGES:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.voicestt.*|com.local.voicetts.*|com.local.voicewyoming.*)
         # On-demand Speech-to-Text (FluidAudio/Parakeet, ANE) + Text-to-Speech
         # (plain `say`) — two separate backends fronted through LiteLLM's
-        # 'stt'/'tts' aliases like 'image', not through Infinity's
-        # provider-specific routing. Catalog-independent (see CLAUDE.md).
+        # 'stt'/'tts' aliases. Catalog-independent (see CLAUDE.md).
         # com.local.voicewyoming.proxy is a THIRD proxy in front of the SAME
         # voicestt.serve backend (no separate .serve daemon) — native Home
         # Assistant voice-pipeline integration (Wyoming protocol carries both
@@ -1952,6 +2080,33 @@ apply_tui_sudoers() {
   ok "wrote $f"
 }
 
+retire_old_engine_daemons() {
+  # ONE-TIME migration cleanup (oMLX cutover). com.local.mlxvlm.main /
+  # infinity.serve / infinity.proxy were FULLY RETIRED — removed from
+  # ALL_LABELS/ALWAYS_ON_LABELS/ONDEMAND_LABELS entirely, not just gated off —
+  # so render_all_plists()'s normal "walk ALL_LABELS, remove if config says
+  # off" loop never visits them again. Without this, they'd be orphaned:
+  # still bootstrapped, still running, invisible to every menu/dashboard/
+  # status view that only iterates the current label registry.
+  local old_label old_wrapper
+  for old_label in com.local.mlxvlm.main com.local.infinity.serve com.local.infinity.proxy; do
+    if [ -f "$PLIST_DIR/$old_label.plist" ] || daemon_loaded "$old_label"; then
+      bootout_plist "$old_label"
+      /bin/rm -f "$PLIST_DIR/$old_label.plist"
+      ok "retired old daemon: $old_label"
+    fi
+  done
+  for old_wrapper in start-mlxvlm-main.sh start-infinity.sh start-infinity-proxy.sh; do
+    if [ -f "$LIBEXEC_DIR/$old_wrapper" ]; then
+      /bin/rm -f "$LIBEXEC_DIR/$old_wrapper"
+      ok "removed retired wrapper: $LIBEXEC_DIR/$old_wrapper"
+    fi
+  done
+  # Deliberately DO NOT touch $VENV_DIR/mlxvlm or $VENV_DIR/infinity, or any
+  # HF-cached weights — matches menu_uninstall()'s existing precedent, and
+  # keeps the git-revert rollback path cheap (no re-download/re-build needed).
+}
+
 # ===========================================================================
 # Orchestration
 # ===========================================================================
@@ -1998,6 +2153,7 @@ apply_everything() {
   dbg "step: ensure_homebrew";         ensure_homebrew || true
   dbg "step: ensure_formulas";         ensure_formulas
   dbg "step: apply_tui_sudoers";       apply_tui_sudoers || true
+  dbg "step: retire_old_engine_daemons"; retire_old_engine_daemons || true
   dbg "step: ensure_modern_python";    ensure_modern_python || true
   dbg "step: ensure_immich_project";   ensure_immich_project
   dbg "step: ensure_docling_venv";     ensure_docling_venv
@@ -2007,10 +2163,13 @@ apply_everything() {
   dbg "step: ensure_screensharing";    ensure_screensharing_enabled || true
   dbg "step: ensure_novnc_venv";       ensure_novnc_venv || true
   dbg "step: ensure_novnc_assets";     ensure_novnc_assets || true
+  dbg "step: ensure_omlx_project";     ensure_omlx_project || true
   dbg "step: ensure_python_venvs";     ensure_python_venvs || true
   dbg "step: ensure_mflux_model";      ensure_mflux_model || true
   dbg "step: ensure_voice_project";    ensure_voice_project || true
   dbg "step: ensure_model_catalog";    ensure_model_catalog
+  dbg "step: ensure_omlx_model_dir";   ensure_omlx_model_dir || true
+  dbg "step: ensure_omlx_settings";    ensure_omlx_settings || true
   dbg "step: render_wrappers";        render_wrappers
   dbg "step: render_services";        render_services
   dbg "step: render_bin";             render_bin
@@ -2066,7 +2225,7 @@ verify_and_summary() {
           state="absent"; pid=""
         fi
         case "$label" in
-          com.local.immich.ml|com.local.docling.serve|com.local.infinity.serve)
+          com.local.immich.ml|com.local.docling.serve)
             [ -z "$pid" ] || [ "$pid" = 0 ] && notes="on-demand (sleeping)"
             [ -n "$pid" ] && [ "$pid" != 0 ] && notes="on-demand (awake)"
             ;;
@@ -2130,11 +2289,11 @@ menu_select_services() {
   load_config
   while true; do
     printf "\n${C_BOLD}── Select services to install ─────────────────${C_RST}\n"
-    printf "%s\n" "The MLX stack (mlx_vlm.server + LiteLLM gateway) is the primary backend."
+    printf "%s\n" "The MLX stack (oMLX + LiteLLM gateway) is the primary backend."
     printf "%s\n" "The GPU-wired-limit helper, caffeinate and the weekly autoupdate are"
     printf "%s\n" "always installed. Re-running setup.sh never overwrites a healthy installed service."
     echo
-    printf "  1) %-18s [%s]   MLX stack: mlx_vlm.server :%s internal, LiteLLM :%s public\n" \
+    printf "  1) %-18s [%s]   MLX stack: oMLX :%s internal, LiteLLM :%s public\n" \
       INSTALL_MLX       "$(onoff_label "${INSTALL_MLX:-1}")" \
       "${MAIN_BACKEND_PORT:-18000}" "${LITELLM_PORT:-11434}"
     printf "  2) %-18s [%s]   immich-ml on-demand photo AI (:%s)\n" \
@@ -2232,8 +2391,11 @@ menu_settings() {
 # Path to the `hf` CLI inside one of the MLX venvs. (huggingface_hub >= 1.0
 # renamed `huggingface-cli` -> `hf`; the old name is a deprecated no-op shim.)
 hf_cli() {
+  # Prefers the omlx venv's 'hf' (present if oMLX's own pyproject.toml pulls in
+  # huggingface_hub[cli] — verify this once cloned; if not, this silently
+  # falls through to litellm's, which already carries it as a dependency).
   local base="${VENV_DIR:-/Users/mac/.macstudio-venvs}"
-  if [ -x "$base/mlxvlm/bin/hf" ]; then echo "$base/mlxvlm/bin/hf"
+  if [ -x "$base/omlx/bin/hf" ]; then echo "$base/omlx/bin/hf"
   else echo "$base/litellm/bin/hf"; fi
 }
 
@@ -2263,6 +2425,10 @@ download_model() {
   out=$(/usr/bin/tail -40 "$logf" 2>/dev/null)
   if [ "$rc" -eq 0 ] && [ "$(model_status "$repo")" = ok ]; then
     ok "downloaded + verified '$id' — selectable now ('s'/'m'/'k' $id for main/embed/rerank)"
+    if [ "$(catalog_engine "$id")" = omlx ]; then
+      _omlx_symlink_one "$id" "$repo" "${OMLX_MODEL_DIR:-$TARGET_HOME/.cache/omlx-models}" "${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
+        && ok "omlx model-dir entry ready — no --apply needed before selecting it"
+    fi
     return 0
   fi
   # Classify the failure so a dead list-item explains itself.
@@ -2294,8 +2460,8 @@ set_model_alias() {
     rerank) key=ALIAS_RERANK; want_role=rerank ;;
     *) err "bad slot: $slot"; return 1 ;;
   esac
-  # Roles: text -> 'main' (mlx_vlm.server, unified text+images), embed -> 'embed' +
-  # rerank -> 'rerank' (both the Infinity backend).
+  # Roles: text -> 'main' (oMLX, unified text+images), embed -> 'embed' +
+  # rerank -> 'rerank' (all three served by the SAME oMLX process).
   role=$(catalog_role "$id"); role=${role:-text}
   if [ "$role" != "$want_role" ]; then
     err "'$id' has role '$role' but slot '$slot' needs role '$want_role' — wrong list"
@@ -2303,13 +2469,9 @@ set_model_alias() {
   fi
   # Refuse models the catalog flags BROKEN for the engine that will actually run
   # this slot — selecting one just breaks the server. A bare legacy BROKEN always
-  # blocks; an engine-tagged BROKEN[<engine>] blocks ONLY for that engine. Everything
-  # runs on mlx-vlm (main) or infinity (embed/rerank).
-  local _notes _broken=0 _check_engine
-  case "$slot" in
-    embed|rerank) _check_engine="infinity" ;;
-    *)            _check_engine="mlx-vlm" ;;
-  esac
+  # blocks; an engine-tagged BROKEN[<engine>] blocks ONLY for that engine. Every
+  # slot (main/embed/rerank) now runs on the one omlx engine.
+  local _notes _broken=0 _check_engine="omlx"
   _notes=$(catalog_field "$id" 13)
   if printf '%s' "$_notes" | /usr/bin/grep -qiE 'BROKEN([^[]|$)'; then
     _broken=1   # bare BROKEN — broken everywhere
@@ -2328,14 +2490,28 @@ set_model_alias() {
   render_litellm_config
   if [ "$slot" = main ]; then
     ram_guard_warn
-    if daemon_loaded com.local.mlxvlm.main; then
-      /bin/launchctl kickstart -k system/com.local.mlxvlm.main >/dev/null 2>&1 \
-        && ok "restarting com.local.mlxvlm.main with new main model (load ~30–60 s, no hot-swap)"
+    ensure_omlx_settings   # re-seed OMLX_MAX_CONTEXT_WINDOW under the NEW main's served-name first
+    if daemon_loaded com.local.omlx.main; then
+      /bin/launchctl kickstart -k system/com.local.omlx.main >/dev/null 2>&1 \
+        && ok "restarting com.local.omlx.main with new main model (load ~30–60 s, no hot-swap — oMLX's multi-model hot-swap is a possible FUTURE follow-on, out of scope here)"
     fi
   elif [ "$slot" = embed ] || [ "$slot" = rerank ]; then
-    if daemon_running com.local.infinity.serve; then
-      /bin/launchctl stop com.local.infinity.serve >/dev/null 2>&1 || true
-      ok "stopped Infinity backend; next embed/rerank request wakes it with the new model"
+    # No restart needed in the common case: ensure_omlx_model_dir() (run during
+    # --apply AND right after every successful download_model()) already made
+    # every downloaded omlx-engine row discoverable, and render_litellm_config
+    # above already repointed the alias at the new served-name on the SAME
+    # running process. Defensive fallback (oMLX rescanning --model-dir for a
+    # NEW entry without a restart is unverified): probe /v1/models and only
+    # restart if the new served-name genuinely isn't listed yet.
+    local _served="mlx-$id"
+    if daemon_running com.local.omlx.main \
+       && ! /usr/bin/curl -fsS "http://127.0.0.1:${MAIN_BACKEND_PORT:-18000}/v1/models" 2>/dev/null \
+            | /usr/bin/grep -q "\"$_served\""; then
+      warn "omlx.main doesn't list '$_served' yet — restarting to pick it up"
+      /bin/launchctl kickstart -k system/com.local.omlx.main >/dev/null 2>&1 \
+        && ok "restarted com.local.omlx.main"
+    else
+      ok "'$id' is already served by the running omlx.main — no restart needed"
     fi
   fi
 }
@@ -2384,9 +2560,6 @@ cli_set_service_power() {
     off)
       disable_plist "$label"
       bootout_plist "$label"
-      if [ "$label" = com.local.infinity.proxy ]; then
-        /bin/launchctl stop com.local.infinity.serve >/dev/null 2>&1 || true
-      fi
       ok "powered off $label (disabled — survives --apply and reboot)"
       ;;
     on)
@@ -2530,7 +2703,7 @@ cli_add_model() {
   #   id=      short slug (required, [A-Za-z0-9._-])
   #   repo=    HF org/name — a ready MLX build (required)
   #   role=    text|embed|rerank            (default text)
-  #   engine=  mlxvlm|infinity              (default: derived from role)
+  #   engine=  omlx                          (default: omlx — the only engine)
   #   quant=   e.g. 4bit                     (default ?)
   #   gb=      approx footprint              (default ?)
   #   gated=   yes|no                        (default no)
@@ -2564,12 +2737,7 @@ cli_add_model() {
     text|embed|rerank) : ;;
     *) err "invalid role '$role' (text|embed|rerank)"; exit 2 ;;
   esac
-  if [ -z "$engine" ]; then
-    case "$role" in
-      embed|rerank) engine=infinity ;;
-      *)            engine=mlxvlm ;;
-    esac
-  fi
+  [ -z "$engine" ] && engine=omlx
   ensure_model_catalog
   if [ -n "$(catalog_repo "$id")" ]; then
     err "id '$id' already exists in the catalog — use the TUI ('e $id') to edit"
@@ -2634,8 +2802,8 @@ catalog_add_entry() {
   fi
   read -r -p "HF repo-id (org/name, MUST be a ready MLX build): " repo; [ -z "$repo" ] && return 0
   read -r -p "role [text] (default text): " role; role=${role:-text}
-  # Only engine is mlx-vlm (unified text+images main). embed/rerank use infinity.
-  engine=mlxvlm
+  # Only engine is omlx — main/embed/rerank all served by the same process.
+  engine=omlx
   read -r -p "quant (e.g. 4bit): " quant;       quant=${quant:-?}
   read -r -p "approx GB: " gb;                  gb=${gb:-?}
   read -r -p "gated? [yes/no] (default no): " gated; gated=${gated:-no}
@@ -2729,7 +2897,7 @@ print_model_detail() {
   st=$(model_status "$repo")
   printf "\n${C_BOLD}── %s ──────────────────────────────${C_RST}\n" "$id"
   printf "  repo        %s\n" "$repo"
-  printf "  role/engine %s / %s%s\n" "${role:-text}" "${engine:-mlxvlm}" \
+  printf "  role/engine %s / %s%s\n" "${role:-text}" "${engine:-omlx}" \
     "$( [ "$id" = "${ALIAS_MAIN:-}" ] && printf '   [active main]' )"
   printf "  quant/gb    %s / %s GB\n" "${quant:--}" "${gb:-?}"
   printf "  status      %s   gated=%s   rating=%s/5\n" "$st" "${gated:-no}" "${rating:-?}"
@@ -2750,7 +2918,7 @@ menu_models() {
     printf "${C_BOLD}── Models & aliases ───────────────────────────${C_RST}\n"
     printf "Active:  main=%s  embed=%s  rerank=%s\n" \
       "${ALIAS_MAIN:-none}" "${ALIAS_EMBED:-off}" "${ALIAS_RERANK:-off}"
-    printf "${C_DIM}(ONE text+images model loads as 'main'; embed/rerank are on-demand)${C_RST}\n\n"
+    printf "${C_DIM}(ONE resident oMLX process serves main/embed/rerank together)${C_RST}\n\n"
     print_catalog_table
     printf "\nSTATUS ok = downloaded+verified (only ok is selectable).  FLAG: ${C_RED}BROKEN${C_RST}=not selectable  ${C_GRN}REC${C_RST}=recommended (rating 5).\n"
     printf "Roles: text -> 's' (main)   embed -> 'm'   rerank -> 'k'. Source: HuggingFace repo-ids.\n"
@@ -2778,15 +2946,24 @@ menu_models() {
 }
 
 # Read-only "what could be updated" view. Changes NOTHING — the LLM stack is
-# frozen on purpose; the user bumps it deliberately via MLXVLM_VERSION.
+# frozen on purpose; the user bumps it deliberately via OMLX_REPO_REF.
 menu_updates() {
   load_config
   printf "\n${C_BOLD}── Check for updates (read-only) ──────────────${C_RST}\n"
-  printf "mlx-vlm pin: MLXVLM_VERSION=%s   (text engine — frozen unless you bump it)\n\n" \
-    "${MLXVLM_VERSION:-<float=latest>}"
-  printf "LLM stack (installed vs PyPI):\n"
+  printf "oMLX pin: OMLX_REPO_REF=%s   (engine — frozen unless you bump it)\n\n" "${OMLX_REPO_REF:-v0.5.1}"
+  local odir="${OMLX_PROJECT_DIR:-/Users/mac/projects/omlx}"
+  if [ -d "$odir/.git" ]; then
+    local installed latest
+    installed=$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$odir" describe --tags --exact-match 2>/dev/null \
+      || /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$odir" rev-parse --short HEAD 2>/dev/null)
+    latest=$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git ls-remote --tags --refs "${OMLX_REPO:-https://github.com/jundot/omlx}" 2>/dev/null \
+      | /usr/bin/awk -F/ '{print $NF}' | /usr/bin/sort -V | /usr/bin/tail -1)
+    printf "  %-10s installed=%-11s latest_tag=%-11s%s\n" omlx "${installed:-?}" "${latest:-?}" \
+      "$([ -n "$latest" ] && [ "$installed" != "$latest" ] && echo '   <-- newer available')"
+  fi
+  printf "\nLLM stack (installed vs PyPI):\n"
   local pair vn pk py
-  for pair in mlxvlm:mlx-vlm litellm:litellm; do
+  for pair in litellm:litellm; do
     vn=${pair%%:*}; pk=${pair##*:}
     py="${VENV_DIR:-/Users/mac/.macstudio-venvs}/$vn/bin/python"
     if [ ! -x "$py" ]; then printf "  %-10s (venv not built)\n" "$pk"; continue; fi
@@ -2813,7 +2990,7 @@ PY
   brew_ outdated 2>/dev/null | /usr/bin/sed 's/^/  /' || echo "  (brew n/a)"
   printf "macOS updates:\n"
   /usr/sbin/softwareupdate -l 2>&1 | /usr/bin/grep -iE 'label:|recommended|^\* |no new software' | /usr/bin/sed 's/^/  /' | /usr/bin/head -8
-  printf "\n${C_DIM}Upgrade the LLM stack on purpose: menu 4 -> set MLXVLM_VERSION -> menu 1.${C_RST}\n"
+  printf "\n${C_DIM}Upgrade the LLM stack on purpose: menu 4 -> set OMLX_REPO_REF -> menu 1.${C_RST}\n"
   pause_enter
 }
 
@@ -2896,7 +3073,9 @@ follow_log() {
   printf "\n${C_DIM}── live: %s  (Ctrl-C to stop) ──${C_RST}\n" "$f"
   trap 'true' INT
   case "$f" in
-    *mlxvlm-main.log)
+    *omlx-main.log)
+      # Conservative superset of mlx_vlm.server's old log vocabulary — refine
+      # against real oMLX log lines once verified in production.
       /usr/bin/tail -n 20 -F "$f" 2>/dev/null \
         | /usr/bin/grep --line-buffered -E 'REQUEST|Chat completion|tok/s|running=|ABORTED|schedule|Error|Traceback|mllm=' || true ;;
     *)
@@ -3034,8 +3213,8 @@ MacStudio LLM Server — setup.sh v${SCRIPT_VERSION}
   sudo bash setup.sh --set-config KEY VALUE
                                  Save one config key (no apply; key must exist)
   sudo bash setup.sh --set-service-power <label> <on|off>
-                                 Persistently power off/on the main LLM or the
-                                 Infinity proxy to free/restore memory (off =
+                                 Persistently power off/on the main LLM
+                                 (oMLX) to free/restore memory (off =
                                  disable+bootout, survives --apply and reboot;
                                  on = enable+bootstrap, normal autorestart)
   sudo bash setup.sh --config-schema
