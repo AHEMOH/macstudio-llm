@@ -26,7 +26,7 @@ raise a couple of config keys.
   model that does **text *and* images in the same chat** plus tool calling, plus
   the BGE embed/rerank pair, ALL in one process. Soft RAM ceiling
   (`OMLX_MEMORY_GUARD_GB`) and a per-model context cap (`OMLX_MAX_CONTEXT_WINDOW`,
-  pre-seeded into `~/.omlx/settings.json`). Reasoning is left to the model/client
+  pre-seeded into `~/.omlx/model_settings.json`). Reasoning is left to the model/client
   by default; tool calling is auto-detected from the model's chat template.
   Version pinned via `OMLX_REPO_REF` (v0.5.1).
 - **LiteLLM gateway** on the public port (:11434): apps talk OpenAI `/v1` (and
@@ -338,7 +338,7 @@ when idle, so it only touches the GPU during active jobs. Point your Immich serv
 
 **Memory note (32 GB):** `oMLX` has a soft RAM ceiling
 (`OMLX_MEMORY_GUARD_GB`, default 30) and caps context per-model with
-`OMLX_MAX_CONTEXT_WINDOW` (default 65536) via `~/.omlx/settings.json`. Only
+`OMLX_MAX_CONTEXT_WINDOW` (default 65536) via `~/.omlx/model_settings.json`. Only
 **one** process fits — the BGE embed/rerank pair lives inside that SAME
 process (no second backend to co-reside); a second big main does not fit.
 
@@ -396,7 +396,7 @@ use the menu) to change a live box.
 | `OMLX_PROJECT_DIR` | `/Users/mac/projects/omlx` | Where the oMLX git checkout lives |
 | `OMLX_MODEL_DIR` | `/Users/mac/.cache/omlx-models` | `--model-dir` symlink farm making every downloaded model discoverable |
 | `OMLX_MEMORY_GUARD_GB` | `30` | Soft RAM ceiling for the one oMLX process (`--memory-guard-gb`) |
-| `OMLX_MAX_CONTEXT_WINDOW` | `65536` | Per-model context cap for `main`, pre-seeded into `~/.omlx/settings.json` (NOT a CLI flag) |
+| `OMLX_MAX_CONTEXT_WINDOW` | `65536` | Per-model context cap for `main`, pre-seeded into `~/.omlx/model_settings.json` (NOT a CLI flag) |
 | `OMLX_SSD_CACHE_DIR` / `_MAX_SIZE` | `~/.cache/omlx-ssd-cache` / `20GB` | SSD paged-prefix-cache — real speedup on repeated long prompts. Empty dir = disabled |
 | `OMLX_HOT_CACHE_MAX_SIZE` | _(empty)_ | In-memory hot-cache max size. Empty = oMLX default |
 | `OMLX_MAX_CONCURRENT_REQUESTS` | `8` | Max concurrent in-flight requests (continuous batching) |
