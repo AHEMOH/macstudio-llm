@@ -1781,7 +1781,14 @@ render_litellm_config() {
         "$embed_served" "${MAIN_BACKEND_PORT:-18000}"
     fi
     if [ -n "$rerank_served" ]; then
-      printf '  - model_name: rerank\n    litellm_params:\n      model: infinity/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: rerank\n' \
+      # return_documents: false — oMLX's own default is true, always nesting
+      # document as {"text": ...} (real Cohere shape). LiteLLM's Infinity
+      # transformer instead expects document to be a bare string (Infinity's
+      # own historical shape) and crashes on the nested form. litellm_params
+      # keys are spread directly into litellm.arerank(), so this static
+      # false suppresses the field on the oMLX side entirely — sidesteps the
+      # mismatch rather than fighting it. Confirmed live 2026-07-13.
+      printf '  - model_name: rerank\n    litellm_params:\n      model: infinity/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n      return_documents: false\n    model_info:\n      mode: rerank\n' \
         "$rerank_served" "${MAIN_BACKEND_PORT:-18000}"
     fi
     # FLUX image generation via the on-demand mflux backend (mflux-server.py).
