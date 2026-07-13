@@ -42,16 +42,20 @@ fi
 OMLX_MODEL_DIR="${OMLX_MODEL_DIR:-$HOME/.cache/omlx-models}"
 
 ARGS=( serve
-  --host 127.0.0.1
+  --host "${OMLX_BIND_HOST:-127.0.0.1}"
   --port "${MAIN_BACKEND_PORT:-18000}"
   --model-dir "$OMLX_MODEL_DIR"
   --memory-guard-gb "${OMLX_MEMORY_GUARD_GB:-30}"
   --max-concurrent-requests "${OMLX_MAX_CONCURRENT_REQUESTS:-8}" )
+[ -n "${OMLX_API_KEY:-}" ]           && ARGS+=( --api-key "$OMLX_API_KEY" )
 [ -n "${OMLX_SSD_CACHE_DIR:-}" ]      && ARGS+=( --paged-ssd-cache-dir "$OMLX_SSD_CACHE_DIR" )
 [ -n "${OMLX_SSD_CACHE_MAX_SIZE:-}" ] && ARGS+=( --paged-ssd-cache-max-size "$OMLX_SSD_CACHE_MAX_SIZE" )
 [ -n "${OMLX_HOT_CACHE_MAX_SIZE:-}" ] && ARGS+=( --hot-cache-max-size "$OMLX_HOT_CACHE_MAX_SIZE" )
 
-echo "[start-omlx-main] serving main='$MODEL_ID' repo='$REPO' (+ embed/rerank via $OMLX_MODEL_DIR) on 127.0.0.1:${MAIN_BACKEND_PORT:-18000}"
-echo "[start-omlx-main] memory_guard_gb='${OMLX_MEMORY_GUARD_GB:-30}' ssd_cache='${OMLX_SSD_CACHE_DIR:-off}' max_concurrent='${OMLX_MAX_CONCURRENT_REQUESTS:-8}'"
+API_KEY_STATE=off
+[ -n "${OMLX_API_KEY:-}" ] && API_KEY_STATE=set
+
+echo "[start-omlx-main] serving main='$MODEL_ID' repo='$REPO' (+ embed/rerank via $OMLX_MODEL_DIR) on ${OMLX_BIND_HOST:-127.0.0.1}:${MAIN_BACKEND_PORT:-18000}"
+echo "[start-omlx-main] memory_guard_gb='${OMLX_MEMORY_GUARD_GB:-30}' ssd_cache='${OMLX_SSD_CACHE_DIR:-off}' max_concurrent='${OMLX_MAX_CONCURRENT_REQUESTS:-8}' api_key='$API_KEY_STATE' (never logging the key itself)"
 
 exec "$VENV_DIR/omlx/bin/omlx" "${ARGS[@]}"
