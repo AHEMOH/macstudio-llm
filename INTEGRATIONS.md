@@ -23,10 +23,10 @@ behind an alias can be swapped (`llm-models`) without the app noticing.
 
 | Alias  | What it is                       | Endpoint(s)                       | Backed by                     |
 |--------|----------------------------------|-----------------------------------|-------------------------------|
-| `main` | The big always-on model (chat **+ images**), reasons by default | `/v1/chat/completions`, `/v1/completions`, `/v1/messages` | unified mlx-vlm main (always on; context capped by `MLXVLM_MAIN_MAX_KV_SIZE`, default 64K) |
+| `main` | The big always-on model (chat **+ images**), reasons by default | `/v1/chat/completions`, `/v1/completions`, `/v1/messages` | unified oMLX main (always on; context capped by `OMLX_MAX_CONTEXT_WINDOW`, default 64K) |
 | `main-fast` | Exactly `main` but **thinking OFF** — fast, non-reasoning chat / tool use / web / cron / email | same as `main` | **same loaded model**, thinking-off |
-| `embed` | Dense text **embeddings** for RAG (1024-dim, multilingual) | `/v1/embeddings` | BAAI/bge-m3 via Infinity (on-demand) |
-| `rerank` | Cross-encoder **reranker** (scores docs against a query) | `/v1/rerank`, `/rerank` | BAAI/bge-reranker-v2-m3 via Infinity (on-demand) |
+| `embed` | Dense text **embeddings** for RAG (1024-dim, multilingual) | `/v1/embeddings` | BAAI/bge-m3, served by the SAME oMLX process as `main` |
+| `rerank` | Cross-encoder **reranker** (scores docs against a query) | `/v1/rerank`, `/rerank` | BAAI/bge-reranker-v2-m3, served by the SAME oMLX process as `main` |
 
 The gateway exposes `main`, `main-fast`, `embed`, `rerank`. For images, send `image_url`
 straight to `main`/`main-fast` (both multimodal). `main` and `main-fast` point at the **one** big loaded model (they
@@ -40,7 +40,7 @@ Toggle `main-fast` with `PRESET_ALIASES`.
 can send `enable_thinking:false` to turn it off). **`main-fast` always runs without
 thinking** (suppressed at the gateway) — so `main-fast` is the fast/clean chat & tool path.
 
-**Images:** the unified mlx-vlm `main` is multimodal — send `image_url` straight to
+**Images:** the unified oMLX `main` is multimodal — send `image_url` straight to
 `main` (or `main-fast`). Document OCR is handled by the separate **paperless-ocr** service
 (Apple Vision, see below), not a gateway alias.
 
@@ -79,7 +79,7 @@ curl -s http://mac.home.arpa:11434/v1/chat/completions \
         {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}},
         {"type":"text","text":"What is in this image?"}]}]}'
 
-# embeddings — BGE-M3 dense vectors (1024-dim) for RAG (first call wakes Infinity)
+# embeddings — BGE-M3 dense vectors (1024-dim) for RAG (served by the same oMLX process as main)
 curl -s http://mac.home.arpa:11434/v1/embeddings \
   -H "Authorization: Bearer sk-local" -H "Content-Type: application/json" \
   -d '{"model":"embed","input":["hallo welt","the quick brown fox"]}'
@@ -201,7 +201,7 @@ sensors and a **Main Model** select. No YAML required.
 | `macstudio/availability` | pub (LWT) | yes | `online` / `offline` |
 | `macstudio/silicon/availability` | pub | yes | health of the powermetrics scrape (gates the power sensors) |
 | `macstudio/state` | pub | yes | JSON snapshot: `total_power_w` (whole system, SMC), `package_power_w`, `cpu_power_w`, `gpu_power_w`, `ane_power_w`, `cpu_temp_c`, `gpu_temp_c`, `gpu_util_pct`, `thermal_pressure`, `memory_pressure`, `ram_free_mb`, `wired_limit_mb`, `gpu_mem_used_mb`, `gpu_mem_free_mb`, `swap_used_mb`, `disk_free_gb`, `boot_time`, `reboot_pending`, `active_model`, `text_engine`, `text_backend_running`, `litellm_up` |
-| `macstudio/updates` | pub | yes | JSON: `updates_available`, `macos_version`, `mlx_lm`/`mlx_vlm`/`litellm` (installed+latest), `brew_outdated`, `last_autoupdate_run` |
+| `macstudio/updates` | pub | yes | JSON: `updates_available`, `macos_version`, `omlx`/`litellm` (installed+latest — `omlx` compares against its latest GitHub tag, not PyPI), `brew_outdated`, `last_autoupdate_run` |
 | `macstudio/model/state` | pub | yes | catalog id of the active main model |
 | `macstudio/model/status` | pub | yes | `ready` / `loading <id>` / `error: <msg>` |
 | `macstudio/model/set` | **sub** | no | publish a catalog id here to switch the main model |
@@ -605,7 +605,7 @@ r = client.chat.completions.create(
   via `extra_body` when overriding per request.
 - **Image detail / resolution:** Gemma's per-image *visual token budget*
   (`max_soft_tokens`, 70–1120 — higher for dense OCR, lower for captioning) is **not
-  exposed by mlx-vlm 0.6.3** — there is no per-request image-resolution knob in this
+  exposed by oMLX** — there is no per-request image-resolution knob in this
   stack. The unified `main` handles general image Q&A; document OCR goes through the
   separate **paperless-ocr** service (Apple Vision, see above).
 
@@ -631,12 +631,15 @@ print(msg.content[0].text)
 
 ## Things to know
 
-- **One text model at a time.** `main` is whatever model is currently loaded;
-  switching it (`llm-models`) restarts the text engine (~30–60 s) — there is no silent
-  hot-swap. The **BGE embed/rerank pair (Infinity)** is the only on-demand co-resident
-  extra (small). Under `TEXT_ENGINE=mlx-vlm` the `main` model handles images itself.
-- **On-demand backends** (`embed`/`rerank`, and the companion services) wake on the first
-  request after idle — expect a one-time spin-up delay, then normal latency.
+- **One main model at a time.** `main` is whatever model is currently loaded;
+  switching it (`llm-models`) restarts the engine (~30–60 s) — there is no silent
+  hot-swap. **`embed`/`rerank` are served by the SAME resident process as `main`**
+  (oMLX) — no separate backend, no idle/wake cycle for them. The `main` model
+  handles images itself.
+- **On-demand backends** (the companion services — immich-ml, docling-serve,
+  images, voice) wake on the first request after idle — expect a one-time
+  spin-up delay, then normal latency. `main`/`embed`/`rerank` are always-on, not
+  on-demand.
 - **Long requests:** the gateway timeout is `LLM_REQUEST_TIMEOUT` (default 3600 s
   = 60 min) with **no retries**, sized for long documents / OCR.
 - **Streaming** is supported on chat completions (`"stream": true`).

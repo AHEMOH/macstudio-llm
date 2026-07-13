@@ -2,7 +2,7 @@
   Mac Studio Headless LLM Server          (Apple Silicon, @TOTAL_RAM_GB@ GB)
 ══════════════════════════════════════════════════════════════════════
   Primary:    LiteLLM       :@LITELLM_PORT@   (public gateway; alias 'main' → one MLX model)
-              mlx_vlm.server :@MAIN_BACKEND_PORT@   (internal; unified text+images engine)
+              oMLX          :@MAIN_BACKEND_PORT@   (internal; unified text+images+embed+rerank)
   On-demand:  immich-ml     :@ML_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_IMMICH@m)
               docling-serve :@DOCLING_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_DOCLING@m)
   Monitoring (opt-in): node_exporter :@NODE_EXPORTER_PORT@
@@ -16,7 +16,7 @@
                                      needed for gated repos like Gemma — never in git)
     llm-restart [service|all]       restart services
     llm-update                      run brew+pip+softwareupdate now
-    llm-service-ctl wake  infinity  force-wake on-demand service
+    llm-service-ctl wake  images    force-wake on-demand service
     llm-service-ctl sleep docling   force-sleep on-demand service
     llm-logs [service]              tail /var/log/macstudio/<svc>.log
     sudo mactop                     live GPU/ANE/CPU/RAM/power TUI
@@ -30,7 +30,7 @@
 
   Dashboard:    http://<this-mac>:@DASHBOARD_PORT@   (browser control — token: DASHBOARD_TOKEN in macstudio.conf)
   Settings:     sudo bash /opt/macstudio/setup.sh
-  Logs:         tail -F /var/log/macstudio/mlxvlm-main.log    (or litellm.log / infinity-serve.log)
+  Logs:         tail -F /var/log/macstudio/omlx-main.log    (or litellm.log / images-serve.log)
   Weekly auto:  @AUTOUPDATE_HUMAN@ → /var/log/macstudio/autoupdate.log
 
   Maintenance (FileVault is ON — reboot needs a key):

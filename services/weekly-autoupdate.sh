@@ -6,8 +6,8 @@
 # frozen (a surprise version jump broke a model once):
 #   1. Homebrew: brew update, upgrade node_exporter, cleanup
 #   2. macOS minor / security updates (no auto-reboot — see below)
-# NOT touched here: vllm-mlx (pinned via VLLM_MLX_VERSION), mlx-vlm, litellm,
-# immich-ml, docling, Ollama, and the models. Upgrade those deliberately via
+# NOT touched here: oMLX (pinned via OMLX_REPO_REF), litellm,
+# immich-ml, docling, and the models. Upgrade those deliberately via
 # `setup.sh` ("Check for updates" → set the pin → Install/update everything).
 # The run logs available-but-held versions so you can see when an update exists.
 #
@@ -61,11 +61,12 @@ run_as_user '/opt/homebrew/bin/brew upgrade node_exporter' || true
 run_as_user '/opt/homebrew/bin/brew cleanup -s --prune=7' || true
 
 # DELIBERATELY NOT auto-upgraded: a surprise version jump broke a model before.
-# mlx-vlm is pinned via MLXVLM_VERSION; litellm, immich-ml and docling stay at
+# oMLX is pinned via OMLX_REPO_REF (a git tag, not a PyPI package — checked
+# against GitHub releases below); litellm, immich-ml and docling stay at
 # their installed versions. Upgrade them on purpose with `setup.sh` (menu:
 # Check for updates -> set the pin -> Install/update everything).
 step "held versions (available but NOT auto-upgraded — bump deliberately)"
-for pair in "mlxvlm:mlx-vlm" "litellm:litellm"; do
+for pair in "litellm:litellm"; do
   vn=${pair%%:*}; pk=${pair##*:}
   py="$VENV_DIR/$vn/bin/python"; [ -x "$py" ] || continue
   "$py" - "$pk" <<'PY' 2>/dev/null || true
@@ -80,11 +81,18 @@ except Exception:
     print("  %-10s installed=%s  (pypi check n/a)"%(pkg,cur))
 PY
 done
-echo "  -> to upgrade the LLM stack on purpose: MLXVLM_VERSION + 'sudo bash setup.sh --apply'"
+omlx_dir="${OMLX_PROJECT_DIR:-$TARGET_HOME/projects/omlx}"
+if [ -d "$omlx_dir/.git" ]; then
+  omlx_installed=$(run_as_user "/usr/bin/git -C '$omlx_dir' describe --tags --exact-match 2>/dev/null || /usr/bin/git -C '$omlx_dir' rev-parse --short HEAD 2>/dev/null")
+  omlx_latest=$(/usr/bin/git ls-remote --tags --refs "${OMLX_REPO:-https://github.com/jundot/omlx}" 2>/dev/null \
+    | /usr/bin/awk -F/ '{print $NF}' | /usr/bin/sort -V | /usr/bin/tail -1)
+  printf "  %-10s installed=%s  latest_tag=%s\n" omlx "${omlx_installed:-?}" "${omlx_latest:-?}"
+fi
+echo "  -> to upgrade the LLM stack on purpose: OMLX_REPO_REF + 'sudo bash setup.sh --apply'"
 
 step "restart long-running services"
 if [ "${INSTALL_MLX:-1}" = "1" ]; then
-  /bin/launchctl kickstart -k system/com.local.mlxvlm.main    2>/dev/null || true
+  /bin/launchctl kickstart -k system/com.local.omlx.main       2>/dev/null || true
   /bin/launchctl kickstart -k system/com.local.litellm.proxy  2>/dev/null || true
 fi
 /bin/launchctl kickstart -k system/com.local.immich.proxy   2>/dev/null || true
