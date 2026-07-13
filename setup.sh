@@ -94,6 +94,8 @@ CONFIG_KEYS=(
   OMLX_HOT_CACHE_MAX_SIZE
   OMLX_MAX_CONCURRENT_REQUESTS
   OMLX_MAX_CONTEXT_WINDOW
+  OMLX_BIND_HOST
+  OMLX_API_KEY
   GEMMA_TOP_K
   PRESET_ALIASES
   LITELLM_PORT
@@ -226,6 +228,8 @@ config_default() {
     OMLX_HOT_CACHE_MAX_SIZE)     echo "" ;;
     OMLX_MAX_CONCURRENT_REQUESTS) echo 8 ;;
     OMLX_MAX_CONTEXT_WINDOW)     echo 65536 ;;
+    OMLX_BIND_HOST)              echo 127.0.0.1 ;;
+    OMLX_API_KEY)                echo "" ;;
     GEMMA_TOP_K)                 echo 64 ;;
     PRESET_ALIASES)              echo 1 ;;
     LITELLM_PORT)                echo 11434 ;;
@@ -351,6 +355,8 @@ config_hint() {
     OMLX_HOT_CACHE_MAX_SIZE)     echo "oMLX in-memory hot-cache max size (--hot-cache-max-size). Empty = oMLX default" ;;
     OMLX_MAX_CONCURRENT_REQUESTS) echo "oMLX max concurrent in-flight requests (--max-concurrent-requests, continuous batching). Default 8" ;;
     OMLX_MAX_CONTEXT_WINDOW)     echo "Per-model context cap for the active main, pre-seeded into ~/.omlx/model_settings.json (NOT a CLI flag — oMLX has no --max-kv-size equivalent). Default 65536 (64K), preserving today's documented ceiling" ;;
+    OMLX_BIND_HOST)              echo "--host oMLX binds. Default 127.0.0.1 (LiteLLM-only, matches every other backend in this repo). Set to 0.0.0.0 to also expose oMLX's own OpenAI/Anthropic/audio API + admin panel directly on the LAN (e.g. for a client that wants oMLX's native /v1/messages, not LiteLLM's translation) — do this ONLY after OMLX_API_KEY is set, since oMLX's inference routes have no auth at all otherwise" ;;
+    OMLX_API_KEY)                echo "oMLX --api-key: required by every caller once set, INCLUDING LiteLLM's own local calls (render_litellm_config wires this same key into main/main-fast/embed/rerank's litellm_params automatically). Plaintext in this 644 conf — LAN-only, like VNC_PASSWORD/DASHBOARD_TOKEN. Empty = auto-generated on the next --apply; clear it + --apply to rotate" ;;
     GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off" ;;
     PRESET_ALIASES)              echo "1 = also expose the 'main-fast' preset alias (same loaded model as 'main' but thinking-OFF at the proxy — fast non-reasoning chat / tools / web / cron / email)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
@@ -1317,6 +1323,32 @@ PY
   fi
 }
 
+ensure_omlx_api_key() {
+  # Generate oMLX's --api-key ONCE (empty = not yet generated). Same
+  # idempotent-token pattern as ensure_dashboard_token/ensure_vnc_password.
+  # Needed before OMLX_BIND_HOST is ever set to anything but 127.0.0.1 —
+  # oMLX's inference routes (chat/embeddings/rerank/audio/messages) have NO
+  # auth at all when unset (confirmed live: unauthenticated /v1/models
+  # succeeded). Once set, EVERY caller must present it, including LiteLLM's
+  # own local calls — render_litellm_config() wires the same value into
+  # main/main-fast/embed/rerank's litellm_params, so this must run before
+  # render_litellm_config in apply_everything.
+  [ "${INSTALL_MLX:-1}" = 1 ] || return 0
+  if [ -n "${OMLX_API_KEY:-}" ]; then
+    ok "omlx api key present"
+    return 0
+  fi
+  local k
+  k=$(/usr/bin/openssl rand -hex 16 2>/dev/null)
+  if [ -z "$k" ]; then
+    warn "openssl rand failed — OMLX_API_KEY NOT generated (leaving oMLX unauthenticated)"
+    return 0
+  fi
+  save_config_key OMLX_API_KEY "$k"
+  export OMLX_API_KEY="$k"
+  ok "omlx api key generated (also in $CONF_FILE)"
+}
+
 # model_local_dir <hf_repo> — the HF hub snapshot dir for a repo, or empty.
 model_local_dir() {
   local repo=$1
@@ -1740,7 +1772,12 @@ render_litellm_config() {
   # LiteLLM forwards extra_body verbatim (drop_params leaves it untouched).
   local _nothink_body='{"chat_template_kwargs": {"enable_thinking": false}}'
   emit_model() {
-    printf '  - model_name: %s\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n' "$1" "$2" "$3"
+    # api_key: oMLX has no auth when OMLX_API_KEY is unset (the common case,
+    # OMLX_BIND_HOST=127.0.0.1), so "dummy" is fine then — but once an admin
+    # sets OMLX_API_KEY (required before ever binding oMLX to the LAN),
+    # oMLX enforces it for EVERY caller including this one, so it must ride
+    # along here too.
+    printf '  - model_name: %s\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: %s\n' "$1" "$2" "$3" "${OMLX_API_KEY:-dummy}"
     [ -n "${4:-}" ] && printf '      temperature: %s\n' "$4"
     [ -n "${5:-}" ] && printf '      top_p: %s\n' "$5"
     [ -n "${6:-}" ] && printf '      frequency_penalty: %s\n' "$6"
@@ -1788,8 +1825,8 @@ render_litellm_config() {
     # Infinity daemon) works. Emitted only when the catalog id resolves
     # (download first).
     if [ -n "$embed_served" ]; then
-      printf '  - model_name: embed\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n    model_info:\n      mode: embedding\n' \
-        "$embed_served" "${MAIN_BACKEND_PORT:-18000}"
+      printf '  - model_name: embed\n    litellm_params:\n      model: openai/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: %s\n    model_info:\n      mode: embedding\n' \
+        "$embed_served" "${MAIN_BACKEND_PORT:-18000}" "${OMLX_API_KEY:-dummy}"
     fi
     if [ -n "$rerank_served" ]; then
       # return_documents: false — oMLX's own default is true, always nesting
@@ -1799,8 +1836,8 @@ render_litellm_config() {
       # keys are spread directly into litellm.arerank(), so this static
       # false suppresses the field on the oMLX side entirely — sidesteps the
       # mismatch rather than fighting it. Confirmed live 2026-07-13.
-      printf '  - model_name: rerank\n    litellm_params:\n      model: infinity/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: dummy\n      return_documents: false\n    model_info:\n      mode: rerank\n' \
-        "$rerank_served" "${MAIN_BACKEND_PORT:-18000}"
+      printf '  - model_name: rerank\n    litellm_params:\n      model: infinity/%s\n      api_base: http://127.0.0.1:%s/v1\n      api_key: %s\n      return_documents: false\n    model_info:\n      mode: rerank\n' \
+        "$rerank_served" "${MAIN_BACKEND_PORT:-18000}" "${OMLX_API_KEY:-dummy}"
     fi
     # FLUX image generation via the on-demand mflux backend (mflux-server.py).
     # Uses the SAME generic 'openai/<served-name>' provider every other alias
@@ -2193,6 +2230,7 @@ apply_everything() {
   dbg "step: ensure_model_catalog";    ensure_model_catalog
   dbg "step: ensure_omlx_model_dir";   ensure_omlx_model_dir || true
   dbg "step: ensure_omlx_settings";    ensure_omlx_settings || true
+  dbg "step: ensure_omlx_api_key";     ensure_omlx_api_key || true
   dbg "step: render_wrappers";        render_wrappers
   dbg "step: render_services";        render_services
   dbg "step: render_bin";             render_bin

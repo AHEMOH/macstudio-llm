@@ -629,6 +629,34 @@ print(msg.content[0].text)
 
 ---
 
+## Reaching oMLX directly (bypassing LiteLLM) — `OMLX_BIND_HOST` / `OMLX_API_KEY`
+
+The gateway above (LiteLLM, `:11434`) is the normal way every client connects, and its own
+`/v1/messages` just translates to oMLX's OpenAI-shaped `/v1/chat/completions` underneath.
+oMLX also runs its **own** native OpenAI + Anthropic Messages + audio + admin-panel server —
+useful if you specifically need something LiteLLM's translation doesn't expose (e.g. oMLX's
+`claude_code` context-scaling feature, which only fires on oMLX's own native `/v1/messages`,
+not through LiteLLM).
+
+This is off by default (`OMLX_BIND_HOST=127.0.0.1`, loopback-only, matching every other
+backend in this repo) because **oMLX's inference routes have no authentication at all** until
+you set one. To reach it from the LAN:
+
+```bash
+# on the Mac
+sudo bash setup.sh --set-config OMLX_API_KEY "$(openssl rand -hex 16)"   # or leave empty; --apply auto-generates one
+sudo bash setup.sh --set-config OMLX_BIND_HOST 0.0.0.0
+sudo bash setup.sh --apply
+```
+
+`OMLX_API_KEY` is then required by **every** caller, including LiteLLM's own local calls —
+`setup.sh` wires the same key into `main`/`main-fast`/`embed`/`rerank`'s `litellm_params`
+automatically, so the gateway keeps working unmodified. Point a direct client at
+`http://mac.home.arpa:18000` with that key as its bearer token; the admin panel is at
+`http://mac.home.arpa:18000/admin` (its own separate login, unrelated to `OMLX_API_KEY`).
+
+---
+
 ## Things to know
 
 - **One main model at a time.** `main` is whatever model is currently loaded;
