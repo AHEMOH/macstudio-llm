@@ -350,7 +350,7 @@ config_hint() {
     OMLX_SSD_CACHE_MAX_SIZE)     echo "Max size of the SSD paged-prefix cache (--paged-ssd-cache-max-size), e.g. 20GB" ;;
     OMLX_HOT_CACHE_MAX_SIZE)     echo "oMLX in-memory hot-cache max size (--hot-cache-max-size). Empty = oMLX default" ;;
     OMLX_MAX_CONCURRENT_REQUESTS) echo "oMLX max concurrent in-flight requests (--max-concurrent-requests, continuous batching). Default 8" ;;
-    OMLX_MAX_CONTEXT_WINDOW)     echo "Per-model context cap for the active main, pre-seeded into ~/.omlx/settings.json (NOT a CLI flag — oMLX has no --max-kv-size equivalent). Default 65536 (64K), preserving today's documented ceiling" ;;
+    OMLX_MAX_CONTEXT_WINDOW)     echo "Per-model context cap for the active main, pre-seeded into ~/.omlx/model_settings.json (NOT a CLI flag — oMLX has no --max-kv-size equivalent). Default 65536 (64K), preserving today's documented ceiling" ;;
     GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off" ;;
     PRESET_ALIASES)              echo "1 = also expose the 'main-fast' preset alias (same loaded model as 'main' but thinking-OFF at the proxy — fast non-reasoning chat / tools / web / cron / email)" ;;
     LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
@@ -1262,11 +1262,20 @@ _omlx_symlink_one() {
 }
 
 # ensure_omlx_settings — pre-seed OMLX_MAX_CONTEXT_WINDOW for the ACTIVE main
-# model into oMLX's per-model settings file (~/.omlx/settings.json — NOT a
-# CLI flag; oMLX has no --max-kv-size equivalent, only --memory-guard-gb
-# [soft RAM ceiling] + this per-model cap). Targeted merge of one key, never
-# a wholesale clobber, since oMLX itself may write other keys to this file
-# at runtime.
+# model into oMLX's PER-MODEL settings store: ~/.omlx/model_settings.json
+# (NOT ~/.omlx/settings.json, the separate GLOBAL server-config file oMLX
+# itself unconditionally rewrites from its own defaults on every daemon
+# start — confirmed live 2026-07-13 that writing our key into THAT file gets
+# silently discarded on the next restart, and the resulting hash mismatch
+# forced a restart on every single --apply. model_settings.json is loaded
+# once at startup and only ever rewritten by oMLX's own admin API, so it's
+# safe for us to own via a targeted merge). Shape confirmed by reading
+# omlx/model_settings.py: {"version": 1, "models": {"<model_id>": {...}}} —
+# keyed by the resolved model id, which is the SAME mlx-<catalog-id>
+# served-name the --model-dir symlink farm already uses (confirmed via the
+# server's own "Discovered model: mlx-<id>" startup log lines). oMLX has no
+# --max-kv-size CLI equivalent, only --memory-guard-gb (soft RAM ceiling) +
+# this per-model cap.
 ensure_omlx_settings() {
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   [ -n "${OMLX_MAX_CONTEXT_WINDOW:-}" ] || return 0
@@ -1274,7 +1283,7 @@ ensure_omlx_settings() {
   [ -n "$id" ] || return 0
   local served="mlx-$id"
   local dir="${TARGET_HOME:-/Users/mac}/.omlx"
-  local file="$dir/settings.json"
+  local file="$dir/model_settings.json"
   /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$dir"
   local before; before=$(hash_file "$file")
   local tmp; tmp=$(/usr/bin/mktemp)
@@ -1287,15 +1296,17 @@ try:
     with open(path) as f: data = json.load(f)
 except (OSError, ValueError):
     data = {}
-data.setdefault(key, {})
-data[key]["max_context_window"] = ctx
+data.setdefault("version", 1)
+data.setdefault("models", {})
+data["models"].setdefault(key, {})
+data["models"][key]["max_context_window"] = ctx
 print(json.dumps(data, indent=2))
 PY
   if [ "$before" != "$(hash_file "$tmp")" ]; then
     /bin/mv -f "$tmp" "$file"
     /bin/chmod 644 "$file"
     /usr/sbin/chown "$TARGET_USER" "$file" 2>/dev/null || true
-    ok "omlx settings: $served max_context_window=$OMLX_MAX_CONTEXT_WINDOW -> $file"
+    ok "omlx per-model settings: $served max_context_window=$OMLX_MAX_CONTEXT_WINDOW -> $file"
     if daemon_running com.local.omlx.main; then
       /bin/launchctl kickstart -k system/com.local.omlx.main >/dev/null 2>&1 \
         && ok "restarted com.local.omlx.main to apply the new context window"

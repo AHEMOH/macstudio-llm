@@ -4,7 +4,7 @@
 # BGE pair — all discoverable via --model-dir (ensure_omlx_model_dir()'s
 # mlx-<id> symlink farm). Replaces mlx-vlm (main) AND Infinity (embed/rerank)
 # in one clean cutover. Context-window cap is NOT a flag here — it's pre-
-# seeded into ~/.omlx/settings.json by ensure_omlx_settings() during --apply.
+# seeded into ~/.omlx/model_settings.json by ensure_omlx_settings() during --apply.
 set -eu
 
 CONF=/usr/local/etc/macstudio.conf
