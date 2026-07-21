@@ -1061,6 +1061,27 @@ ensure_paperless_ocr_venv() {
   fi
 }
 
+ensure_paperless_ocr_dirs() {
+  # Create the worker's inbox/originals/errors/duplex dirs owned by TARGET_USER, and once
+  # repair ownership/mode of any files already inside. The daemon runs as ROOT (see the
+  # plist), so before the accompanying paperless-ocr.py fix it wrote archived originals as
+  # root:wheel with the SMB source's mode (often 0600) — un-downloadable/-deletable over SMB
+  # by the mac user. This hands the whole tree back to TARGET_USER (dirs traversable, files
+  # readable), mirroring the repo's "644 + chown TARGET_USER" convention. Idempotent.
+  [ "${INSTALL_PAPERLESS_OCR:-0}" = 1 ] || return 0
+  local inbox archive errors base
+  inbox="${PAPERLESS_OCR_INBOX:-$TARGET_HOME/paperless-ocr/inbox}"
+  archive="${PAPERLESS_OCR_ARCHIVE:-$TARGET_HOME/paperless-ocr/originals}"
+  errors="${PAPERLESS_OCR_ERRORS:-$TARGET_HOME/paperless-ocr/errors}"
+  base="$(dirname "$inbox")"
+  /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$inbox" "$inbox/${PAPERLESS_OCR_DUPLEX_SUBDIR:-duplex}" \
+    "$archive" "$errors" 2>/dev/null || true
+  # Hand the whole tree to the user; a+rX = files readable, dirs traversable (no exec on files).
+  /usr/sbin/chown -R "$TARGET_USER" "$base" 2>/dev/null || true
+  /bin/chmod -R a+rX "$base" 2>/dev/null || true
+  ok "paperless-ocr dirs owned by $TARGET_USER + readable ($base)"
+}
+
 ensure_paperless_ocr_share() {
   # Opt-in: enable macOS File Sharing (smbd) and share the inbox folder over SMB so a
   # network scanner (e.g. Canon MAXIFY) can drop files straight into the gateway. Only
@@ -2031,8 +2052,10 @@ render_all_plists() {
         # needs the novnc venv + Screen Sharing enabled (INSTALL_REMOTE).
         { [ "${INSTALL_NOVNC:-1}" = 1 ] && [ "${INSTALL_REMOTE:-1}" = 1 ]; } || { remove_plist "$label"; continue; } ;;
       com.local.paperless.ocr)
-        # Apple-Vision searchable-PDF worker for paperless-ngx. Runs as TARGET_USER
-        # (Vision needs a user context); needs its own venv (ocrmac/pymupdf/requests).
+        # Apple-Vision searchable-PDF worker for paperless-ngx. Runs as ROOT (see the plist:
+        # macOS Local Network Privacy blocks the non-Apple venv python from the LAN as a user);
+        # needs its own venv (ocrmac/pymupdf/requests). It chowns the files it writes back to
+        # TARGET_USER so archived originals stay reachable over SMB.
         [ "${INSTALL_PAPERLESS_OCR:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
     esac
     local before_hash; before_hash=$(hash_file "$dst")
@@ -2218,6 +2241,7 @@ apply_everything() {
   dbg "step: ensure_immich_project";   ensure_immich_project
   dbg "step: ensure_docling_venv";     ensure_docling_venv
   dbg "step: ensure_paperless_ocr_venv"; ensure_paperless_ocr_venv || true
+  dbg "step: ensure_paperless_ocr_dirs"; ensure_paperless_ocr_dirs || true
   dbg "step: ensure_paperless_ocr_share"; ensure_paperless_ocr_share || true
   dbg "step: ensure_vnc_password";     ensure_vnc_password
   dbg "step: ensure_screensharing";    ensure_screensharing_enabled || true

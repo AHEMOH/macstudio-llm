@@ -487,12 +487,18 @@ already-text ones (no duplicates).
 "Scan to shared folder / SMB") can drop files directly into `PAPERLESS_OCR_INBOX`:
 1. macOS **System Settings → General → Sharing → File Sharing** on; add the inbox folder;
    give the scanner's SMB login (ideally the same `mac` user) read/write.
-2. Point the scanner at `smb://<mac>/…/paperless-ocr/inbox` and scan a **multi-page PDF**
-   (one job = one file).
-The gateway only picks up a file once it is **fully written** — unchanged for
-`PAPERLESS_OCR_STABLE_SEC` (default 30 s) **and** no longer held open by `smbd`. So a slow
-50-page scan is never OCR'd half-finished. If your scanner pauses longer than 30 s between
-pages, raise `PAPERLESS_OCR_STABLE_SEC`.
+2. Set the scanner's file format to **one multi-page PDF per job** (not one file per page),
+   point it at `smb://<mac>/…/paperless-ocr/inbox`, and scan. Each job becomes one paperless
+   document with all its pages.
+The gateway only picks up a file once it is **fully written** — a **complete, parseable** PDF,
+unchanged in size *and* page count across two polls, quiet for `PAPERLESS_OCR_STABLE_SEC`
+(default 30 s), and no longer held open by `smbd`. So a multi-page scan that streams page by
+page over SMB is never OCR'd after only its first page. If your scanner pauses longer than
+30 s **between pages** (some ADFs do, per sheet), raise `PAPERLESS_OCR_STABLE_SEC` so the
+whole job is captured as one document.
+
+The archived original in `PAPERLESS_OCR_ARCHIVE` is chowned back to the `mac` user (mode
+`644`), so you can browse, download and delete it over SMB even though the worker runs as root.
 
 **Host the inbox on the Mac itself** (not on a NAS): the worker runs on the Mac and reads
 the folder locally, and the "still being written" guard uses `lsof`, which only sees writes
