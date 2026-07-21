@@ -316,7 +316,7 @@ config_default() {
     PAPERLESS_OCR_SUPERSEDED_TAG) echo ocr:superseded ;;
     PAPERLESS_OCR_DELETE_ORIGINAL) echo 0 ;;
     PAPERLESS_OCR_POLL_SEC)      echo 60 ;;
-    PAPERLESS_OCR_STABLE_SEC)    echo 30 ;;
+    PAPERLESS_OCR_STABLE_SEC)    echo 90 ;;
     PAPERLESS_OCR_SMB_SHARE)     echo 0 ;;
     PAPERLESS_OCR_SMB_NAME)      echo inbox ;;
     PAPERLESS_OCR_DUPLEX_SUBDIR) echo duplex ;;
