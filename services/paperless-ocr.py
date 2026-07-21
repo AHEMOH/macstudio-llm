@@ -542,14 +542,30 @@ def _upload(path, title=None, tags=None, created=None, correspondent=None):
 
 
 # --------------------------------------------------------------------------- loops
+_lsof_warned = False
+
+
 def _is_open(path):
-    """True if any process still holds `path` open (e.g. smbd writing a scan)."""
+    """True if any process still holds `path` open (e.g. smbd streaming a multi-page scan)
+    — OR if we cannot tell. This is the authoritative "still being written" signal: a scanner
+    that keeps the file open for the whole job means `close` is the de-facto "scan finished"
+    event, and no time heuristic can beat it.
+
+    Fails SAFE: if lsof is missing, slow (timeout), or errors, report OPEN so an in-flight scan
+    is never processed. lsof is a core macOS binary (/usr/sbin/lsof), so a persistent failure is
+    unlikely; it is logged once per failure streak so it stays diagnosable without log spam."""
+    global _lsof_warned
     try:
-        r = subprocess.run(["/usr/sbin/lsof", "--", str(path)],
+        # -F p => one "p<pid>" line per holder; no output (exit 1) when nothing holds it open.
+        r = subprocess.run(["/usr/sbin/lsof", "-F", "p", "--", str(path)],
                            capture_output=True, text=True, timeout=15)
-        return bool(r.stdout.strip())
-    except Exception:
-        return False  # lsof missing/slow -> fall back to the mtime-quiet check
+    except Exception as e:
+        if not _lsof_warned:
+            log(f"lsof check failed ({e}); treating files as OPEN until it recovers (fail-safe)")
+            _lsof_warned = True
+        return True  # in doubt -> never process
+    _lsof_warned = False
+    return any(line.startswith("p") for line in r.stdout.splitlines())
 
 
 # Per-path signature (size, page_count) from the previous poll — a file counts as settled
@@ -560,10 +576,17 @@ _settle_seen = {}
 
 
 def _is_settled(path):
-    """True once a file is safe to process: non-empty, quiet for STABLE_SEC, not held open,
-    a fully-parseable PDF, and unchanged (size + page count) since the previous poll. The
-    cross-poll stability + parseability checks are what prevent a multi-page scan streamed
-    page-by-page over SMB from being OCR'd after only its first page has arrived."""
+    """True once a file is safe to process. Two lines of defense against grabbing a multi-page
+    scan after only its first page has landed:
+
+      * PRIMARY — the open handle (`_is_open`): while any process holds the file open we never
+        touch it. For a scanner that keeps the file open for the whole job, its `close` is the
+        real "scan finished" event; fail-safe means an unknown lsof state also blocks.
+      * FALLBACK (for scanners that close the file between pages) — the file must additionally
+        be non-empty, mtime-quiet for STABLE_SEC, a fully-parseable PDF, and unchanged in size
+        + page count across two polls. STABLE_SEC must therefore exceed the longest pause a
+        scanner leaves between pages, or a mid-scan snapshot could look 'quiet' (see the
+        INTEGRATIONS.md note)."""
     key = str(path)
     try:
         st = path.stat()

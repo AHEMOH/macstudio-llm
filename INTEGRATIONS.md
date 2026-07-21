@@ -490,12 +490,18 @@ already-text ones (no duplicates).
 2. Set the scanner's file format to **one multi-page PDF per job** (not one file per page),
    point it at `smb://<mac>/…/paperless-ocr/inbox`, and scan. Each job becomes one paperless
    document with all its pages.
-The gateway only picks up a file once it is **fully written** — a **complete, parseable** PDF,
-unchanged in size *and* page count across two polls, quiet for `PAPERLESS_OCR_STABLE_SEC`
-(default 30 s), and no longer held open by `smbd`. So a multi-page scan that streams page by
-page over SMB is never OCR'd after only its first page. If your scanner pauses longer than
-30 s **between pages** (some ADFs do, per sheet), raise `PAPERLESS_OCR_STABLE_SEC` so the
-whole job is captured as one document.
+The gateway only picks up a file once it is **fully written**. The authoritative signal is that
+**no process still holds the file open** (`lsof`): while your scanner keeps the file open for
+the job, the file is never touched — its *close* is the real "scan finished" event (this check
+fails **safe** — if it can't tell, it waits). As a fallback for scanners that *close* the file
+between pages, the file must also be a **complete, parseable** PDF, unchanged in size *and* page
+count across two polls, and mtime-quiet for `PAPERLESS_OCR_STABLE_SEC` (**default 90 s**).
+
+> **Important for flatbed, page-by-page scanning:** `PAPERLESS_OCR_STABLE_SEC` **must be larger
+> than the longest pause you leave between two pages**. If you sometimes take, say, 2 minutes to
+> place the next page *and* your scanner closes the file between pages, raise it (e.g. `150`),
+> or the gateway may treat the partial scan as finished. If your scanner keeps the file open the
+> whole job, the `lsof` gate covers you regardless and you can keep it short.
 
 The archived original in `PAPERLESS_OCR_ARCHIVE` is chowned back to the `mac` user (mode
 `644`), so you can browse, download and delete it over SMB even though the worker runs as root.
