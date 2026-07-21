@@ -422,6 +422,61 @@ def _unique_path(folder, stem, suffix):
     return p
 
 
+# The daemon runs as ROOT (see the plist) so every file/dir it creates is owned by
+# root:wheel, and shutil.copy2 also carries over the SMB source file's mode (often 0600).
+# That leaves archived originals un-downloadable/-deletable over SMB by the TARGET_USER.
+# _handoff / _ensure_user_dir hand the path back to that user (0644 file / 0755 dir),
+# mirroring the repo's "644 + chown TARGET_USER" convention (see setup.sh:1313-1314).
+TARGET_USER = os.environ.get("USER", "mac")
+
+
+def _handoff(path):
+    """Make `path` readable/deletable over SMB by the TARGET_USER (owner + 0644), undoing
+    the root:wheel/0600 a root shutil.copy2/move leaves behind. Best-effort — a failure
+    must never break processing."""
+    try:
+        os.chmod(path, 0o644)
+        shutil.chown(path, user=TARGET_USER)
+    except Exception as e:
+        log(f"handoff chmod/chown failed for {path}: {e}")
+
+
+def _ensure_user_dir(d):
+    """mkdir -p `d`, then hand it to the TARGET_USER (0755) so files created under it are
+    reachable over SMB. chown needs root — which the daemon is; best-effort otherwise."""
+    d.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(d, 0o755)
+        shutil.chown(d, user=TARGET_USER)
+    except Exception as e:
+        log(f"dir handoff chmod/chown failed for {d}: {e}")
+
+
+def _pdf_pages(path):
+    """Page count of a PDF/image (images open as 1 page), or -1 if it can't be opened."""
+    try:
+        d = fitz.open(str(path))
+        try:
+            return d.page_count
+        finally:
+            d.close()
+    except Exception:
+        return -1
+
+
+def _assert_pagecount(src, out, mode):
+    """Guard against silent page loss: an OCR/VLM output must have exactly as many pages as
+    its source (passthrough copies the whole file, so it is equal by construction). Raises on
+    a mismatch so the caller routes the UNTOUCHED source into errors/ instead of uploading a
+    truncated document and then deleting the only original."""
+    if mode == "passthrough":
+        return
+    src_n, out_n = _pdf_pages(src), _pdf_pages(out)
+    if src_n <= 0 or out_n != src_n:
+        raise RuntimeError(f"page-count mismatch: source={src_n} output={out_n} ({mode}) "
+                           f"— refusing to upload a truncated result")
+
+
 _last_prune = 0.0
 
 
@@ -497,19 +552,43 @@ def _is_open(path):
         return False  # lsof missing/slow -> fall back to the mtime-quiet check
 
 
+# Per-path signature (size, page_count) from the previous poll — a file counts as settled
+# only once this is UNCHANGED across two consecutive polls (see _is_settled). This is what
+# stops a multi-page PDF that a scanner streams page-by-page over SMB from being processed
+# after only page 1 has landed (mtime-quiet alone can be fooled by an inter-page pause).
+_settle_seen = {}
+
+
 def _is_settled(path):
-    """True once a file is safe to process: non-empty, quiet for STABLE_SEC, not
-    held open. This is what prevents a half-transferred 50-page scan from being
-    OCR'd mid-write."""
+    """True once a file is safe to process: non-empty, quiet for STABLE_SEC, not held open,
+    a fully-parseable PDF, and unchanged (size + page count) since the previous poll. The
+    cross-poll stability + parseability checks are what prevent a multi-page scan streamed
+    page-by-page over SMB from being OCR'd after only its first page has arrived."""
+    key = str(path)
     try:
         st = path.stat()
     except OSError:
+        _settle_seen.pop(key, None)
         return False
     if st.st_size == 0:
         return False
     if time.time() - st.st_mtime < STABLE_SEC:
         return False
-    return not _is_open(path)
+    if _is_open(path):
+        return False
+    # A PDF is only valid once its trailer/xref is written; a half-streamed one fails to
+    # open or reports fewer pages. Images have no such structure -> page count is fixed at 1.
+    pages = _pdf_pages(path) if path.suffix.lower() == ".pdf" else 1
+    if pages <= 0:
+        _settle_seen[key] = None
+        return False  # not a complete/parseable PDF yet — wait for the next poll
+    sig = (st.st_size, pages)
+    prev = _settle_seen.get(key)
+    _settle_seen[key] = sig
+    if prev != sig:
+        return False  # size/page-count still changing -> give it one more poll cycle
+    _settle_seen.pop(key, None)  # confirmed stable; forget it (it'll be consumed now)
+    return True
 
 
 def gateway_once():
@@ -527,11 +606,15 @@ def gateway_once():
             # inbox filename hints: "_vlm" -> Gemma route; "_force" -> re-OCR even if text exists.
             stem_l = p.stem.lower()
             mode, n = make_searchable(p, out, use_vlm="_vlm" in stem_l, force="_force" in stem_l)
+            _assert_pagecount(p, out, mode)  # never upload+delete a silently-truncated result
             name = _smart_name(out, p.stem)  # short descriptive name from the OCR text
             _upload(out, title=name)
-            # archive the pristine original under the descriptive name (retention prunes it).
+            # archive the pristine original under the descriptive name (retention prunes it),
+            # then hand it to the TARGET_USER so it is downloadable/deletable over SMB.
             ARCHIVE.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(str(p), str(_unique_path(ARCHIVE, name, p.suffix)))
+            dst = _unique_path(ARCHIVE, name, p.suffix)
+            shutil.copy2(str(p), str(dst))
+            _handoff(dst)
             detail = {"passthrough": "passed through (already had text)",
                       "vlm": f"VLM-OCR'd ({n} chars)"}.get(mode, f"OCR'd ({n} boxes)")
             log(f"gateway: {p.name} -> '{name}' uploaded, {detail}; original archived")
@@ -541,7 +624,9 @@ def gateway_once():
             log(f"gateway ERROR {p.name}: {e}")
             try:
                 ERRORS.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(p), str(ERRORS / p.name))
+                dst = ERRORS / p.name
+                shutil.move(str(p), str(dst))
+                _handoff(dst)  # keep the failed original reachable over SMB, too
             except Exception:
                 pass
 
@@ -550,6 +635,7 @@ def _process_and_upload(src_pdf, title, archive_names):
     """Make `src_pdf` searchable, upload with a short descriptive title. Returns (boxes, name)."""
     out = WORK / (Path(title).stem + ".ocr.pdf")
     _mode, n = make_searchable(src_pdf, out)
+    _assert_pagecount(src_pdf, out, _mode)  # never upload a silently-truncated result
     name = _smart_name(out, Path(title).stem)
     _upload(out, title=name)
     out.unlink(missing_ok=True)
@@ -570,7 +656,9 @@ def duplex_once():
         front, back = files[0], files[1]
         try:
             for s in (front, back):
-                shutil.copy2(str(s), str((ARCHIVE / s.name)))
+                d = ARCHIVE / s.name
+                shutil.copy2(str(s), str(d))
+                _handoff(d)
             combined = WORK / "duplex_combined.pdf"
             interleave(front, back, combined)
             n, name = _process_and_upload(combined, front.stem, [front, back])
@@ -582,14 +670,18 @@ def duplex_once():
             ERRORS.mkdir(parents=True, exist_ok=True)
             for s in (front, back):
                 try:
-                    shutil.move(str(s), str(ERRORS / s.name))
+                    d = ERRORS / s.name
+                    shutil.move(str(s), str(d))
+                    _handoff(d)
                 except Exception:
                     pass
     elif len(files) == 1:
         p = files[0]
         if time.time() - p.stat().st_mtime > DUPLEX_TIMEOUT:
             try:
-                shutil.copy2(str(p), str(ARCHIVE / p.name))
+                d = ARCHIVE / p.name
+                shutil.copy2(str(p), str(d))
+                _handoff(d)
                 n, name = _process_and_upload(p, p.stem, [p])
                 log(f"duplex: lone {p.name} timed out -> '{name}' single-sided ({n} boxes)")
                 p.unlink()
@@ -676,8 +768,10 @@ def _loop(fn, interval, name):
 
 
 def main():
+    # Create the working dirs owned by the TARGET_USER (the daemon is root) so archived
+    # originals dropped into them stay reachable/deletable over SMB.
     for d in (INBOX, INBOX / DUPLEX_SUBDIR, ARCHIVE, ERRORS, WORK):
-        d.mkdir(parents=True, exist_ok=True)
+        _ensure_user_dir(d)
     if not URL or not TOKEN:
         log("PAPERLESS_OCR_URL / PAPERLESS_OCR_TOKEN not set — idling. "
             "Set them in /usr/local/etc/macstudio.conf and restart.")
