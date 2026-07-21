@@ -141,6 +141,18 @@ def log(msg):
 
 
 # ------------------------------------------------------------------------- OCR core
+_ocr_font = None
+
+
+def _get_ocr_font():
+    """Cached fitz.Font for the embedded OCR font — used to measure text width so each
+    observation's font can be fitted to its box (see _overlay)."""
+    global _ocr_font
+    if _ocr_font is None:
+        _ocr_font = fitz.Font(fontfile=FONT)
+    return _ocr_font
+
+
 def _overlay(page, pix):
     """OCR a page's rendered pixmap with Apple Vision and overlay invisible Unicode
     text onto `page` (which is sized in points and already shows the image).
@@ -158,20 +170,32 @@ def _overlay(page, pix):
 
     # Embed the Cyrillic-capable font once for this page.
     page.insert_font(fontname="ocrf", fontfile=FONT)
+    font = _get_ocr_font()
     W, H = page.rect.width, page.rect.height
     placed = 0
     for text, _conf, bbox in ann:
-        if not text.strip():
+        s = text.strip()
+        if not s:
             continue
         # Vision bbox: normalized (x, y, w, h), origin bottom-left. Flip to top-left.
         x, y, w, h = bbox
         rx0 = x * W
+        rx1 = (x + w) * W
         ry0 = (1.0 - (y + h)) * H
         ry1 = (1.0 - y) * H
-        fs = max(4.0, (ry1 - ry0) * 0.9)
+        boxw = max(1.0, rx1 - rx0)
+        boxh = max(1.0, ry1 - ry0)
+        # Fit the font to the box WIDTH (capped by height), so the whole observation stays
+        # inside its box. Sizing from height alone let wide lines overrun the page edge, where
+        # the overflow glyphs were CLIPPED — get_text() (how paperless indexes) then returned
+        # truncated, scrambled words ("Gewürzmischu", "Sahnejogh"). A trailing space keeps
+        # adjacent boxes from fusing into one token on extraction.
+        st = s + " "
+        w1 = font.text_length(st, fontsize=1) or 1.0
+        fs = max(1.0, min(boxh * 0.95, boxw / w1))
         try:
             # render_mode=3 => invisible (searchable/selectable but not drawn).
-            page.insert_text((rx0, ry1 - (ry1 - ry0) * 0.2), text,
+            page.insert_text((rx0, ry1 - (ry1 - ry0) * 0.2), st,
                              fontname="ocrf", fontsize=fs, render_mode=3)
             placed += 1
         except Exception:
