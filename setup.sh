@@ -70,10 +70,9 @@ POWER_LABELS=(com.local.omlx.main)
 CONFIG_KEYS=(
   TARGET_USER
   TARGET_HOME
-  IMMICH_PROJECT_DIR
-  IMMICH_REPO
-  IMMICH_REPO_REF
-  IMMICH_MLX_VERSION
+  IMMICH_SESSION_USER
+  IMMICH_ML_IMAGE
+  IMMICH_ML_IMAGE_TAG
   DOCLING_PROJECT_DIR
   IOGPU_WIRED_LIMIT_MB
   INSTALL_MLX
@@ -204,10 +203,9 @@ config_default() {
   case "$1" in
     TARGET_USER)                 echo mac ;;
     TARGET_HOME)                 echo /Users/mac ;;
-    IMMICH_PROJECT_DIR)          echo /Users/mac/projects/immich-ml-metal ;;
-    IMMICH_REPO)                 echo https://github.com/sebastianfredette/immich-ml-metal ;;
-    IMMICH_REPO_REF)             echo main ;;
-    IMMICH_MLX_VERSION)          echo 0.30.0 ;;
+    IMMICH_SESSION_USER)         echo colima-svc ;;
+    IMMICH_ML_IMAGE)             echo ghcr.io/immich-app/immich-machine-learning ;;
+    IMMICH_ML_IMAGE_TAG)         echo release ;;
     DOCLING_PROJECT_DIR)         echo /Users/mac/projects/docling-serve ;;
     IOGPU_WIRED_LIMIT_MB)        echo 30720 ;;
     INSTALL_MLX)                 echo 1 ;;
@@ -385,9 +383,9 @@ config_hint() {
     VOICE_WYOMING_PUBLIC_PORT)   echo "Public port for Home Assistant's native Wyoming-protocol voice integration (default 10300, the Wyoming ecosystem convention) — one port carries BOTH STT and TTS, auto-discovered by HA. Shares the SAME backend as 'stt' (com.local.voicestt.serve), just a second proxy in front of it" ;;
     VOICE_WYOMING_BACKEND_PORT)  echo "Internal Wyoming port the speech-server binary binds (127.0.0.1 only, default 15008)" ;;
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
-    IMMICH_REPO)                 echo "Git URL of the Metal/ANE Immich-ML backend cloned+built into IMMICH_PROJECT_DIR (default the maintained upstream sebastianfredette/immich-ml-metal; point at your own fork to carry local patches). Hybrid accel: CLIP on the GPU (MLX), face-detect+OCR on the ANE (Apple Vision), face-recog via ONNX/CoreML. Needs Python 3.11 + macOS 26" ;;
-    IMMICH_REPO_REF)             echo "Branch/tag of IMMICH_REPO to check out (default main)" ;;
-    IMMICH_MLX_VERSION)          echo "MLX version pinned in the immich-ml venv (default 0.30.0). Upstream leaves mlx unpinned; MLX >=0.31 crashes CLIP inference with 'There is no Stream(cpu, 1) in current thread'. Enforced on every --apply. Bump only if upstream adapts to a newer MLX" ;;
+    IMMICH_SESSION_USER)         echo "Dedicated, non-admin macOS account that auto-logs-in so Colima's own LaunchAgent (registered via 'brew services start colima') has a GUI/Aqua session to bootstrap into after a cold boot. Created + auto-login configured manually (sysadminctl), not by --apply — see CLAUDE.md. com.local.immich.ml's plist runs as this user (UserName), so it talks to THIS user's colima docker socket, not TARGET_USER's" ;;
+    IMMICH_ML_IMAGE)             echo "Official Immich machine-learning image (ghcr.io/immich-app/immich-machine-learning). Replaces the old immich-ml-metal MLX fork — CPU-only on Apple Silicon (no Metal/Vulkan hwaccel tag exists for this image; confirmed with Immich maintainers), but the fork couldn't load Immich's multilingual (NLLB-CLIP) search models at all, so this is required for non-English Smart Search regardless of performance" ;;
+    IMMICH_ML_IMAGE_TAG)         echo "Tag suffix for IMMICH_ML_IMAGE (default 'release' = latest stable, matching Immich's own compose convention). No -cuda/-rocm/-openvino/-armnn/-rknn variant applies on Apple Silicon — plain CPU" ;;
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
     AUTOUPDATE_WEEKDAY)          echo "launchd weekday: 0=Sun 1=Mon … 6=Sat" ;;
     AUTO_ACCEPT)                 echo "1 = skip all 'press Enter to proceed' prompts in TUI" ;;
@@ -759,11 +757,15 @@ reload_plist_if_changed() {
 ensure_dirs() {
   /bin/mkdir -p "$LOG_DIR" "$LIBEXEC_DIR" "$SBIN_DIR" "$BIN_DIR" "$PLIST_DIR" \
                 "$(dirname "$CONF_FILE")"
-  /bin/chmod 755 "$LOG_DIR"
-  # Daemons run as TARGET_USER (via plist UserName); launchd opens
+  /bin/chmod 775 "$LOG_DIR"
+  # Daemons run as TARGET_USER, or — just com.local.immich.ml — as
+  # IMMICH_SESSION_USER (a separate, non-admin account; see
+  # ensure_immich_ml_container()) via plist UserName; launchd opens
   # StandardOutPath/StandardErrorPath as that user, so the log dir must be
-  # writable by it. Without this, every daemon fails init with EX_CONFIG.
-  /usr/sbin/chown -R "${TARGET_USER:-mac}:admin" "$LOG_DIR" 2>/dev/null || true
+  # writable by it. Without this, the daemon fails init with EX_CONFIG. Group
+  # is "staff" (every macOS user account's default group, admin or not) rather
+  # than "admin" so a non-admin session user can still create its log file.
+  /usr/sbin/chown -R "${TARGET_USER:-mac}:staff" "$LOG_DIR" 2>/dev/null || true
 }
 
 ensure_xcode_clt() {
@@ -864,10 +866,13 @@ ensure_formulas() {
   # work with zero extra dependencies. say-tts-server.py degrades gracefully
   # (501 with a clear message) if this is missing.
   [ "${INSTALL_VOICE:-0}" = 1 ] && ensure_formula ffmpeg
-  # immich-ml-metal's venv needs python@3.11 specifically (3.13 lacks required wheels).
-  # This is separate from ensure_modern_python()'s python@3.12 (MLX/docling): the immich
-  # backend is built by ensure_immich_project() against 3.11.
-  [ "${INSTALL_IMMICH:-0}" = 1 ] && ensure_formula python@3.11
+  # Official Immich-ML image runs under Colima (Docker on a Lima/Virtualization.framework
+  # VM) rather than a python venv — see ensure_immich_ml_container().
+  if [ "${INSTALL_IMMICH:-0}" = 1 ]; then
+    ensure_formula colima
+    ensure_formula docker
+    ensure_formula docker-compose
+  fi
 }
 
 ensure_modern_python() {
@@ -883,114 +888,101 @@ ensure_modern_python() {
   ensure_formula python@3.12
 }
 
-ensure_immich_project() {
-  # Clones + builds the Metal/ANE Immich-ML backend (default the maintained upstream
-  # sebastianfredette/immich-ml-metal; IMMICH_REPO overridable to point at a fork).
-  # Hybrid acceleration: CLIP on the GPU via MLX, face-detection + OCR on the Apple
-  # Neural Engine via Apple Vision, face-recognition via ONNX/CoreML — so it mostly
-  # rides the ANE and only bursts the GPU for CLIP (see CLAUDE.md). The SECOND
-  # "clone an external git repo and build it" pattern in this repo (after
-  # ensure_voice_project()), but pip/venv-based rather than swift: upstream requires
-  # python@3.11 (3.13 lacks required wheels). The run contract matches the existing
-  # wrapper/plist unchanged — `python -m src.main`, ML_HOST/ML_PORT, health GET /ping —
-  # so nothing under wrappers/ or daemons/ needs to change.
+ensure_immich_ml_container() {
+  # Official ghcr.io/immich-app/immich-machine-learning image, run via Colima
+  # (Docker on a Lima/Virtualization.framework VM) — replaces the old
+  # immich-ml-metal MLX fork. Two independent reasons, not just one:
+  #   1. The fork's own README calls it "experimental... not production
+  #      software", "architected and largely written by Claude", tested only in
+  #      one person's setup.
+  #   2. Decisive regardless of (1): Immich's multilingual Smart Search models
+  #      (e.g. nllb-clip-large-siglip__mrl, needed for German/Russian search)
+  #      use an NLLB text encoder with no mlx-community port and no open_clip
+  #      equivalent — the fork's model loader (mlx-community port / HF
+  #      conversion / open_clip fallback) cannot load them at all.
+  # CPU-only on Apple Silicon either way — Immich ships -cuda/-rocm/-openvino/
+  # -armnn/-rknn image tags but no Metal/Vulkan one, and a maintainer confirmed
+  # macOS Docker can't pass Metal hwaccel into the Linux VM regardless (see
+  # CLAUDE.md). One-time bulk re-index of an existing library is expected to
+  # run against the -cuda tag on other hardware (e.g. WSL2 with an NVIDIA GPU,
+  # via Immich's Remote Machine Learning setting) — same image/model, so
+  # switching the Remote ML URL back to this Mac afterwards needs no re-index.
+  #
+  # Runs as IMMICH_SESSION_USER (a dedicated, non-admin, auto-login account —
+  # deliberately NOT TARGET_USER): Colima's own background VM-manager
+  # registers itself as a LaunchAgent (via `brew services`, in that account's
+  # ~/Library/LaunchAgents), which needs a real GUI/Aqua session to bootstrap
+  # after a cold boot. Empirically confirmed 2026-07: a plain SSH session —
+  # even a password-auth one that unlocks FileVault — does NOT create the
+  # launchd `gui/<uid>` domain a LaunchAgent lives in; a manual
+  # `launchctl bootstrap gui/<uid>` over SSH fails outright with "Domain does
+  # not support specified action". Auto-login is what supplies that session.
+  # com.local.immich.ml's plist (daemons/com.local.immich.ml.plist) runs as
+  # IMMICH_SESSION_USER for the same reason: it needs that account's colima
+  # docker socket, not TARGET_USER's — but it's still a plain root-bootstrapped
+  # LaunchDaemon like every other backend (UserName just picks who the process
+  # runs as; no session is needed to spawn it). No ondemand-proxy.py or
+  # launchd-domain changes needed anywhere else in this repo.
   [ "${INSTALL_IMMICH:-0}" = 1 ] || return 0
-  local dir="${IMMICH_PROJECT_DIR:-/Users/mac/projects/immich-ml-metal}"
-  local repo="${IMMICH_REPO:-https://github.com/sebastianfredette/immich-ml-metal}"
-  local ref="${IMMICH_REPO_REF:-main}"
+  local session_user="${IMMICH_SESSION_USER:-colima-svc}"
+  local ref="${IMMICH_ML_IMAGE:-ghcr.io/immich-app/immich-machine-learning}:${IMMICH_ML_IMAGE_TAG:-release}"
+  local docker=/opt/homebrew/bin/docker
+  local colima=/opt/homebrew/bin/colima
+  local brew=/opt/homebrew/bin/brew
+
+  if ! /usr/bin/id -u "$session_user" >/dev/null 2>&1; then
+    warn "IMMICH_SESSION_USER '$session_user' does not exist yet — create it + enable auto-login first (see CLAUDE.md), then re-run --apply"
+    return 1
+  fi
+  if [ ! -x "$colima" ] || [ ! -x "$docker" ]; then
+    warn "colima/docker not installed yet (ensure_formulas runs before this step on a normal --apply)"
+    return 1
+  fi
+
+  # Colima's OWN launchd registration — not something this project renders/owns
+  # (see comment above). Idempotent (`brew services start` on an already-running
+  # service is a no-op). Best-effort: with no GUI/Aqua domain yet (e.g. running
+  # --apply over plain SSH before anyone has auto-logged-in once), the live
+  # start can fail even though the LaunchAgent file is still registered —
+  # auto-login picks it up for real on the next actual boot.
+  /usr/bin/sudo -u "$session_user" -H "$brew" services start colima >/dev/null 2>&1 \
+    || warn "colima did not start live (no GUI/Aqua session yet?) — it will start automatically once $session_user auto-logs in at boot"
+
+  local waited=0
+  while [ $waited -lt 20 ] && ! /usr/bin/sudo -u "$session_user" -H "$docker" info >/dev/null 2>&1; do
+    /bin/sleep 1; waited=$((waited+1))
+  done
+  if ! /usr/bin/sudo -u "$session_user" -H "$docker" info >/dev/null 2>&1; then
+    warn "colima/docker not reachable yet as $session_user — image pull/container setup deferred to the next --apply"
+    return 0
+  fi
+
   local changed=0
-
-  if [ ! -d "$dir/.git" ]; then
-    if [ ! -x /usr/bin/git ]; then
-      warn "git not found; cannot clone immich-ml-metal"
+  local have_ref
+  have_ref=$(/usr/bin/sudo -u "$session_user" -H "$docker" inspect --format '{{.Config.Image}}' immich_machine_learning 2>/dev/null || true)
+  if [ "$have_ref" != "$ref" ]; then
+    log "immich-ml: pulling $ref"
+    if ! /usr/bin/sudo -u "$session_user" -H "$docker" pull "$ref" >"$LOG_DIR/immich-pull.log" 2>&1; then
+      warn "docker pull $ref failed; see $LOG_DIR/immich-pull.log"
       return 1
     fi
-    log "cloning immich-ml-metal ($repo@$ref) -> $dir"
-    /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$(dirname "$dir")"
-    if ! /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git clone --depth 1 --branch "$ref" \
-          "$repo" "$dir" >"$LOG_DIR/immich-clone.log" 2>&1; then
-      warn "git clone of immich-ml-metal failed; see $LOG_DIR/immich-clone.log"
+    [ -n "$have_ref" ] && /usr/bin/sudo -u "$session_user" -H "$docker" rm -f immich_machine_learning >/dev/null 2>&1
+    log "immich-ml: creating container (127.0.0.1:${ML_BACKEND_PORT:-13003} -> 3003)"
+    if ! /usr/bin/sudo -u "$session_user" -H "$docker" create --name immich_machine_learning \
+          -p "127.0.0.1:${ML_BACKEND_PORT:-13003}:3003" \
+          -v immich-model-cache:/cache \
+          "$ref" >/dev/null 2>"$LOG_DIR/immich-pull.log"; then
+      warn "docker create immich_machine_learning failed; see $LOG_DIR/immich-pull.log"
       return 1
     fi
     changed=1
-  else
-    local head_before; head_before=$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" rev-parse HEAD 2>/dev/null)
-    /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" pull --ff-only \
-      >"$LOG_DIR/immich-clone.log" 2>&1 \
-      || warn "git pull for immich-ml-metal failed (continuing with existing checkout); see $LOG_DIR/immich-clone.log"
-    [ "$head_before" != "$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" rev-parse HEAD 2>/dev/null)" ] && changed=1
   fi
 
-  # Project-local .venv built with python@3.11 specifically (like docling-serve's own
-  # .venv, NOT one of the $VENV_DIR MLX-stack venvs). ensure_formulas() installs
-  # python@3.11 when INSTALL_IMMICH=1.
-  if [ ! -x /opt/homebrew/bin/python3.11 ]; then
-    warn "immich-ml needs python@3.11, which is not installed yet."
-    warn "Re-run 'sudo bash setup.sh --apply' after Homebrew is available."
-    return 1
-  fi
-  local req="$dir/requirements.txt"
-  if [ ! -f "$req" ]; then
-    warn "immich-ml checkout has no requirements.txt at $req — unexpected repo layout for '$repo'"
-    return 1
-  fi
-  local req_stamp="$dir/.venv/.requirements.sha256"
-  local req_hash; req_hash=$(hash_file "$req")
-  if [ ! -x "$dir/.venv/bin/python" ]; then
-    log "building immich-ml venv at $dir/.venv (python@3.11; MLX + onnxruntime + insightface + open-clip — several minutes)"
-    /usr/bin/sudo -u "$TARGET_USER" -H /opt/homebrew/bin/python3.11 -m venv "$dir/.venv"
-    changed=1
-  fi
-  # Reinstall only when requirements.txt changed (fresh build, or a pull touched deps).
-  if [ "$req_hash" != "$(/bin/cat "$req_stamp" 2>/dev/null)" ]; then
-    /usr/bin/sudo -u "$TARGET_USER" -H "$dir/.venv/bin/pip" install --upgrade pip wheel >/dev/null 2>&1 \
-      || warn "pip upgrade inside immich-ml venv returned non-zero"
-    log "pip install -r requirements.txt (immich-ml) — downloads MLX/onnxruntime/insightface wheels"
-    if ! /usr/bin/sudo -u "$TARGET_USER" -H "$dir/.venv/bin/pip" install -r "$req" \
-          >"$LOG_DIR/immich-venv-install.log" 2>&1; then
-      warn "immich-ml pip install failed; see $LOG_DIR/immich-venv-install.log"
-      return 1
-    fi
-    /usr/bin/sudo -u "$TARGET_USER" -H /bin/sh -c "printf '%s' '$req_hash' > '$req_stamp'"
-    changed=1
-  fi
-
-  # Pin MLX. Upstream's requirements.txt leaves it unpinned (`mlx>=0.22.0`, comment
-  # says "current stable 0.30.x"), so a fresh install pulls the latest — and MLX >=0.31
-  # crashes CLIP inference in the pool threads with
-  #   libc++abi: std::runtime_error: There is no Stream(cpu, 1) in current thread
-  # (the per-thread stream init in src/main.py:_init_ml_thread only warms the GPU
-  # stream, not the CPU one newer MLX now demands). 0.30.0 is verified working (text +
-  # 6-face detect + CoreML recog, 2026-07-12). Enforced on every apply so a re-clone or
-  # a `pip install -r` can't silently reintroduce the crash. Bump IMMICH_MLX_VERSION if
-  # upstream adapts to a newer MLX.
-  local want_mlx="${IMMICH_MLX_VERSION:-0.30.0}"
-  local have_mlx; have_mlx=$(/usr/bin/sudo -u "$TARGET_USER" -H "$dir/.venv/bin/python" -c 'import mlx.core as mx; print(mx.__version__)' 2>/dev/null)
-  if [ -n "$want_mlx" ] && [ "$have_mlx" != "$want_mlx" ]; then
-    log "pinning mlx ${have_mlx:-none} -> $want_mlx (upstream leaves it unpinned; >=0.31 crashes CLIP pool threads — see comment)"
-    if /usr/bin/sudo -u "$TARGET_USER" -H "$dir/.venv/bin/pip" install "mlx==$want_mlx" >>"$LOG_DIR/immich-venv-install.log" 2>&1; then
-      ok "mlx pinned to $want_mlx"
-      changed=1
-    else
-      warn "mlx pin to $want_mlx failed; see $LOG_DIR/immich-venv-install.log"
-    fi
-  fi
-
-  if [ -x "$dir/.venv/bin/python" ]; then
-    ok "immich-ml project ready at $dir (first CLIP request does a one-time model download+convert to MLX, ~1-2 GB into ~/.cache/immich-ml-metal)"
-  else
-    warn "immich-ml venv build reported success but $dir/.venv/bin/python is missing"
-    return 1
-  fi
-
-  # Only refresh a LIVE backend (an idle on-demand backend picks up the new checkout on
-  # its next wake, since the wrapper re-execs from disk). Same "config changed -> kick"
-  # idea ensure_voice_project() uses, but guarded on daemon_running so we don't wake an
-  # idle backend just to have the proxy idle-stop it again.
   if [ "$changed" = 1 ] && daemon_running com.local.immich.ml; then
     /bin/launchctl kickstart -k system/com.local.immich.ml >/dev/null 2>&1 \
-      && ok "restarted com.local.immich.ml to pick up the updated checkout/venv"
+      && ok "restarted com.local.immich.ml to pick up the new image"
   fi
+  ok "immich-ml container ready ($ref, as $session_user) — pick a multilingual model (e.g. nllb-clip-large-siglip__mrl) in Immich's admin Smart Search settings for German/Russian"
 }
 
 ensure_docling_venv() {
@@ -1401,12 +1393,12 @@ ensure_omlx_project() {
   # Infinity (embed/rerank) with ONE process. Alpha-stage, not on PyPI:
   # installed from source via `pip install -e .`. Git checkout lives at
   # OMLX_PROJECT_DIR (~/projects/omlx — same convention as
-  # ensure_immich_project/ensure_voice_project); the venv it installs INTO is
-  # the SHARED $VENV_DIR/omlx (matches mlxvlm/litellm/infinity/mflux — every
-  # wrapper execs "$VENV_DIR/<name>/bin/...", zero special-casing needed).
+  # ensure_voice_project); the venv it installs INTO is the SHARED
+  # $VENV_DIR/omlx (matches mlxvlm/litellm/infinity/mflux — every wrapper execs
+  # "$VENV_DIR/<name>/bin/...", zero special-casing needed).
   #
   # OMLX_REPO_REF is a PINNED TAG (v0.5.1), not a floating branch — mirrors
-  # MLXVLM_VERSION's old pin discipline. Unlike ensure_immich_project's
+  # MLXVLM_VERSION's old pin discipline. Unlike ensure_voice_project's
   # `git pull --ff-only` (tracks a moving branch), we `fetch` + explicit
   # `checkout "$ref"` every run — a no-op when already on that tag.
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
@@ -2238,7 +2230,7 @@ apply_everything() {
   dbg "step: apply_tui_sudoers";       apply_tui_sudoers || true
   dbg "step: retire_old_engine_daemons"; retire_old_engine_daemons || true
   dbg "step: ensure_modern_python";    ensure_modern_python || true
-  dbg "step: ensure_immich_project";   ensure_immich_project
+  dbg "step: ensure_immich_ml_container"; ensure_immich_ml_container
   dbg "step: ensure_docling_venv";     ensure_docling_venv
   dbg "step: ensure_paperless_ocr_venv"; ensure_paperless_ocr_venv || true
   dbg "step: ensure_paperless_ocr_dirs"; ensure_paperless_ocr_dirs || true
