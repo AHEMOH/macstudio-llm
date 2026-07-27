@@ -3,12 +3,11 @@
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.local.immich.ml</string>
-  <key>UserName</key><string>@TARGET_USER@</string>
+  <key>UserName</key><string>@IMMICH_SESSION_USER@</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/local/libexec/start-immich-ml.sh</string>
   </array>
-  <key>WorkingDirectory</key><string>@IMMICH_PROJECT_DIR@</string>
   <key>RunAtLoad</key><false/>
   <key>KeepAlive</key><false/>
   <key>ThrottleInterval</key><integer>5</integer>
