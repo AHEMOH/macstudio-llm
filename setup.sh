@@ -766,6 +766,15 @@ ensure_dirs() {
   # is "staff" (every macOS user account's default group, admin or not) rather
   # than "admin" so a non-admin session user can still create its log file.
   /usr/sbin/chown -R "${TARGET_USER:-mac}:staff" "$LOG_DIR" 2>/dev/null || true
+  # chmod on the dir above only affects the dir itself, not files already
+  # inside it — a log file created before a daemon's UserName changed (e.g.
+  # immich-ml.log from back when com.local.immich.ml ran as TARGET_USER) can
+  # be left at 644, which blocks the new UserName from opening it for
+  # StandardOutPath/StandardErrorPath and fails the whole spawn with
+  # EX_CONFIG before the program even starts (confirmed live 2026-07-27).
+  # Group-writable so any daemon's UserName, as long as it's in "staff", can
+  # append to its own log.
+  /usr/bin/find "$LOG_DIR" -type f -exec /bin/chmod 664 {} + 2>/dev/null || true
 }
 
 ensure_xcode_clt() {
