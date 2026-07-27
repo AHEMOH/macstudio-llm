@@ -929,6 +929,14 @@ ensure_immich_ml_container() {
   local docker=/opt/homebrew/bin/docker
   local colima=/opt/homebrew/bin/colima
   local brew=/opt/homebrew/bin/brew
+  # colima does NOT register a "colima" docker CLI context on this macOS/colima
+  # combination (verified live 2026-07-27: `docker context ls` only ever showed
+  # "default", pointing at /var/run/docker.sock, which is never populated) — its
+  # actual socket lives per-user at ~/.colima/default/docker.sock regardless.
+  # DOCKER_HOST sidesteps context resolution entirely rather than depending on
+  # colima registering one. `local -x` so it doesn't leak into the rest of
+  # apply_everything once this function returns.
+  local -x DOCKER_HOST="unix:///Users/$session_user/.colima/default/docker.sock"
 
   if ! /usr/bin/id -u "$session_user" >/dev/null 2>&1; then
     warn "IMMICH_SESSION_USER '$session_user' does not exist yet — create it + enable auto-login first (see CLAUDE.md), then re-run --apply"
@@ -949,26 +957,26 @@ ensure_immich_ml_container() {
     || warn "colima did not start live (no GUI/Aqua session yet?) — it will start automatically once $session_user auto-logs in at boot"
 
   local waited=0
-  while [ $waited -lt 20 ] && ! /usr/bin/sudo -u "$session_user" -H "$docker" info >/dev/null 2>&1; do
+  while [ $waited -lt 20 ] && ! /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" info >/dev/null 2>&1; do
     /bin/sleep 1; waited=$((waited+1))
   done
-  if ! /usr/bin/sudo -u "$session_user" -H "$docker" info >/dev/null 2>&1; then
+  if ! /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" info >/dev/null 2>&1; then
     warn "colima/docker not reachable yet as $session_user — image pull/container setup deferred to the next --apply"
     return 0
   fi
 
   local changed=0
   local have_ref
-  have_ref=$(/usr/bin/sudo -u "$session_user" -H "$docker" inspect --format '{{.Config.Image}}' immich_machine_learning 2>/dev/null || true)
+  have_ref=$(/usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" inspect --format '{{.Config.Image}}' immich_machine_learning 2>/dev/null || true)
   if [ "$have_ref" != "$ref" ]; then
     log "immich-ml: pulling $ref"
-    if ! /usr/bin/sudo -u "$session_user" -H "$docker" pull "$ref" >"$LOG_DIR/immich-pull.log" 2>&1; then
+    if ! /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" pull "$ref" >"$LOG_DIR/immich-pull.log" 2>&1; then
       warn "docker pull $ref failed; see $LOG_DIR/immich-pull.log"
       return 1
     fi
-    [ -n "$have_ref" ] && /usr/bin/sudo -u "$session_user" -H "$docker" rm -f immich_machine_learning >/dev/null 2>&1
+    [ -n "$have_ref" ] && /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" rm -f immich_machine_learning >/dev/null 2>&1
     log "immich-ml: creating container (127.0.0.1:${ML_BACKEND_PORT:-13003} -> 3003)"
-    if ! /usr/bin/sudo -u "$session_user" -H "$docker" create --name immich_machine_learning \
+    if ! /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" create --name immich_machine_learning \
           -p "127.0.0.1:${ML_BACKEND_PORT:-13003}:3003" \
           -v immich-model-cache:/cache \
           "$ref" >/dev/null 2>"$LOG_DIR/immich-pull.log"; then

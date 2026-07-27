@@ -13,6 +13,10 @@ SESSION_USER="${IMMICH_SESSION_USER:-colima-svc}"
 export HOME="/Users/$SESSION_USER"
 export USER="$SESSION_USER"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# colima doesn't register a "colima" docker CLI context on this macOS/colima
+# combination — its socket lives per-user at ~/.colima/default/docker.sock
+# regardless (see ensure_immich_ml_container() in setup.sh).
+export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
 
 # docker create'd once by ensure_immich_ml_container(); this just (re)starts
 # it and attaches so launchd has a real, trackable foreground pid — same
