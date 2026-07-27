@@ -18,6 +18,20 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 # regardless (see ensure_immich_ml_container() in setup.sh).
 export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
 
+# Colima's own `brew services` LaunchAgent (RunAtLoad) is NOT reliable right
+# at boot — confirmed live 2026-07-27: even with the auto-login session
+# already up, it can fail its first start attempt (a race with
+# Virtualization.framework not being ready that early) and then never retry.
+# Self-heal here instead of depending on that timing: if the docker socket
+# isn't answering, start colima ourselves before continuing. No-op (fast) once
+# colima is already up, which is the common case after the first request.
+if ! /opt/homebrew/bin/docker info >/dev/null 2>&1; then
+  /opt/homebrew/bin/colima start >&2 || {
+    echo "colima start failed" >&2
+    exit 1
+  }
+fi
+
 # docker create'd once by ensure_immich_ml_container(); this just (re)starts
 # it and attaches so launchd has a real, trackable foreground pid — same
 # contract the old venv-python process gave services/ondemand-proxy.py
