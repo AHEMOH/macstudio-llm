@@ -124,6 +124,8 @@ CONFIG_KEYS=(
   VOICE_WYOMING_BACKEND_PORT
   ML_PUBLIC_PORT
   ML_BACKEND_PORT
+  IMMICH_COLIMA_CPU
+  IMMICH_COLIMA_MEMORY
   DOCLING_PUBLIC_PORT
   DOCLING_BACKEND_PORT
   IDLE_TIMEOUT_IMMICH
@@ -257,6 +259,8 @@ config_default() {
     VOICE_WYOMING_BACKEND_PORT)  echo 15008 ;;
     ML_PUBLIC_PORT)              echo 3003 ;;
     ML_BACKEND_PORT)             echo 13003 ;;
+    IMMICH_COLIMA_CPU)           echo 4 ;;
+    IMMICH_COLIMA_MEMORY)        echo 6 ;;
     DOCLING_PUBLIC_PORT)         echo 5001 ;;
     DOCLING_BACKEND_PORT)        echo 15001 ;;
     IDLE_TIMEOUT_IMMICH)         echo 900 ;;
@@ -383,6 +387,8 @@ config_hint() {
     VOICE_WYOMING_PUBLIC_PORT)   echo "Public port for Home Assistant's native Wyoming-protocol voice integration (default 10300, the Wyoming ecosystem convention) — one port carries BOTH STT and TTS, auto-discovered by HA. Shares the SAME backend as 'stt' (com.local.voicestt.serve), just a second proxy in front of it" ;;
     VOICE_WYOMING_BACKEND_PORT)  echo "Internal Wyoming port the speech-server binary binds (127.0.0.1 only, default 15008)" ;;
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
+    IMMICH_COLIMA_CPU)           echo "vCPUs for the Colima VM that runs immich-ml (default 4). Passed to 'colima start --cpu'" ;;
+    IMMICH_COLIMA_MEMORY)        echo "RAM in GiB for the Colima VM that runs immich-ml (default 6, raised from colima's stock 2GB on 2026-07-29 — that default OOM-killed the ONNX worker mid-load once a larger CLIP model was selected; see CLAUDE.md). Passed to 'colima start --memory'" ;;
     IMMICH_SESSION_USER)         echo "Dedicated, non-admin macOS account that auto-logs-in so Colima's own LaunchAgent (registered via 'brew services start colima') has a GUI/Aqua session to bootstrap into after a cold boot. Created + auto-login configured manually (sysadminctl), not by --apply — see CLAUDE.md. com.local.immich.ml's plist runs as this user (UserName), so it talks to THIS user's colima docker socket, not TARGET_USER's" ;;
     IMMICH_ML_IMAGE)             echo "Official Immich machine-learning image (ghcr.io/immich-app/immich-machine-learning). Replaces the old immich-ml-metal MLX fork — CPU-only on Apple Silicon (no Metal/Vulkan hwaccel tag exists for this image; confirmed with Immich maintainers), but the fork couldn't load Immich's multilingual (NLLB-CLIP) search models at all, so this is required for non-English Smart Search regardless of performance" ;;
     IMMICH_ML_IMAGE_TAG)         echo "Tag suffix for IMMICH_ML_IMAGE (default 'release' = latest stable, matching Immich's own compose convention). No -cuda/-rocm/-openvino/-armnn/-rknn variant applies on Apple Silicon — plain CPU" ;;
@@ -954,6 +960,35 @@ ensure_immich_ml_container() {
   if [ ! -x "$colima" ] || [ ! -x "$docker" ]; then
     warn "colima/docker not installed yet (ensure_formulas runs before this step on a normal --apply)"
     return 1
+  fi
+
+  # Colima's stock VM defaults (2 vCPU / 2GiB RAM) are too small for immich-ml —
+  # confirmed live 2026-07-29: loading OCR + face + CLIP models concurrently (and
+  # especially a larger CLIP model like SigLIP2) OOM-kills the ONNX worker inside
+  # the VM (see CLAUDE.md). Resize to IMMICH_COLIMA_CPU/_MEMORY if the instance
+  # doesn't already match — colima's own documented resize path is stop, then
+  # start with new --cpu/--memory (confirmed live on colima 0.10.3). No jq here;
+  # colima's --json output is a stable single-line flat object, so plain sed
+  # extraction keeps this bash-3.2-safe like the rest of the file.
+  local want_cpu="${IMMICH_COLIMA_CPU:-4}"
+  local want_mem_gb="${IMMICH_COLIMA_MEMORY:-6}"
+  local colima_info
+  colima_info=$(/usr/bin/sudo -u "$session_user" -H "$colima" list --json 2>/dev/null | /usr/bin/grep '"name":"default"' || true)
+  if [ -z "$colima_info" ]; then
+    log "immich-ml: no Colima instance yet — creating at ${want_cpu} vCPU / ${want_mem_gb}GiB"
+    /usr/bin/sudo -u "$session_user" -H "$colima" start --cpu "$want_cpu" --memory "$want_mem_gb" >/dev/null 2>&1 \
+      || warn "colima start --cpu $want_cpu --memory $want_mem_gb failed (no GUI/Aqua session yet? will retry on next --apply)"
+  else
+    local cur_cpu cur_mem_bytes cur_mem_gb
+    cur_cpu=$(echo "$colima_info" | /usr/bin/sed -n 's/.*"cpus":\([0-9]*\).*/\1/p')
+    cur_mem_bytes=$(echo "$colima_info" | /usr/bin/sed -n 's/.*"memory":\([0-9]*\).*/\1/p')
+    cur_mem_gb=$(( cur_mem_bytes / 1073741824 ))
+    if [ "$cur_cpu" != "$want_cpu" ] || [ "$cur_mem_gb" != "$want_mem_gb" ]; then
+      log "immich-ml: resizing Colima ${cur_cpu:-?} vCPU / ${cur_mem_gb:-?}GiB -> ${want_cpu} vCPU / ${want_mem_gb}GiB"
+      /usr/bin/sudo -u "$session_user" -H "$colima" stop >/dev/null 2>&1
+      /usr/bin/sudo -u "$session_user" -H "$colima" start --cpu "$want_cpu" --memory "$want_mem_gb" >/dev/null 2>&1 \
+        || warn "colima resize to --cpu $want_cpu --memory $want_mem_gb failed"
+    fi
   fi
 
   # Colima's OWN launchd registration — not something this project renders/owns
