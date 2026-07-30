@@ -42,7 +42,7 @@ DOCKER=/opt/homebrew/bin/docker
 # (a safe no-op) even if a stop signal arrives before `docker start -a` below
 # has been launched.
 #
-# --time 15 gives gunicorn's own ~10s --graceful-timeout room to finish
+# --timeout 15 gives gunicorn's own ~10s --graceful-timeout room to finish
 # cleanly before Docker's own grace would otherwise force a SIGKILL at
 # roughly the same moment; paired with this job's plist ExitTimeOut=30 so
 # launchd's own last-resort SIGKILL of THIS wrapper can't fire first.
@@ -50,8 +50,8 @@ stop_container() {
   # set +e: a failing `docker stop` here (already exited, transient socket
   # hiccup) must not itself abort this handler under the script's `set -eu`.
   set +e
-  echo "[start-immich-ml] caught stop signal, running: docker stop --time 15 $CONTAINER" >&2
-  "$DOCKER" stop --time 15 "$CONTAINER" >&2
+  echo "[start-immich-ml] caught stop signal, running: docker stop --timeout 15 $CONTAINER" >&2
+  "$DOCKER" stop --timeout 15 "$CONTAINER" >&2
   set -e
 }
 trap stop_container TERM INT

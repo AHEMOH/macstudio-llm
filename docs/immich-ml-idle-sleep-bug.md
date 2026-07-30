@@ -37,7 +37,7 @@ Investigated live on the Mac (read-only diagnostics: `docker inspect`/`top`/`ps`
 **The fix does not depend on that theory being correct.** `wrappers/start-immich-ml.sh` no longer
 `exec`s into `docker start -a` and hopes `--sig-proxy` forwards the signal correctly. It now
 backgrounds `docker start -a`, traps `TERM`/`INT`, and translates a stop request into
-`docker stop --time 15 immich_machine_learning` directly against `dockerd` — which sends its own
+`docker stop --timeout 15 immich_machine_learning` directly against `dockerd` — which sends its own
 SIGTERM to the container's real PID 1, then an unmaskable SIGKILL after the grace period,
 independent of whatever the attached CLI's signal plumbing or the container's own userspace
 (gunicorn) responsiveness is doing. `daemons/com.local.immich.ml.plist` gained an explicit
@@ -46,9 +46,46 @@ independent of whatever the attached CLI's signal plumbing or the container's ow
 changes — it stays fully backend-agnostic; all the Docker-specific handling lives in the one
 wrapper that already owns every other immich-specific quirk (session user, colima socket path).
 
-Verification (temporarily lowering `IDLE_TIMEOUT_IMMICH`, per the "How to safely test" section
-below, and watching for `Exited` status within ~15-17s of the "idle...stopping" log line across
-several consecutive cycles) — record results here once run for real on the Mac after deploy.
+**Verification, done on the Mac after deploy:** `IDLE_TIMEOUT_IMMICH` was temporarily lowered to
+30s and the proxy kickstarted to pick it up. The backend turned out to have real, ongoing organic
+traffic during this test (a client — almost certainly a live Immich server — kept reconnecting
+every 90-150s, each connection resetting `last_request_ts` before the 30s idle window could
+elapse), so a clean *organic* idle→stop cycle couldn't be isolated on demand — the backend
+correctly stayed warm because it was, in fact, in real use, exactly as designed. To test the
+mechanism deterministically instead, `sudo launchctl stop com.local.immich.ml` was issued directly
+(the same call `stop_backend()` makes) twice, back to back:
+- **Cycle 1:** stop issued → `immich-ml.log` logged `[start-immich-ml] caught stop signal, running:
+  docker stop --time 15 immich_machine_learning` (pre-`--timeout`-rename wording) → container
+  `Status` flipped to `exited` within **~2s** (`ExitCode=143`, i.e. cleanly SIGTERM-terminated,
+  no SIGKILL needed) → `launchctl print` showed `state = not running`. A subsequent wake
+  (`curl .../ping`) came back **`200` in ~2s** (Docker had the image/layers warm).
+- **Cycle 2:** repeated immediately after — same result, `exited` within ~2s, wake `200` in ~2s.
+
+Both cycles are a sharp contrast with the original bug (repeated stop calls against a container
+that never exited for 44+ hours straight). One small, fully-understood finding along the way: this
+docker CLI (29.6.2) has deprecated `--time` in favor of `--timeout` — the wrapper was updated to
+the non-deprecated flag (functionally identical) after these two cycles were run against the old
+flag name.
+
+**A second, separate, NOT fully diagnosed issue was also observed** during this same verification
+session and is flagged here rather than silently worked around: at one point after the `--apply`
+deploy (which included a real plist diff, `ExitTimeOut`), `sudo launchctl print
+system/com.local.immich.ml` returned `Could not find service "com.local.immich.ml" in domain for
+system` — i.e. the job was not merely "sleeping" (pid 0, still registered) but fully unregistered,
+and would not respond to further `launchctl kickstart` wake attempts from the proxy in that state
+(confirmed no "bootstrapped com.local.immich.ml" line appears in that `--apply` run's output right
+after "plist updated: com.local.immich.ml", where one would be expected from
+`reload_plist_if_changed`'s changed-path calling `bootstrap_plist`). A plain `sudo launchctl
+bootstrap system /Library/LaunchDaemons/com.local.immich.ml.plist` immediately re-registered it and
+normal operation resumed. Root cause is unconfirmed — candidates include `bootout_plist`'s
+`launchctl bootout` not synchronously clearing `daemon_loaded`'s check inside the immediately-
+following `bootstrap_plist` call for an on-demand (not currently running) job specifically, or an
+unrelated crash-loop from the colima-not-ready race (`start-immich-ml.sh`'s self-heal block) tripping
+some launchd throttle. This is a **different failure mode than this doc's original bug** — "won't
+wake up at all until manually re-bootstrapped" rather than "won't go to sleep" — and is worth its
+own follow-up investigation (`services/ondemand-proxy.py`'s `kickstart_backend()` currently ignores
+`launchctl kickstart`'s exit code entirely, so this would fail silently in production). Not
+addressed in this pass; noted here so it isn't lost.
 
 ## Symptom
 
