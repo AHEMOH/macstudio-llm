@@ -2228,6 +2228,36 @@ apply_tui_sudoers() {
   ok "wrote $f"
 }
 
+apply_ondemand_sudoers() {
+  # services/ondemand-proxy.py (shared by every on-demand backend: images,
+  # voicestt, voicetts, docling, immich) calls `sudo -n launchctl stop
+  # <label>` to put an idle backend to sleep. A PLAIN, non-root `launchctl
+  # stop` on a system-domain LaunchDaemon fails outright with "Not
+  # privileged to stop service" — confirmed live 2026-07-30 (see
+  # docs/immich-ml-idle-sleep-bug.md): every on-demand backend was silently
+  # never going to sleep for exactly this reason, masked because the old
+  # code discarded launchctl's returncode/stderr entirely. Narrowly scoped to
+  # just this one binary (not a blanket NOPASSWD:ALL) so idempotent --apply
+  # doesn't depend on TARGET_USER already having broader passwordless sudo
+  # configured by hand outside this repo.
+  local f=/etc/sudoers.d/macstudio-ondemand
+  local user="${TARGET_USER:-mac}"
+  local desired="$user ALL=(root) NOPASSWD: /bin/launchctl"
+  if [ -f "$f" ] && /usr/bin/grep -qxF "$desired" "$f"; then
+    ok "$f present"
+    return 0
+  fi
+  printf '%s\n' "$desired" >"$f"
+  /usr/sbin/chown root:wheel "$f"
+  /bin/chmod 440 "$f"
+  if ! /usr/sbin/visudo -cf "$f" >/dev/null 2>&1; then
+    warn "$f failed visudo check — removing"
+    /bin/rm -f "$f"
+    return 1
+  fi
+  ok "wrote $f"
+}
+
 retire_old_engine_daemons() {
   # ONE-TIME migration cleanup (oMLX cutover). com.local.mlxvlm.main /
   # infinity.serve / infinity.proxy were FULLY RETIRED — removed from
@@ -2301,6 +2331,7 @@ apply_everything() {
   dbg "step: ensure_homebrew";         ensure_homebrew || true
   dbg "step: ensure_formulas";         ensure_formulas
   dbg "step: apply_tui_sudoers";       apply_tui_sudoers || true
+  dbg "step: apply_ondemand_sudoers";  apply_ondemand_sudoers || true
   dbg "step: retire_old_engine_daemons"; retire_old_engine_daemons || true
   dbg "step: ensure_modern_python";    ensure_modern_python || true
   dbg "step: ensure_immich_ml_container"; ensure_immich_ml_container

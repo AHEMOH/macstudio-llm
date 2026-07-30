@@ -99,12 +99,19 @@ def kickstart_backend() -> None:
 
 
 def stop_backend() -> None:
-    # TEMPORARY diagnostics (2026-07-30): investigating a live report that this
-    # silently never stops some backends. Logging returncode/stderr here since
-    # subprocess.run() previously discarded them entirely, making a launchctl
-    # failure indistinguishable from success in this log.
+    # `launchctl stop` on a system-domain LaunchDaemon requires root -
+    # confirmed live 2026-07-30 (see docs/immich-ml-idle-sleep-bug.md):
+    # this proxy runs as TARGET_USER (non-root), and the bare call failed
+    # with "Not privileged to stop service" on every single attempt,
+    # completely silently until the error logging below was added.
+    # TARGET_USER already has passwordless (NOPASSWD: ALL) sudo configured
+    # on this Mac (a precondition of this whole project's SSH-based
+    # workflow), so `sudo -n` elevates just this one call without making
+    # the proxy process itself run as root. `-n` (non-interactive) makes
+    # sudo fail fast instead of hanging if that assumption is ever wrong,
+    # rather than silently blocking this async loop for up to `timeout`.
     r = subprocess.run(
-        ["/bin/launchctl", "stop", BACKEND_LABEL],
+        ["/usr/bin/sudo", "-n", "/bin/launchctl", "stop", BACKEND_LABEL],
         capture_output=True, text=True, timeout=10,
     )
     if r.returncode != 0:
