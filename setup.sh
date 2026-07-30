@@ -259,7 +259,7 @@ config_default() {
     VOICE_WYOMING_BACKEND_PORT)  echo 15008 ;;
     ML_PUBLIC_PORT)              echo 3003 ;;
     ML_BACKEND_PORT)             echo 13003 ;;
-    IMMICH_COLIMA_CPU)           echo 4 ;;
+    IMMICH_COLIMA_CPU)           echo 8 ;;
     IMMICH_COLIMA_MEMORY)        echo 6 ;;
     DOCLING_PUBLIC_PORT)         echo 5001 ;;
     DOCLING_BACKEND_PORT)        echo 15001 ;;
@@ -387,7 +387,7 @@ config_hint() {
     VOICE_WYOMING_PUBLIC_PORT)   echo "Public port for Home Assistant's native Wyoming-protocol voice integration (default 10300, the Wyoming ecosystem convention) — one port carries BOTH STT and TTS, auto-discovered by HA. Shares the SAME backend as 'stt' (com.local.voicestt.serve), just a second proxy in front of it" ;;
     VOICE_WYOMING_BACKEND_PORT)  echo "Internal Wyoming port the speech-server binary binds (127.0.0.1 only, default 15008)" ;;
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
-    IMMICH_COLIMA_CPU)           echo "vCPUs for the Colima VM that runs immich-ml (default 4). Passed to 'colima start --cpu'" ;;
+    IMMICH_COLIMA_CPU)           echo "vCPUs for the Colima VM that runs immich-ml (default 8 = every P-core on the M1 Max target hardware). Passed to 'colima start --cpu', and ALSO drives MACHINE_LEARNING_MODEL_INTRA_OP_THREADS on the container itself (ensure_immich_ml_container derives it from this same value — see CLAUDE.md for why a bare vCPU bump alone doesn't raise CPU utilization)" ;;
     IMMICH_COLIMA_MEMORY)        echo "RAM in GiB for the Colima VM that runs immich-ml (default 6, raised from colima's stock 2GB on 2026-07-29 — that default OOM-killed the ONNX worker mid-load once a larger CLIP model was selected; see CLAUDE.md). Passed to 'colima start --memory'" ;;
     IMMICH_SESSION_USER)         echo "Dedicated, non-admin macOS account that auto-logs-in so Colima's own LaunchAgent (registered via 'brew services start colima') has a GUI/Aqua session to bootstrap into after a cold boot. Created + auto-login configured manually (sysadminctl), not by --apply — see CLAUDE.md. com.local.immich.ml's plist runs as this user (UserName), so it talks to THIS user's colima docker socket, not TARGET_USER's" ;;
     IMMICH_ML_IMAGE)             echo "Official Immich machine-learning image (ghcr.io/immich-app/immich-machine-learning). Replaces the old immich-ml-metal MLX fork — CPU-only on Apple Silicon (no Metal/Vulkan hwaccel tag exists for this image; confirmed with Immich maintainers), but the fork couldn't load Immich's multilingual (NLLB-CLIP) search models at all, so this is required for non-English Smart Search regardless of performance" ;;
@@ -1009,20 +1009,41 @@ ensure_immich_ml_container() {
     return 0
   fi
 
+  # Immich's image hardcodes MACHINE_LEARNING_MODEL_INTRA_OP_THREADS=2
+  # regardless of how many vCPUs the container sees (confirmed against
+  # docs.immich.app; immich-app/immich#23452 closed as "working as
+  # designed") — so a single ONNX inference call stays capped at 2 threads
+  # no matter how big the Colima VM is, unless this is set explicitly.
+  # Derived from want_cpu (not a separate config key) so bumping
+  # IMMICH_COLIMA_CPU later can't silently leave this thread cap behind —
+  # the VM's only workload is this one container, so using every vCPU here
+  # is safe. See CLAUDE.md.
+  local want_intra="$want_cpu"
+
   local changed=0
   local have_ref
   have_ref=$(/usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" inspect --format '{{.Config.Image}}' immich_machine_learning 2>/dev/null || true)
-  if [ "$have_ref" != "$ref" ]; then
-    log "immich-ml: pulling $ref"
-    if ! /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" pull "$ref" >"$LOG_DIR/immich-pull.log" 2>&1; then
-      warn "docker pull $ref failed; see $LOG_DIR/immich-pull.log"
-      return 1
+  local have_intra
+  have_intra=$(/usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" inspect --format '{{range .Config.Env}}{{println .}}{{end}}' immich_machine_learning 2>/dev/null | /usr/bin/sed -n 's/^MACHINE_LEARNING_MODEL_INTRA_OP_THREADS=//p')
+
+  local need_recreate=0
+  [ "$have_ref" != "$ref" ] && need_recreate=1
+  [ -n "$have_ref" ] && [ "$have_intra" != "$want_intra" ] && need_recreate=1
+
+  if [ "$need_recreate" = 1 ]; then
+    if [ "$have_ref" != "$ref" ]; then
+      log "immich-ml: pulling $ref"
+      if ! /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" pull "$ref" >"$LOG_DIR/immich-pull.log" 2>&1; then
+        warn "docker pull $ref failed; see $LOG_DIR/immich-pull.log"
+        return 1
+      fi
     fi
     [ -n "$have_ref" ] && /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" rm -f immich_machine_learning >/dev/null 2>&1
-    log "immich-ml: creating container (127.0.0.1:${ML_BACKEND_PORT:-13003} -> 3003)"
+    log "immich-ml: creating container (127.0.0.1:${ML_BACKEND_PORT:-13003} -> 3003, intra-op-threads=$want_intra)"
     if ! /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" create --name immich_machine_learning \
           -p "127.0.0.1:${ML_BACKEND_PORT:-13003}:3003" \
           -v immich-model-cache:/cache \
+          -e "MACHINE_LEARNING_MODEL_INTRA_OP_THREADS=$want_intra" \
           "$ref" >/dev/null 2>"$LOG_DIR/immich-pull.log"; then
       warn "docker create immich_machine_learning failed; see $LOG_DIR/immich-pull.log"
       return 1
