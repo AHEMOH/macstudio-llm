@@ -98,7 +98,7 @@ def kickstart_backend() -> None:
 
 def stop_backend() -> None:
     subprocess.run(
-        ["/bin/launchctl", "stop", BACKEND_LABEL],
+        ["/bin/launchctl", "stop", f"system/{BACKEND_LABEL}"],
         capture_output=True, timeout=10,
     )
 
