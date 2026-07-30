@@ -90,17 +90,25 @@ def backend_pid() -> int:
 
 
 def kickstart_backend() -> None:
-    subprocess.run(
+    r = subprocess.run(
         ["/bin/launchctl", "kickstart", "-k", f"system/{BACKEND_LABEL}"],
-        capture_output=True, timeout=10,
+        capture_output=True, text=True, timeout=10,
     )
+    if r.returncode != 0:
+        log(f"launchctl kickstart returned {r.returncode}: {r.stderr.strip() or r.stdout.strip()}")
 
 
 def stop_backend() -> None:
-    subprocess.run(
-        ["/bin/launchctl", "stop", f"system/{BACKEND_LABEL}"],
-        capture_output=True, timeout=10,
+    # TEMPORARY diagnostics (2026-07-30): investigating a live report that this
+    # silently never stops some backends. Logging returncode/stderr here since
+    # subprocess.run() previously discarded them entirely, making a launchctl
+    # failure indistinguishable from success in this log.
+    r = subprocess.run(
+        ["/bin/launchctl", "stop", BACKEND_LABEL],
+        capture_output=True, text=True, timeout=10,
     )
+    if r.returncode != 0:
+        log(f"launchctl stop returned {r.returncode}: {r.stderr.strip() or r.stdout.strip()}")
 
 
 def health_ok() -> bool:
