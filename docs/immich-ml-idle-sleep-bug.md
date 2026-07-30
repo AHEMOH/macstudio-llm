@@ -1,8 +1,54 @@
 # Bug: immich-ml never actually goes to sleep
 
-**Status:** open, unfixed. Documented 2026-07-29 as a handoff for investigation — not yet
-root-caused with certainty, just narrowed down hard. Whoever picks this up should be able to go
-straight to verifying the leading hypothesis below rather than re-discovering the symptom.
+**Status:** mitigated 2026-07-30. Documented 2026-07-29 as a handoff for investigation; see
+`## Resolution (2026-07-30)` below for what was found and fixed. The investigation trail below
+this point is left intact as historical record — none of it turned out to be wrong, it just
+wasn't the whole picture.
+
+## Resolution (2026-07-30)
+
+Investigated live on the Mac (read-only diagnostics: `docker inspect`/`top`/`ps`, log tails,
+`launchctl print` — nothing destructive run) to test the two hypotheses below.
+
+- **Hypothesis 1 (shell-form entrypoint swallowing SIGTERM) is disproven.** Both the running
+  container and the image report clean exec-form `Entrypoint=[tini --]`, `Cmd=[python -m
+  immich_ml]`. `tini` is confirmed as real PID 1 inside the container (`docker top`, parented by
+  `containerd-shim` on the host) — there is no intervening `/bin/sh -c` that could eat the signal.
+- **Hypothesis 2 (sig-proxy fundamentally ineffective through Colima) is not a clean yes either.**
+  The chain was witnessed working: two clean stop→restart cycles happened live during this
+  investigation (`docker inspect`'s `FinishedAt` → next `StartedAt` ~21s apart, `ExitCode=0`,
+  brand-new PID 1, fresh gunicorn boot log), both matching `immich-proxy.log`'s "waking"/"healthy"
+  lines and `launchctl print`'s `runs` counter incrementing. So the `launchctl stop → SIGTERM →
+  docker start -a → sig-proxy → tini → gunicorn` chain plainly *can* work end-to-end.
+- **Suspicious, unconfirmed timing correlation:** the original 44h-stuck window
+  (2026-07-27 19:4x → 2026-07-29 20:2x) overlaps almost entirely with the separate
+  [[project_immich_ml_colima_oom]] incident — Colima's VM was undersized (2 vCPU/2GiB stock
+  default) and OOM-killed the ONNX/gunicorn worker repeatedly while a large CLIP model loaded,
+  which can leave gunicorn's arbiter process stuck in a tight worker-respawn loop (container-level
+  state never visibly changes, since gunicorn handles worker respawn internally — this is exactly
+  why `docker ps`/`RestartCount` looked fine in both incidents despite real internal trouble). That
+  was fixed 2026-07-29 by raising `IMMICH_COLIMA_CPU`/`_MEMORY` to 4/6. The two clean stop→restart
+  cycles witnessed above happened *after* that fix shipped. Working theory: gunicorn's arbiter only
+  services its own signal queue inside its main-loop iteration, so a wedged respawn loop could
+  plausibly delay or drop its handling of an incoming SIGTERM — but this is **not proven**, and
+  re-triggering the OOM condition live to confirm it was deliberately not attempted (real
+  disruption risk for a confirmation that turned out not to be required — see below).
+
+**The fix does not depend on that theory being correct.** `wrappers/start-immich-ml.sh` no longer
+`exec`s into `docker start -a` and hopes `--sig-proxy` forwards the signal correctly. It now
+backgrounds `docker start -a`, traps `TERM`/`INT`, and translates a stop request into
+`docker stop --time 15 immich_machine_learning` directly against `dockerd` — which sends its own
+SIGTERM to the container's real PID 1, then an unmaskable SIGKILL after the grace period,
+independent of whatever the attached CLI's signal plumbing or the container's own userspace
+(gunicorn) responsiveness is doing. `daemons/com.local.immich.ml.plist` gained an explicit
+`ExitTimeOut=30` so launchd's own last-resort SIGKILL of the wrapper itself can't fire before
+`docker stop`'s 15s grace has had a chance to work. `services/ondemand-proxy.py` needed **no**
+changes — it stays fully backend-agnostic; all the Docker-specific handling lives in the one
+wrapper that already owns every other immich-specific quirk (session user, colima socket path).
+
+Verification (temporarily lowering `IDLE_TIMEOUT_IMMICH`, per the "How to safely test" section
+below, and watching for `Exited` status within ~15-17s of the "idle...stopping" log line across
+several consecutive cycles) — record results here once run for real on the Mac after deploy.
 
 ## Symptom
 
@@ -108,18 +154,12 @@ concrete things to check, in order of suspicion:
    and hypothesis 2 (or something in launchd's own signal delivery to an `exec`'d Docker CLI
    process) becomes more likely.
 
-If hypothesis 1 confirms, the fix is NOT in this repo's own code — it's a mismatch between
-`ondemand-proxy.py`'s process-signal-based stop contract (designed for the old raw-venv-process
-backends, where SIGTERM always reaches the real backend directly) and what a Docker container
-needs (`docker stop <name>`, which sends the signal to PID 1 inside the container via the
-**container runtime**, not by relying on a CLI attachment forwarding a signal it received itself).
-The likely real fix is to give `wrappers/start-immich-ml.sh` (or `ondemand-proxy.py`'s
-`stop_backend()`, made Docker-aware) an explicit `docker stop immich_machine_learning` path instead
-of depending on `launchctl stop` + `docker start -a --sig-proxy` — e.g. trap SIGTERM in the
-wrapper and translate it to `docker stop`, or special-case `BACKEND_LABEL == com.local.immich.ml`
-in `ondemand-proxy.py`'s `stop_backend()` to shell out to `docker stop` directly instead of
-`launchctl stop`. Exact mechanism is a design choice for whoever fixes this — this doc is scoped to
-narrowing the *cause*, not prescribing the fix.
+**Update 2026-07-30: see `## Resolution` at the top of this doc.** Hypothesis 1 confirmed disproven
+(exec-form entrypoint); hypothesis 2 confirmed to work at least sometimes rather than being
+categorically broken. The fix landed anyway, in the wrapper (trap SIGTERM/INT → `docker stop`),
+precisely because it doesn't require either hypothesis to be fully resolved — `docker stop` is
+root-cause-agnostic. `ondemand-proxy.py` was deliberately left untouched (kept backend-agnostic)
+rather than special-cased, per its own design rule.
 
 ## How to safely test without waiting 900s
 

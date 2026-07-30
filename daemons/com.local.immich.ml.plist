@@ -11,6 +11,12 @@
   <key>RunAtLoad</key><false/>
   <key>KeepAlive</key><false/>
   <key>ThrottleInterval</key><integer>5</integer>
+  <!-- Budget for the trap to "docker stop" path in start-immich-ml.sh: its
+       15s docker-stop grace gives gunicorn's own ~10s graceful-timeout room
+       to finish before Docker's own grace would otherwise race it with a
+       SIGKILL; this gives that ~15 to 17s worst case comfortable headroom
+       before launchd's own SIGKILL of the wrapper could ever fire first. -->
+  <key>ExitTimeOut</key><integer>30</integer>
   <key>StandardOutPath</key><string>/var/log/macstudio/immich-ml.log</string>
   <key>StandardErrorPath</key><string>/var/log/macstudio/immich-ml.log</string>
 </dict>
