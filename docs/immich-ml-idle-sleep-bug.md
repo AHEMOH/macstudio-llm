@@ -1,9 +1,81 @@
 # Bug: immich-ml never actually goes to sleep
 
-**Status:** mitigated 2026-07-30. Documented 2026-07-29 as a handoff for investigation; see
-`## Resolution (2026-07-30)` below for what was found and fixed. The investigation trail below
-this point is left intact as historical record — none of it turned out to be wrong, it just
-wasn't the whole picture.
+**Status:** fixed 2026-07-30, twice — see `## The real, universal root cause (2026-07-30, later
+the same day)` below for the second, deeper fix, which supersedes most of the causal story in
+`## Resolution (2026-07-30)` just below it. Documented 2026-07-29 as a handoff for investigation.
+The investigation trail below is left intact as historical record — none of the individual
+observations were wrong, the Docker-specific framing just wasn't the whole picture, and one
+follow-up fix attempt (a "domain-qualified target" change, briefly merged as PR #78) was itself
+wrong and reverted — see below for why, so nobody re-tries it.
+
+## The real, universal root cause (2026-07-30, later the same day)
+
+While investigating whether other (non-Docker) on-demand backends had similar bugs, the exact same
+symptom was found live on `com.local.voicestt.serve` (a plain `exec`'d Swift binary — no Docker,
+no `--sig-proxy`, none of the indirection this doc's original investigation focused on): the pid
+stayed stable for 16+ hours despite the proxy logging a stop attempt every 30s the entire time.
+That ruled out "something specific to how immich-ml is wrapped" as the *universal* explanation —
+whatever was actually breaking `stop_backend()` had to be something shared by every on-demand
+backend, in `services/ondemand-proxy.py` itself.
+
+**First attempt was wrong.** Noticed `stop_backend()` calls `launchctl stop BACKEND_LABEL` (bare
+label) while `kickstart_backend()` calls `launchctl kickstart -k system/BACKEND_LABEL`
+(domain-qualified), and guessed the mismatch was the bug. Fixed, deployed, and merged as PR #78
+*before* fully re-checking it against evidence already gathered — deploying it live did not fix
+anything. Worse, re-examining the earlier manual test data showed `launchctl stop
+system/<label>` (domain-qualified) fails **even as root** (exit 3), while the original bare-label
+form succeeds as root. So the "fix" was backwards. Reverted in PR #79.
+
+**Real cause, found via proper diagnostics (PR #79 also added error logging that had never
+existed — `subprocess.run()` was discarding `launchctl`'s returncode/stderr entirely, so a
+failure has always been indistinguishable from success in every proxy's log).** With that logging
+in place, the real error appeared immediately:
+
+```
+[voicestt-proxy] launchctl stop returned 1: Not privileged to stop service.
+```
+
+Every on-demand proxy runs as `TARGET_USER` (non-root, per each `daemons/*.proxy.plist`'s
+`UserName`). `launchctl stop <label>` on a system-domain LaunchDaemon requires root. It has been
+failing on **every single attempt, for every on-demand backend, always** — completely silently.
+`launchctl kickstart` (waking) apparently doesn't need the same privilege, which is exactly why
+every backend's *wake* path has always worked reliably while every backend's *sleep* path never
+has. This is a far more complete explanation for the original immich-ml bug than the Docker
+`--sig-proxy` theory below: the automated `stop_backend()` call was very likely never even
+reaching the container in the first place, on this backend or any other.
+
+**Fix (PR #80):** `stop_backend()` now runs `sudo -n launchctl stop <label>`. TARGET_USER already
+had broad passwordless sudo configured by hand on this specific Mac (which is why manual `sudo
+launchctl stop ...` tests earlier in this investigation "worked" and looked like they confirmed
+the Docker-fix — they were secretly also relying on privilege the automated path didn't have), but
+that isn't something this repo's own setup process guarantees, so a new idempotent
+`apply_ondemand_sudoers()` (setup.sh) grants `TARGET_USER` passwordless sudo for just
+`/bin/launchctl` (not a blanket `NOPASSWD:ALL`) via `/etc/sudoers.d/macstudio-ondemand`, so a fresh
+install doesn't silently reintroduce this exact bug.
+
+**Verified live, via the real unmodified automated path (not manual reproduction) this time:**
+- `com.local.voicestt.serve`: with the fix deployed and `IDLE_TIMEOUT_VOICESTT` temporarily lowered
+  to 20s, the real proxy's own idle_watchdog logged `idle for 30s — stopping
+  com.local.voicestt.serve` with **no follow-up error line** (previously: `launchctl stop returned
+  1...` every single time) — `launchctl print` immediately showed `state = not running, job state =
+  exited`. A subsequent real wake came back healthy in ~1s.
+- `com.local.immich.ml`: re-tested the same way, but couldn't observe a clean natural idle window —
+  `sudo lsof -i :3003` showed multiple live, established connections from `photo.home.arpa` (the
+  real production Immich server) the whole time, i.e. genuine ongoing production traffic kept
+  resetting the idle timer, which is the system working correctly, not a test failure. The
+  mechanism itself doesn't need a separate immich-specific re-proof: `stop_backend()`'s `sudo -n`
+  call is generic, backend-agnostic code already proven against voicestt, and the wrapper's own
+  SIGTERM→`docker stop` handling (below) was independently proven multiple times earlier in this
+  same investigation.
+- Both `IDLE_TIMEOUT_IMMICH` (900) and `IDLE_TIMEOUT_VOICESTT` (was misconfigured to `900` on this
+  Mac instead of the code's intended `-1` — a separate, real, live config-drift bug, also fixed by
+  hand on this Mac; see `config_default()` in setup.sh for the intended value and why) were
+  restored/corrected after testing.
+
+## Resolution (2026-07-30)
+
+*(Historical — first-pass fix, same day, before the root cause above was found. Still factually
+accurate and still a real improvement, just not the primary fix it was believed to be at the time.)*
 
 ## Resolution (2026-07-30)
 
@@ -135,14 +207,21 @@ bug, not a correctness bug, as far as we can tell so far.
 - **Not specific to today's incident/model switch.** The stuck idle-loop pattern spans from
   2026-07-27 19:4x (right after the Docker/Colima migration) through 2026-07-29 20:2x (when it was
   discovered) — i.e. from the very first hours after the container existed.
-- **Not a general `ondemand-proxy.py` bug.** The exact same shared script
-  (`services/ondemand-proxy.py`) runs the proxy for every on-demand backend (images, voicestt,
-  voicetts, docling, immich). Checked `/var/log/macstudio/docling-proxy.log` for comparison:
-  `com.local.docling.serve` (a **plain venv Python process**, not Docker) shows the same
-  "idle...stopping" pattern repeating for a few minutes, then it actually stops — confirmed
+- **Not a general `ondemand-proxy.py` bug** — this is what the original 2026-07-29 investigation
+  concluded, but **update 2026-07-30: it actually was a general `ondemand-proxy.py` bug** (see
+  `## The real, universal root cause` at the top). The docling observation below wasn't fabricated
+  — docling's pid genuinely did reach 0 — but given `stop_backend()`'s `launchctl stop` is now
+  proven to have been failing with "Not privileged to stop service" on literally every call at the
+  time, docling most likely stopped for some *other* reason (its own process exiting, an unrelated
+  restart, etc.), not because this mechanism actually worked for it specifically. Left as originally
+  written below for the historical record, but don't trust its conclusion.
+  ~~The exact same shared script (`services/ondemand-proxy.py`) runs the proxy for every on-demand
+  backend (images, voicestt, voicetts, docling, immich). Checked `/var/log/macstudio/docling-proxy.log`
+  for comparison: `com.local.docling.serve` (a **plain venv Python process**, not Docker) shows the
+  same "idle...stopping" pattern repeating for a few minutes, then it actually stops — confirmed
   currently via `sudo launchctl list | grep docling` → `- 0 com.local.docling.serve` (dash = no
   live pid). So the shared idle-watchdog/stop logic itself works; something specific to **how
-  immich-ml is wrapped** is the problem.
+  immich-ml is wrapped** is the problem.~~
 
 ## Leading hypothesis: `docker start -a`'s attached CLI dying ≠ the container stopping
 
@@ -211,7 +290,11 @@ don't forget to revert the conf edit first) afterward.
 ## Relevant files
 
 - `services/ondemand-proxy.py` — shared idle-watchdog/wake/stop logic for every on-demand backend
-  (`idle_watchdog()`, `stop_backend()`, `backend_pid()`, ~lines 78-103, 241-252).
+  (`idle_watchdog()`, `stop_backend()`, `backend_pid()`). `stop_backend()` runs `sudo -n launchctl
+  stop <label>` — this is the actual fix (2026-07-30).
+- `setup.sh`'s `apply_ondemand_sudoers()` — idempotently grants `TARGET_USER` passwordless sudo for
+  just `/bin/launchctl` via `/etc/sudoers.d/macstudio-ondemand`, the precondition `stop_backend()`
+  now depends on.
 - `wrappers/start-immich-ml.sh` — the wrapper whose signal-forwarding assumption is in question.
 - `daemons/com.local.immich.ml.plist` — `KeepAlive=false`, `RunAtLoad=false`, `ThrottleInterval=5`.
 - `daemons/com.local.immich.proxy.plist` / `wrappers/start-immich-proxy.sh` — sets
