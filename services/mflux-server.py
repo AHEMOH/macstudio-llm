@@ -23,10 +23,13 @@ from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-MFLUX_BIN = os.environ.get("MFLUX_BIN", "mflux-generate")
 MODEL_PATH = os.environ["MFLUX_MODEL_PATH"]
 MODEL_NAME = os.environ.get("MFLUX_MODEL", "dev")
-STEPS = os.environ.get("MFLUX_STEPS") or ("4" if MODEL_NAME == "schnell" else "20")
+IS_FLUX2 = MODEL_NAME.startswith("flux2-")
+# FLUX.2/Klein ships a separate generate CLI from FLUX.1's mflux-generate;
+# mflux-save itself is unified across families (see setup.sh ensure_mflux_model()).
+MFLUX_BIN = os.environ.get("MFLUX_BIN") or ("mflux-generate-flux2" if IS_FLUX2 else "mflux-generate")
+STEPS = os.environ.get("MFLUX_STEPS") or ("4" if MODEL_NAME == "schnell" or MODEL_NAME.startswith("flux2-klein") else "20")
 GEN_TIMEOUT_SEC = int(os.environ.get("MFLUX_GEN_TIMEOUT_SEC", "900"))
 BACKEND_PORT = int(os.environ.get("IMAGES_BACKEND_PORT", "15005"))
 
@@ -62,11 +65,14 @@ def generate():
             "--prompt", prompt,
             "--steps", str(STEPS),
             "--seed", str(seed),
-            "--low-ram",
             "--height", str(height),
             "--width", str(width),
             "--output", out_path,
         ]
+        if not IS_FLUX2:
+            # --low-ram is confirmed for mflux-generate (FLUX.1); unconfirmed for
+            # mflux-generate-flux2 as of this writing — omit until verified live.
+            cmd.append("--low-ram")
         try:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=GEN_TIMEOUT_SEC
