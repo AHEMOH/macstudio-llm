@@ -1636,7 +1636,13 @@ ensure_mflux_model() {
   /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$model_dir"
   log "quantizing mflux model '$model' to ${quant}-bit -> $target (one-time: downloads the full checkpoint + quantizes, several minutes)"
   local logf="$LOG_DIR/mflux-save.log"
+  # HF_HUB_DISABLE_XET: hit live 2026-08 downloading FLUX.2-klein-9B — this venv's
+  # huggingface_hub/hf-xet pairing crashes on that repo's Xet-backed file metadata
+  # ("Unable to parse string as hex hash value"), independent of any gating/auth
+  # issue. Forcing the plain-HTTP fallback sidesteps it; only costs download speed
+  # on this one-time, one-off transfer, not generation performance.
   if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
+        HF_HUB_DISABLE_XET=1 \
         "$vdir/mflux/bin/mflux-save" --model "$model" --path "$target" --quantize "$quant" \
         >"$logf" 2>&1; then
     ok "mflux model saved -> $target"
