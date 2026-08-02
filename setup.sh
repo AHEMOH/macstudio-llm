@@ -1634,7 +1634,7 @@ ensure_mflux_model() {
     return 0
   fi
   /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$model_dir"
-  log "quantizing FLUX.1-$model to ${quant}-bit -> $target (one-time: downloads the full checkpoint + quantizes, several minutes)"
+  log "quantizing mflux model '$model' to ${quant}-bit -> $target (one-time: downloads the full checkpoint + quantizes, several minutes)"
   local logf="$LOG_DIR/mflux-save.log"
   if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
         "$vdir/mflux/bin/mflux-save" --model "$model" --path "$target" --quantize "$quant" \
@@ -1643,8 +1643,13 @@ ensure_mflux_model() {
   else
     warn "mflux-save failed for model='$model' quantize='$quant'; see $logf"
     if /usr/bin/grep -qiE '401|403|gated|gating|awaiting|access to|authenticated|restricted' "$logf" 2>/dev/null; then
-      warn "  FLUX.1-dev is gated: accept the licence at https://huggingface.co/black-forest-labs/FLUX.1-dev"
-      warn "  then log in as $TARGET_USER via 'hf auth login --token' (or use MFLUX_MODEL=schnell, ungated)"
+      # Each mflux model name maps to its own HF repo (and its own, separate gate/ACL —
+      # e.g. FLUX.1-dev access does NOT imply FLUX.2-klein-9B access) — pull the actual
+      # gated repo URL out of the error itself rather than hardcoding one model's page.
+      local gated_url
+      gated_url="$(/usr/bin/grep -oE 'https://huggingface\.co/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$logf" 2>/dev/null | head -1)"
+      warn "  '$model' looks gated: request/accept access at ${gated_url:-https://huggingface.co (search for its model page)}"
+      warn "  then log in as $TARGET_USER via 'hf auth login --token' (or pick an ungated model, e.g. MFLUX_MODEL=schnell)"
     fi
     return 1
   fi
