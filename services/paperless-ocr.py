@@ -90,6 +90,9 @@ TRIGGER_FORCE_TAG = os.environ.get("PAPERLESS_OCR_TRIGGER_FORCE_TAG", "ocr:apple
 VLM_FORCE_TAG = os.environ.get("PAPERLESS_OCR_VLM_FORCE_TAG", "ocr:vlm-force")
 DONE_TAG = os.environ.get("PAPERLESS_OCR_DONE_TAG", "ocr:done")
 SUPERSEDED_TAG = os.environ.get("PAPERLESS_OCR_SUPERSEDED_TAG", "ocr:superseded")
+# Dead-letter tag: applied when a retrofix permanently fails, so the doc isn't
+# re-downloaded + re-OCR'd every poll forever (remove it to retry).
+ERROR_TAG = os.environ.get("PAPERLESS_OCR_ERROR_TAG", "ocr:error")
 DELETE_ORIGINAL = os.environ.get("PAPERLESS_OCR_DELETE_ORIGINAL", "0") == "1"
 POLL = int(os.environ.get("PAPERLESS_OCR_POLL_SEC", "60"))
 GATEWAY_POLL = min(10, POLL)
@@ -534,16 +537,21 @@ if TOKEN:
     _session.headers["Authorization"] = f"Token {TOKEN}"
 _session.headers["Accept"] = "application/json"
 
+# Every REST call gets a timeout — a hung/slow paperless-ngx must never block the
+# poll or gateway thread indefinitely. Uploads/downloads (large scans) get more.
+REST_TIMEOUT = int(os.environ.get("PAPERLESS_OCR_REST_TIMEOUT_SEC", "30"))
+REST_XFER_TIMEOUT = int(os.environ.get("PAPERLESS_OCR_REST_XFER_TIMEOUT_SEC", "300"))
+
 
 def _tag_id(name, create=True):
-    r = _session.get(f"{URL}/api/tags/", params={"name__iexact": name})
+    r = _session.get(f"{URL}/api/tags/", params={"name__iexact": name}, timeout=REST_TIMEOUT)
     r.raise_for_status()
     res = r.json().get("results", [])
     if res:
         return res[0]["id"]
     if not create:
         return None
-    r = _session.post(f"{URL}/api/tags/", json={"name": name})
+    r = _session.post(f"{URL}/api/tags/", json={"name": name}, timeout=REST_TIMEOUT)
     r.raise_for_status()
     return r.json()["id"]
 
@@ -560,7 +568,7 @@ def _upload(path, title=None, tags=None, created=None, correspondent=None):
         fields.append(("tags", str(t)))
     with open(path, "rb") as fh:
         files = {"document": (Path(path).name, fh, "application/pdf")}
-        r = _session.post(f"{URL}/api/documents/post_document/", data=fields, files=files)
+        r = _session.post(f"{URL}/api/documents/post_document/", data=fields, files=files, timeout=REST_XFER_TIMEOUT)
     r.raise_for_status()
     return r.text.strip().strip('"')  # consume task uuid
 
@@ -760,7 +768,7 @@ def retrofix_once():
         return  # none of the trigger tags exist yet (nobody tagged anything)
     docs = {}
     for qtid in trigger_ids:
-        r = _session.get(f"{URL}/api/documents/", params={"tags__id__all": qtid})
+        r = _session.get(f"{URL}/api/documents/", params={"tags__id__all": qtid}, timeout=REST_TIMEOUT)
         r.raise_for_status()
         for doc in r.json().get("results", []):
             docs[doc["id"]] = doc
@@ -773,7 +781,7 @@ def retrofix_once():
             src = WORK / f"{did}.orig.pdf"
             WORK.mkdir(parents=True, exist_ok=True)
             with _session.get(f"{URL}/api/documents/{did}/download/",
-                              params={"original": "true"}, stream=True) as resp:
+                              params={"original": "true"}, stream=True, timeout=REST_XFER_TIMEOUT) as resp:
                 resp.raise_for_status()
                 src.write_bytes(resp.content)
             out = WORK / f"{did}.ocr.pdf"
@@ -785,7 +793,7 @@ def retrofix_once():
                 # auto-tag a whole mail source ocr:apple — scans get re-OCR'd, digital-born
                 # ones are simply released. (Use the *-force tags to re-OCR anyway.)
                 _session.patch(f"{URL}/api/documents/{did}/",
-                               json={"tags": base_tags}).raise_for_status()
+                               json={"tags": base_tags}, timeout=REST_TIMEOUT).raise_for_status()
                 log(f"retrofix: doc {did} already has text -> skipped (triggers cleared; "
                     f"use a *-force tag to re-OCR anyway)")
             else:
@@ -794,15 +802,26 @@ def retrofix_once():
                         created=doc.get("created"), correspondent=doc.get("correspondent"))
                 # Retag the OLD doc so it is not reprocessed: drop triggers, add superseded.
                 _session.patch(f"{URL}/api/documents/{did}/",
-                               json={"tags": base_tags + [_tag_id(SUPERSEDED_TAG)]}).raise_for_status()
+                               json={"tags": base_tags + [_tag_id(SUPERSEDED_TAG)]}, timeout=REST_TIMEOUT).raise_for_status()
                 if DELETE_ORIGINAL:
-                    _session.delete(f"{URL}/api/documents/{did}/")
+                    _session.delete(f"{URL}/api/documents/{did}/", timeout=REST_TIMEOUT)
                 unit = "chars" if mode == "vlm" else "boxes"
                 log(f"retrofix: doc {did} -> searchable copy via {mode} ({n} {unit}); old retagged")
             src.unlink(missing_ok=True)
             out.unlink(missing_ok=True)
         except Exception as e:
             log(f"retrofix ERROR doc {did}: {e}")
+            # Dead-letter so this doc isn't re-downloaded + re-OCR'd every poll
+            # forever: drop the trigger tag(s), add ERROR_TAG. Remove the tag in
+            # paperless to retry. (dtags/trigger_ids are set before the try.)
+            try:
+                err_base = [t for t in dtags if t not in trigger_ids]
+                _session.patch(f"{URL}/api/documents/{did}/",
+                               json={"tags": err_base + [_tag_id(ERROR_TAG)]},
+                               timeout=REST_TIMEOUT).raise_for_status()
+                log(f"retrofix: doc {did} tagged '{ERROR_TAG}' (won't retry until you remove it)")
+            except Exception as e2:
+                log(f"retrofix: could not dead-letter doc {did}: {e2}")
 
 
 def _loop(fn, interval, name):

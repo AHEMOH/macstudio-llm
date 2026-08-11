@@ -171,6 +171,26 @@ _conf_cache = {"mtime": 0.0, "data": {}}
 _conf_lock = threading.Lock()
 
 
+def _conf_unquote(v):
+    """Undo bash quoting from setup.sh's conf_quote (printf %q): '' , 'x', "x",
+    or backslash-escaped tokens like `Katya\\ \\(Enhanced\\)`. shlex handles both
+    surrounding quotes AND backslash escapes, so `Katya (Enhanced)` comes back
+    clean instead of leaking the backslashes into the UI."""
+    v = v.strip()
+    if not v:
+        return v
+    try:
+        parts = shlex.split(v)
+    except ValueError:
+        parts = None
+    if parts is not None and len(parts) == 1:
+        return parts[0]
+    # Unbalanced quotes / unexpected multi-token (hand-edited) — best-effort strip.
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+        return v[1:-1]
+    return v
+
+
 def conf():
     with _conf_lock:
         try:
@@ -186,10 +206,7 @@ def conf():
                         if not line or line.startswith("#") or "=" not in line:
                             continue
                         k, _, v = line.partition("=")
-                        k, v = k.strip(), v.strip()
-                        if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
-                            v = v[1:-1]
-                        data[k] = v
+                        data[k.strip()] = _conf_unquote(v)
             except OSError:
                 data = dict(_conf_cache["data"])
             _conf_cache["mtime"] = mt
@@ -226,7 +243,7 @@ def active_labels():
             keep = c.get("INSTALL_DOCLING", "1") == "1"
         elif lbl in ("com.local.node.exporter", "com.local.silicon.exporter",
                      "com.local.ondemand.exporter"):
-            keep = c.get("INSTALL_EXPORTERS", "1") == "1"
+            keep = c.get("INSTALL_EXPORTERS", "0") == "1"
         elif lbl == "com.local.llm.watchdog":
             keep = c.get("INSTALL_WATCHDOG", "1") == "1"
         elif lbl == "com.local.mqtt.bridge":
@@ -482,7 +499,7 @@ _history_lock = threading.Lock()
 def take_sample():
     c = conf()
     sil = None
-    if c.get("INSTALL_EXPORTERS", "1") == "1":
+    if c.get("INSTALL_EXPORTERS", "0") == "1":
         sil = scrape_silicon(c.get("SILICON_EXPORTER_PORT", "9101") or "9101")
     sample = {
         "ts": int(time.time()),
@@ -827,7 +844,7 @@ def api_status():
             "pressure": mem_pressure_label(),
         },
         "disk_free_gb": disk_free_gb(c.get("HF_CACHE_DIR", DEFAULT_HF) or DEFAULT_HF),
-        "exporters_on": c.get("INSTALL_EXPORTERS", "1") == "1",
+        "exporters_on": c.get("INSTALL_EXPORTERS", "0") == "1",
         "apply_pending": apply_pending(),
         "active_job": job,
         "services": services,
@@ -993,7 +1010,7 @@ def api_paperless_ocr():
     return {
         "enabled": c.get("INSTALL_PAPERLESS_OCR", "0") == "1",
         "configured": bool(c.get("PAPERLESS_OCR_URL", "")) and bool(c.get("PAPERLESS_OCR_TOKEN", "")),
-        "langs": c.get("PAPERLESS_OCR_LANGS", "").replace("\\", ""),
+        "langs": c.get("PAPERLESS_OCR_LANGS", ""),
         "stable_sec": stable,
         "smb_shared": c.get("PAPERLESS_OCR_SMB_SHARE", "0") == "1",
         "smb_name": c.get("PAPERLESS_OCR_SMB_NAME", "inbox"),
@@ -1050,6 +1067,21 @@ def session_for(token):
     return hmac.new(token.encode("utf-8"), SESSION_SALT, hashlib.sha256).hexdigest()
 
 
+def ct_eq(a, b):
+    """Constant-time string compare that never raises.
+
+    hmac.compare_digest() raises TypeError on non-ASCII str, so a request with
+    a header like `Authorization: Bearer ä` would otherwise crash this (root)
+    handler thread instead of returning 401. Encode both sides to bytes first.
+    """
+    try:
+        ab = a.encode("utf-8") if isinstance(a, str) else a
+        bb = b.encode("utf-8") if isinstance(b, str) else b
+        return hmac.compare_digest(ab, bb)
+    except (AttributeError, TypeError, ValueError, UnicodeError):
+        return False
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "macstudio-dashboard"
     protocol_version = "HTTP/1.1"
@@ -1098,10 +1130,10 @@ class Handler(BaseHTTPRequestHandler):
             return False
         auth = self.headers.get("Authorization", "") or ""
         if auth.startswith("Bearer "):
-            if hmac.compare_digest(auth[7:].strip(), token):
+            if ct_eq(auth[7:].strip(), token):
                 return True
         cookie = self.cookie_value()
-        if cookie and hmac.compare_digest(cookie, session_for(token)):
+        if cookie and ct_eq(cookie, session_for(token)):
             return True
         return False
 
@@ -1265,7 +1297,7 @@ class Handler(BaseHTTPRequestHandler):
         body = self.read_body_json()
         token = conf_get("DASHBOARD_TOKEN")
         given = str(body.get("token", ""))
-        if not token or not given or not hmac.compare_digest(given, token):
+        if not token or not given or not ct_eq(given, token):
             time.sleep(1.0)  # brute-force friction
             self.send_json({"error": "falscher Token"}, code=401)
             return
@@ -1321,6 +1353,14 @@ class Handler(BaseHTTPRequestHandler):
         if not mid or not repo:
             self.send_json({"error": "ID und HF-Repo sind erforderlich"}, code=400)
             return
+        # No '|' (the TSV delimiter) or newline in any field — else it injects
+        # extra columns/rows into catalog.tsv. setup.sh's cli_add_model also
+        # validates id/repo/role charset; this covers engine/gb too.
+        for label, val in (("id", mid), ("repo", repo), ("role", role),
+                           ("engine", engine), ("gb", gb)):
+            if "|" in val or "\n" in val or "\r" in val:
+                self.send_json({"error": f"Feld '{label}' darf kein '|' oder Zeilenumbruch enthalten"}, code=400)
+                return
         args = ["--add-model", "id=" + mid, "repo=" + repo, "role=" + role, "gated=" + gated]
         if engine:
             args.append("engine=" + engine)

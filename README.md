@@ -410,6 +410,9 @@ use the menu) to change a live box.
 | `NODE_EXPORTER_PORT` / `SILICON_EXPORTER_PORT` / `ONDEMAND_EXPORTER_PORT` | `9100` / `9101` / `9103` | Prometheus exporters (only if `INSTALL_EXPORTERS=1`) |
 | `INSTALL_DOCLING` / `INSTALL_TUI` / `INSTALL_WATCHDOG` | `1` | Toggle optional pieces |
 | `INSTALL_EXPORTERS` | `0` | Prometheus exporters — **off by default** |
+| `INSTALL_IMAGES` | `0` | FLUX text-to-image via mflux (`image` alias, public :5005) — **off by default** |
+| `IMAGES_PUBLIC_PORT` / `IMAGES_BACKEND_PORT` | `5005` / `15005` | Image-generation ports (proxy / backend) |
+| `MFLUX_MODEL` / `MFLUX_QUANTIZE` / `MFLUX_STEPS` | `dev` / `8` / *(empty)* | FLUX model, quantization bits, sampling steps (empty = model default, dev=20) |
 | `INSTALL_VOICE` | `0` | Speech-to-Text (`stt`) + Text-to-Speech (`tts`) — **off by default** |
 | `INSTALL_IMMICH` | `0` | Metal/ANE Immich-ML backend (:3003) — **off by default** (needs macOS 26 + a running Immich server) |
 | `VOICE_PROJECT_DIR` | `/Users/mac/projects/macos-speech-server` | Where FluidAudio's `macos-speech-server` is cloned+built |

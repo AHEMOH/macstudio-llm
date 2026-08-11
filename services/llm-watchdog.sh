@@ -3,8 +3,8 @@
 # optional services when macOS reports memory pressure. Even with
 # on-demand proxies, a rare combined spike (big model load + several
 # services in use) can trigger Warn. This keeps the primary LLM engine
-# (vllm-mlx, or Ollama if that's what's installed) healthy by offloading
-# the optional on-demand backends — including GLM-OCR.
+# (the resident oMLX main) healthy by offloading the optional on-demand
+# backends (immich-ml, docling, images, voice).
 #
 # Launched by com.local.llm.watchdog (KeepAlive=true).
 set -u
@@ -16,6 +16,11 @@ POLL_INTERVAL="${WATCHDOG_POLL_INTERVAL:-15}"
 PRESSURE_THRESHOLD="${WATCHDOG_PRESSURE_THRESHOLD:-warn}"
 AUTO_RESTORE="${WATCHDOG_AUTO_RESTORE:-0}"
 RESTORE_DELAY="${WATCHDOG_RESTORE_DELAY:-120}"
+
+# A non-numeric conf value would make `sleep "$POLL_INTERVAL"` fail every
+# iteration → a 100%-CPU spin loop. Fall back to a sane default instead.
+case "$POLL_INTERVAL" in ''|*[!0-9]*) POLL_INTERVAL=15 ;; esac
+case "$RESTORE_DELAY" in ''|*[!0-9]*) RESTORE_DELAY=120 ;; esac
 
 LOG=/var/log/macstudio/watchdog.log
 mkdir -p "$(dirname "$LOG")"

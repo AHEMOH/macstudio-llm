@@ -16,7 +16,12 @@ fi
 
 if [ $# -eq 0 ]; then
   echo "Available logs in $LOG_DIR:"
-  ls -1 "$LOG_DIR" | sed 's/\.log$//' | sed 's/^/  /'
+  # Only *.log files — not sub-directories like dashboard-jobs/ (which would
+  # otherwise be listed as a bogus log name that then 'not found's on select).
+  for f in "$LOG_DIR"/*.log; do
+    [ -e "$f" ] || continue
+    printf '  %s\n' "$(basename "$f" .log)"
+  done
   echo
   echo "usage: llm-logs <name> [<name>...]"
   exit 0
@@ -25,8 +30,9 @@ fi
 files=()
 for name in "$@"; do
   case "$name" in
-    *.log) f="$LOG_DIR/$name" ;;
-    *)     f="$LOG_DIR/${name}.log" ;;
+    */*|..*) echo "invalid log name: $name" >&2; exit 1 ;;
+    *.log)   f="$LOG_DIR/$name" ;;
+    *)       f="$LOG_DIR/${name}.log" ;;
   esac
   if [ ! -e "$f" ]; then
     echo "not found: $f" >&2

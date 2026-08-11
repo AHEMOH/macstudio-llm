@@ -48,7 +48,10 @@ def _synthesize(text: str, voice: str, fmt: str):
         aiff_path = os.path.join(tmpdir, "out.aiff")
         try:
             result = subprocess.run(
-                ["say", "-v", voice, "-o", aiff_path, text],
+                # `--` terminates option parsing: without it, a `text` that
+                # starts with `-` is parsed by say(1) as an option (e.g.
+                # `-f/etc/passwd` reads a file, `-o/path` overwrites one).
+                ["say", "-v", voice, "-o", aiff_path, "--", text],
                 capture_output=True, text=True, timeout=GEN_TIMEOUT_SEC,
             )
         except subprocess.TimeoutExpired:

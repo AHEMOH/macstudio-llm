@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs once at boot via com.local.iogpu.wiredlimit — raises the GPU wired
-# memory ceiling so Ollama can hold large models entirely in VRAM.
+# memory ceiling so the MLX/oMLX model can stay entirely in GPU-wired memory.
 set -eu
 
 CONF=/usr/local/etc/macstudio.conf

@@ -361,7 +361,7 @@ config_hint() {
     OMLX_API_KEY)                echo "oMLX --api-key: required by every caller once set, INCLUDING LiteLLM's own local calls (render_litellm_config wires this same key into main/main-fast/embed/rerank's litellm_params automatically). Plaintext in this 644 conf — LAN-only, like VNC_PASSWORD/DASHBOARD_TOKEN. Empty = auto-generated on the next --apply; clear it + --apply to rotate" ;;
     GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off" ;;
     PRESET_ALIASES)              echo "1 = also expose the 'main-fast' preset alias (same loaded model as 'main' but thinking-OFF at the proxy — fast non-reasoning chat / tools / web / cron / email)" ;;
-    LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Replaces Ollama's :11434" ;;
+    LITELLM_PORT)                echo "Public gateway port apps use (/v1, /v1/messages). Default :11434 (the port Ollama-compatible clients expect)" ;;
     ALIAS_EMBED)                 echo "Catalog id of the embedding model (role=embed, engine omlx, served by the SAME process as main) -> LiteLLM alias 'embed'. empty = embeddings off" ;;
     ALIAS_RERANK)                echo "Catalog id of the reranker (role=rerank, engine omlx, served by the SAME process as main) -> LiteLLM alias 'rerank'. empty = rerank off" ;;
     INSTALL_IMAGES)              echo "1 = run the on-demand FLUX image-generation backend (mflux, MLX-native) exposed via LiteLLM as the 'image' alias for OpenWebUI's native Images feature. Opt-in (default 0) — NOT part of the model catalog (image generation doesn't fit the text/embed/rerank role system; see CLAUDE.md)" ;;
@@ -464,11 +464,10 @@ fi
 # --- Logging & prompts ------------------------------------------------------
 log()  { printf "${C_BLU}[setup]${C_RST} %s\n" "$*"; }
 ok()   { printf "${C_GRN}[ ok ]${C_RST} %s\n" "$*"; }
-warn() { printf "${C_YEL}[warn]${C_RST} %s\n" "$*" >&2; }
+warn() { APPLY_WARN_COUNT=$(( ${APPLY_WARN_COUNT:-0} + 1 )); printf "${C_YEL}[warn]${C_RST} %s\n" "$*" >&2; }
 err()  { printf "${C_RED}[err ]${C_RST} %s\n" "$*" >&2; }
 dbg()  { [ "${VERBOSE:-0}" = 1 ] && printf "${C_DIM}[dbg ]${C_RST} %s\n" "$*" >&2; return 0; }
 
-APPLY_MODE=0
 INTERACTIVE=1
 VERBOSE=0
 DEBUG=0
@@ -561,6 +560,46 @@ conf_quote() {
   if [ -z "$1" ]; then printf "''"; else printf '%q' "$1"; fi
 }
 
+# --- Input validation helpers ----------------------------------------------
+# Guard a numeric config value against arithmetic / array-subscript code
+# injection. bash evaluates `a[$(cmd)]` recursively inside $(( )) AND inside an
+# array subscript, so a config value like 'a[$(id>/tmp/x)]' reaching an
+# arithmetic context (e.g. $(( IDLE_TIMEOUT_IMMICH / 60 ))) executes as root.
+# Any value with a non-digit char is reset to the fallback (default 0).
+sanitize_uint() {
+  local name=$1 fallback=${2:-0} val=${!name:-}
+  case "$val" in
+    ''|*[!0-9]*) printf -v "$name" '%s' "$fallback" ;;
+  esac
+}
+
+# Like sanitize_uint but allows a single leading '-' (e.g. IDLE_TIMEOUT_* use
+# -1 = "never sleep"). Still rejects anything else, so no $(...)/[...] survives.
+sanitize_int() {
+  local name=$1 fallback=${2:-0} val=${!name:-}
+  case "$val" in
+    ''|-|*[!0-9-]*|?*-*) printf -v "$name" '%s' "$fallback" ;;
+  esac
+}
+
+# A catalog id must be a plain slug — this is also what makes a stored id safe
+# to use as a literal (not a regex) and safe as a shell/awk field value.
+valid_catalog_id() {
+  case "$1" in
+    ''|*[!A-Za-z0-9._-]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# A free-form catalog field must not contain the TSV delimiter or a newline,
+# which would shift/duplicate columns or inject rows.
+valid_catalog_field() {
+  case "$1" in
+    *"|"*|*$'\n'*|*$'\r'*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 write_default_config() {
   /bin/mkdir -p "$(dirname "$CONF_FILE")"
   {
@@ -603,6 +642,15 @@ load_config() {
   . "$CONF_FILE"
   # Export every key so render_template can reference them as env vars.
   for k in "${CONFIG_KEYS[@]}"; do export "$k"; done
+  # Sanitize every config value consumed in an arithmetic / array-subscript
+  # context below BEFORE it is evaluated — closes the root code-injection path
+  # (see sanitize_uint). A hand-edited or dashboard-set non-numeric value is
+  # coerced to a safe integer rather than executed.
+  sanitize_int  IDLE_TIMEOUT_IMMICH 0    # -1 = never sleep (valid)
+  sanitize_int  IDLE_TIMEOUT_DOCLING 0
+  sanitize_uint AUTOUPDATE_WEEKDAY 0
+  sanitize_uint AUTOUPDATE_HOUR 0
+  sanitize_uint AUTOUPDATE_MINUTE 0
   # Derived convenience vars for motd and the like
   local bytes mb
   bytes=$(/usr/sbin/sysctl -n hw.memsize 2>/dev/null || echo 0)
@@ -630,7 +678,7 @@ load_config() {
       com.local.immich.*)  [ "${INSTALL_IMMICH:-0}"  = 1 ] || continue ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || continue ;;
       com.local.node.exporter|com.local.silicon.exporter|com.local.ondemand.exporter)
-        [ "${INSTALL_EXPORTERS:-1}" = 1 ] || continue ;;
+        [ "${INSTALL_EXPORTERS:-0}" = 1 ] || continue ;;
       com.local.llm.watchdog)
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || continue ;;
       com.local.mqtt.bridge)
@@ -778,9 +826,9 @@ ensure_dirs() {
   # be left at 644, which blocks the new UserName from opening it for
   # StandardOutPath/StandardErrorPath and fails the whole spawn with
   # EX_CONFIG before the program even starts (confirmed live 2026-07-27).
-  # Group-writable so any daemon's UserName, as long as it's in "staff", can
-  # append to its own log.
-  /usr/bin/find "$LOG_DIR" -type f -exec /bin/chmod 664 {} + 2>/dev/null || true
+  # Group-writable (staff) so any daemon's UserName can append to its own log,
+  # but NOT world-readable — dashboard job logs can capture --apply output.
+  /usr/bin/find "$LOG_DIR" -type f -exec /bin/chmod 660 {} + 2>/dev/null || true
 }
 
 ensure_xcode_clt() {
@@ -825,18 +873,33 @@ ensure_homebrew() {
   # prompt, but the installer still shells out to sudo for chown /opt/homebrew
   # and writing /etc/paths.d/homebrew. Grant passwordless sudo *for the
   # duration of this install only*, then revoke.
+  # Refuse to build a NOPASSWD sudoers line from an unvalidated username.
+  if ! valid_catalog_id "${TARGET_USER:-}" || ! /usr/bin/id -u "${TARGET_USER}" >/dev/null 2>&1; then
+    warn "homebrew bootstrap: TARGET_USER '${TARGET_USER:-}' is not a safe, existing account — install brew manually"
+    return 1
+  fi
   local sudoers_tmp=/etc/sudoers.d/99-macstudio-bootstrap
-  /bin/cat >"$sudoers_tmp" <<EOF
+  # ALWAYS remove the temporary blanket-sudo grant, even on Ctrl-C / kill during
+  # the multi-minute brew install — otherwise NOPASSWD:ALL is left behind.
+  trap '/bin/rm -f "$sudoers_tmp"' EXIT INT TERM
+  ( /usr/bin/umask 377; /bin/cat >"$sudoers_tmp" <<EOF
 ${TARGET_USER} ALL=(ALL) NOPASSWD: ALL
 EOF
+  )
   /usr/sbin/chown root:wheel "$sudoers_tmp"
   /bin/chmod 440 "$sudoers_tmp"
+  if ! /usr/sbin/visudo -cf "$sudoers_tmp" >/dev/null 2>&1; then
+    warn "bootstrap sudoers failed visudo check — aborting brew install"
+    /bin/rm -f "$sudoers_tmp"; trap - EXIT INT TERM
+    return 1
+  fi
   local rc=0
   /usr/bin/sudo -u "$TARGET_USER" -H \
     /usr/bin/env NONINTERACTIVE=1 CI=1 \
     /bin/bash -c "$(/usr/bin/curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
     >/dev/null 2>&1 || rc=$?
   /bin/rm -f "$sudoers_tmp"
+  trap - EXIT INT TERM
   if [ "$rc" -ne 0 ] || [ ! -x /opt/homebrew/bin/brew ]; then
     warn "homebrew install failed (rc=$rc). Install manually, then re-run:"
     warn '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
@@ -869,11 +932,11 @@ ensure_formula() {
 
 ensure_formulas() {
   # The MLX stack is the primary backend and runs from Python venvs, not a brew formula.
-  [ "${INSTALL_EXPORTERS:-1}" = 1 ] && ensure_formula node_exporter
+  [ "${INSTALL_EXPORTERS:-0}" = 1 ] && ensure_formula node_exporter
   [ "${INSTALL_TUI:-1}" = 1 ] && ensure_formula mactop
   # macmon doubles as the silicon-exporter's sampler (sys power, temps, real
   # GPU usage), so the exporters need it even when the TUI tools are off.
-  if [ "${INSTALL_TUI:-1}" = 1 ] || [ "${INSTALL_EXPORTERS:-1}" = 1 ]; then
+  if [ "${INSTALL_TUI:-1}" = 1 ] || [ "${INSTALL_EXPORTERS:-0}" = 1 ]; then
     ensure_formula macmon
   fi
   # Optional for the TTS backend: only needed if a client requests a
@@ -982,8 +1045,14 @@ ensure_immich_ml_container() {
     local cur_cpu cur_mem_bytes cur_mem_gb
     cur_cpu=$(echo "$colima_info" | /usr/bin/sed -n 's/.*"cpus":\([0-9]*\).*/\1/p')
     cur_mem_bytes=$(echo "$colima_info" | /usr/bin/sed -n 's/.*"memory":\([0-9]*\).*/\1/p')
-    cur_mem_gb=$(( cur_mem_bytes / 1073741824 ))
-    if [ "$cur_cpu" != "$want_cpu" ] || [ "$cur_mem_gb" != "$want_mem_gb" ]; then
+    cur_mem_gb=$(( ${cur_mem_bytes:-0} / 1073741824 ))
+    if [ -z "$cur_cpu" ] || [ -z "$cur_mem_bytes" ]; then
+      # Parsing the running size failed (colima output format changed, or the
+      # instance isn't ready). Do NOT treat that as "size differs" — that would
+      # stop+start (restart) the VM on EVERY --apply, taking immich-ml down for
+      # minutes each time. Skip the resize check this run instead.
+      warn "immich-ml: couldn't read current Colima size — skipping resize check this run"
+    elif [ "$cur_cpu" != "$want_cpu" ] || [ "$cur_mem_gb" != "$want_mem_gb" ]; then
       log "immich-ml: resizing Colima ${cur_cpu:-?} vCPU / ${cur_mem_gb:-?}GiB -> ${want_cpu} vCPU / ${want_mem_gb}GiB"
       /usr/bin/sudo -u "$session_user" -H "$colima" stop >/dev/null 2>&1
       /usr/bin/sudo -u "$session_user" -H "$colima" start --cpu "$want_cpu" --memory "$want_mem_gb" >/dev/null 2>&1 \
@@ -1141,10 +1210,20 @@ ensure_paperless_ocr_dirs() {
   base="$(dirname "$inbox")"
   /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$inbox" "$inbox/${PAPERLESS_OCR_DUPLEX_SUBDIR:-duplex}" \
     "$archive" "$errors" 2>/dev/null || true
-  # Hand the whole tree to the user; a+rX = files readable, dirs traversable (no exec on files).
-  /usr/sbin/chown -R "$TARGET_USER" "$base" 2>/dev/null || true
-  /bin/chmod -R a+rX "$base" 2>/dev/null || true
-  ok "paperless-ocr dirs owned by $TARGET_USER + readable ($base)"
+  # The recursive chown/chmod is a ONE-TIME repair of files a previous root-owned
+  # daemon left un-downloadable over SMB (see comment above); paperless-ocr.py now
+  # writes them correctly. Recursing over the whole (potentially thousands-of-files)
+  # archive on EVERY --apply is wasteful, so gate it behind a sentinel.
+  local sentinel="$base/.macstudio-perms-ok"
+  if [ ! -e "$sentinel" ]; then
+    # Hand the whole tree to the user; a+rX = files readable, dirs traversable (no exec on files).
+    /usr/sbin/chown -R "$TARGET_USER" "$base" 2>/dev/null || true
+    /bin/chmod -R a+rX "$base" 2>/dev/null || true
+    /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/touch "$sentinel" 2>/dev/null || true
+    ok "paperless-ocr dirs owned by $TARGET_USER + readable ($base) [one-time repair]"
+  else
+    dbg "paperless-ocr perms already repaired ($sentinel)"
+  fi
 }
 
 ensure_paperless_ocr_share() {
@@ -1189,7 +1268,9 @@ ensure_vnc_password() {
   fi
   save_config_key VNC_PASSWORD "$p"
   export VNC_PASSWORD="$p"
-  ok "VNC password generated: $p  (also in $CONF_FILE)"
+  # Don't echo the secret — --apply output can be captured to a log
+  # (dashboard jobs). It's stored in the conf; read it there.
+  ok "VNC password generated (stored in $CONF_FILE)"
 }
 
 ensure_screensharing_enabled() {
@@ -1197,8 +1278,11 @@ ensure_screensharing_enabled() {
   # VNC password so non-Apple VNC clients (Windows RealVNC/TightVNC) — and the noVNC
   # browser bridge — can authenticate. One-way like the SMB share: toggling
   # INSTALL_REMOTE=0 does NOT disable it (turn it off in System Settings > General >
-  # Sharing, or run `.../kickstart -deactivate -configure -access -off`). Idempotent —
-  # re-running just re-pushes the same config/password.
+  # Sharing, or run `.../kickstart -deactivate -configure -access -off`).
+  # Idempotent AND session-safe: the full kickstart below uses `-restart -agent`,
+  # which restarts the ARD agent and drops any live VNC session — so it only runs
+  # on FIRST enable. To rotate the VNC password afterwards, disable Screen Sharing
+  # first (System Settings, or `kickstart -deactivate`), then re-run --apply.
   [ "${INSTALL_REMOTE:-1}" = 1 ] || return 0
   local ks=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
   if [ ! -x "$ks" ]; then
@@ -1208,6 +1292,11 @@ ensure_screensharing_enabled() {
   fi
   if [ -z "${VNC_PASSWORD:-}" ]; then
     warn "VNC_PASSWORD empty — skipping Screen Sharing enable (set it in menu 4 + --apply)."
+    return 0
+  fi
+  # Already enabled? Don't re-push — the -restart below would kill live sessions.
+  if /bin/launchctl print system/com.apple.screensharing >/dev/null 2>&1; then
+    ok "Screen Sharing already enabled — not re-pushing (would drop live VNC sessions)"
     return 0
   fi
   if "$ks" -activate -configure -access -on \
@@ -1299,7 +1388,6 @@ catalog_repo()   { catalog_field "$1" 2; }
 catalog_role()   { catalog_field "$1" 3; }
 catalog_engine() { catalog_field "$1" 4; }
 catalog_gb()     { catalog_field "$1" 6; }
-catalog_gated()  { catalog_field "$1" 7; }
 
 # ensure_omlx_model_dir — build/refresh the --model-dir symlink farm. EVERY
 # omlx-engine catalog row that's fully downloaded gets a mlx-<id> entry —
@@ -1394,6 +1482,16 @@ data["models"].setdefault(key, {})
 data["models"][key]["max_context_window"] = ctx
 print(json.dumps(data, indent=2))
 PY
+  local rc=$?
+  # Guard against an empty/failed render overwriting a good settings file (e.g.
+  # a non-numeric OMLX_CTX makes int() raise → empty $tmp). Same empty-guard
+  # render_template uses. Without this, mv -f would clobber model_settings.json
+  # AND then restart the daemon.
+  if [ "$rc" -ne 0 ] || [ ! -s "$tmp" ]; then
+    /bin/rm -f "$tmp"
+    warn "omlx settings generator failed (rc=$rc) — leaving $file unchanged"
+    return 0
+  fi
   if [ "$before" != "$(hash_file "$tmp")" ]; then
     /bin/mv -f "$tmp" "$file"
     /bin/chmod 644 "$file"
@@ -1992,7 +2090,9 @@ render_litellm_config() {
     ok "litellm config up to date"
     return 0
   fi
-  /usr/bin/install -m 644 "$tmp" "$LITELLM_CONFIG_FILE"
+  # 640 root:staff, NOT world-readable: this file embeds OMLX_API_KEY. The
+  # litellm daemon runs as TARGET_USER (in group staff), so it can still read it.
+  /usr/bin/install -m 640 -o root -g staff "$tmp" "$LITELLM_CONFIG_FILE"
   /bin/rm -f "$tmp"
   ok "litellm config written → $LITELLM_CONFIG_FILE (main=${ALIAS_MAIN}, embed=${ALIAS_EMBED:-none}, rerank=${ALIAS_RERANK:-none}, image=$([ "${INSTALL_IMAGES:-0}" = 1 ] && echo "${MFLUX_MODEL:-dev}-q${MFLUX_QUANTIZE:-8}" || echo none), voice=$([ "${INSTALL_VOICE:-0}" = 1 ] && echo "stt+tts (${VOICE_TTS_DEFAULT_VOICE:-default})" || echo none))"
   if daemon_loaded com.local.litellm.proxy; then
@@ -2111,7 +2211,7 @@ render_all_plists() {
       com.local.immich.*)  [ "${INSTALL_IMMICH:-0}"  = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.docling.*) [ "${INSTALL_DOCLING:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.node.exporter|com.local.silicon.exporter|com.local.ondemand.exporter)
-        [ "${INSTALL_EXPORTERS:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
+        [ "${INSTALL_EXPORTERS:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.llm.watchdog)
         [ "${INSTALL_WATCHDOG:-1}" = 1 ] || { remove_plist "$label"; continue; } ;;
       com.local.mqtt.bridge)
@@ -2248,12 +2348,20 @@ apply_ondemand_sudoers() {
   # docs/immich-ml-idle-sleep-bug.md): every on-demand backend was silently
   # never going to sleep for exactly this reason, masked because the old
   # code discarded launchctl's returncode/stderr entirely. Narrowly scoped to
-  # just this one binary (not a blanket NOPASSWD:ALL) so idempotent --apply
-  # doesn't depend on TARGET_USER already having broader passwordless sudo
-  # configured by hand outside this repo.
+  # the ONE sub-command the proxy actually needs — `launchctl stop com.local.*`
+  # — NOT the whole binary: a bare `NOPASSWD: /bin/launchctl` would let
+  # TARGET_USER run `sudo launchctl bootstrap <plist>` / `submit`, i.e.
+  # arbitrary root code, which is no better than NOPASSWD:ALL. Waking uses
+  # kickstart and needs no sudo, so it isn't granted here.
   local f=/etc/sudoers.d/macstudio-ondemand
   local user="${TARGET_USER:-mac}"
-  local desired="$user ALL=(root) NOPASSWD: /bin/launchctl"
+  # Never build a sudoers line from an unvalidated user (visudo -cf checks
+  # syntax, not semantics — 'evil ALL=(ALL) NOPASSWD: ALL #' passes).
+  if ! valid_catalog_id "$user" || ! /usr/bin/id -u "$user" >/dev/null 2>&1; then
+    warn "refusing to write $f: TARGET_USER '$user' is not a safe, existing account"
+    return 1
+  fi
+  local desired="$user ALL=(root) NOPASSWD: /bin/launchctl stop com.local.*"
   if [ -f "$f" ] && /usr/bin/grep -qxF "$desired" "$f"; then
     ok "$f present"
     return 0
@@ -2318,8 +2426,9 @@ ensure_dashboard_token() {
   fi
   save_config_key DASHBOARD_TOKEN "$t"
   export DASHBOARD_TOKEN="$t"
-  ok "dashboard token generated: $t"
-  ok "  (log in at http://$(/bin/hostname 2>/dev/null || echo localhost):${DASHBOARD_PORT:-8090} — also in $CONF_FILE)"
+  # Don't echo the token — --apply output can be captured to a log. It's in the conf.
+  ok "dashboard token generated (stored in $CONF_FILE)"
+  ok "  (log in at http://$(/bin/hostname 2>/dev/null || echo localhost):${DASHBOARD_PORT:-8090})"
 }
 
 mqtt_apply_warnings() {
@@ -2335,6 +2444,17 @@ mqtt_apply_warnings() {
 
 apply_everything() {
   need_root "$@"
+  # Serialize apply runs: the weekly autoupdate daemon, the TUI, an MQTT-driven
+  # model switch and a dashboard --apply job can otherwise collide over git
+  # checkout / pip install / the conf read-modify-write / bootout+bootstrap.
+  # mkdir is atomic; the trap frees the lock on normal return AND on signal.
+  local _lock=/var/run/macstudio-apply.lock
+  if ! /bin/mkdir "$_lock" 2>/dev/null; then
+    err "another setup.sh --apply / model switch is already running (lock: $_lock)."
+    err "  if you're certain none is, remove it: sudo rmdir $_lock"
+    return 1
+  fi
+  trap '/bin/rmdir "'"$_lock"'" 2>/dev/null || true' EXIT INT TERM
   dbg "step: load_config";            load_config
   dbg "step: ensure_dirs";             ensure_dirs
   dbg "step: write_repo_pointer";      write_repo_pointer
@@ -2375,6 +2495,8 @@ apply_everything() {
   dbg "step: apply_os_trim";          apply_os_trim
   echo
   verify_and_summary
+  /bin/rmdir "$_lock" 2>/dev/null || true   # release lock on the normal (TUI-continues) path
+  trap - EXIT INT TERM
 }
 
 # ===========================================================================
@@ -2454,6 +2576,14 @@ verify_and_summary() {
     fi
   fi
 
+  # Surface the run's warning count so a human — or the dashboard job log that
+  # captures this output — can see that steps warned, even though --apply keeps
+  # returning 0 (callers rely on that; benign warns like "colima not up before
+  # first auto-login" are expected on a fresh box).
+  if [ "${APPLY_WARN_COUNT:-0}" -gt 0 ]; then
+    printf "\n${C_YEL}⚠ completed with %s warning(s) — review the [warn] lines above.${C_RST}\n" "$APPLY_WARN_COUNT"
+  fi
+
   echo
 }
 
@@ -2493,7 +2623,7 @@ menu_select_services() {
     printf "  3) %-18s [%s]   docling-serve on-demand OCR/VLM (:%s)\n" \
       INSTALL_DOCLING   "$(onoff_label "${INSTALL_DOCLING:-1}")"   "${DOCLING_PUBLIC_PORT:-5001}"
     printf "  4) %-18s [%s]   Prometheus exporters (:%s :%s :%s)\n" \
-      INSTALL_EXPORTERS "$(onoff_label "${INSTALL_EXPORTERS:-1}")" \
+      INSTALL_EXPORTERS "$(onoff_label "${INSTALL_EXPORTERS:-0}")" \
       "${NODE_EXPORTER_PORT:-9100}" "${SILICON_EXPORTER_PORT:-9101}" "${ONDEMAND_EXPORTER_PORT:-9103}"
     printf "  5) %-18s [%s]   Memory-pressure safety watchdog\n" \
       INSTALL_WATCHDOG  "$(onoff_label "${INSTALL_WATCHDOG:-1}")"
@@ -2615,6 +2745,7 @@ download_model() {
         "$cli" download "$repo" 2>&1 | /usr/bin/tee "$logf"
   rc=${PIPESTATUS[0]}
   out=$(/usr/bin/tail -40 "$logf" 2>/dev/null)
+  /bin/rm -f "$logf"   # tempfile consumed — don't leak one per download
   if [ "$rc" -eq 0 ] && [ "$(model_status "$repo")" = ok ]; then
     ok "downloaded + verified '$id' — selectable now ('s'/'m'/'k' $id for main/embed/rerank)"
     if [ "$(catalog_engine "$id")" = omlx ]; then
@@ -2846,8 +2977,11 @@ cli_edit_model() {
     esac
   done
   [ -n "$id" ] || { err "usage: --edit-model id=<slug> [repo=] [gb=] [max_kv=] [notes=] …"; exit 2; }
+  valid_catalog_id "$id" || { err "invalid id '$id' — use only letters, digits, . _ -"; exit 2; }
   ensure_model_catalog
-  local line; line=$(/usr/bin/grep -E "^${id}\|" "$CATALOG_FILE" | /usr/bin/head -1)
+  # Literal field match, not a regex (id charset is validated above but a '.'
+  # would still make grep -E match a different row).
+  local line; line=$(/usr/bin/awk -F'|' -v id="$id" '$1==id{print; exit}' "$CATALOG_FILE")
   [ -n "$line" ] || { err "unknown id: $id"; exit 2; }
   local c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 c11 c12 c13 c14 c15 c16 c17
   IFS='|' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 c11 c12 c13 c14 c15 c16 c17 <<EOF
@@ -2930,6 +3064,12 @@ cli_add_model() {
     *) err "invalid role '$role' (text|embed|rerank)"; exit 2 ;;
   esac
   [ -z "$engine" ] && engine=omlx
+  # engine/quant/gb/gated go straight into the pipe-delimited row — reject any
+  # '|'/newline so they can't inject extra columns or rows.
+  local _f
+  for _f in "$engine" "$quant" "$gb" "$gated"; do
+    if ! valid_catalog_field "$_f"; then err "field '$_f' must not contain '|' or a newline"; exit 2; fi
+  done
   ensure_model_catalog
   if [ -n "$(catalog_repo "$id")" ]; then
     err "id '$id' already exists in the catalog — use the TUI ('e $id') to edit"
@@ -2962,15 +3102,22 @@ set_hf_token() {
   else
     read -r -p "Paste HF token (input visible; blank = logout): " t
   fi
+  local hf_home="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}"
   if [ -z "$t" ]; then
-    /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
+    /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="$hf_home" \
       "$cli" auth logout >/dev/null 2>&1 || true
     ok "HF token cleared (logged out)"
-  elif /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}" \
-      "$cli" auth login --token "$t" >/dev/null 2>&1; then
+  # Validate via env (HF_TOKEN), NEVER via argv `--token` — argv is visible in
+  # `ps` to any local user; the env of a sudo'd process is not. On success,
+  # persist it by writing the token file directly (mode 600), still not via argv.
+  elif /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env HF_HOME="$hf_home" HF_TOKEN="$t" \
+      "$cli" auth whoami >/dev/null 2>&1; then
+    /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$hf_home" 2>/dev/null || true
+    printf '%s' "$t" | /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/tee "$hf_home/token" >/dev/null
+    /usr/bin/sudo -u "$TARGET_USER" -H /bin/chmod 600 "$hf_home/token" 2>/dev/null || true
     ok "HF token stored in the user's HF cache (mode 600, not in macstudio.conf)"
   else
-    err "hf auth login failed (check the token value)"
+    err "hf auth whoami failed (check the token value)"
   fi
 }
 
@@ -2989,6 +3136,7 @@ catalog_add_entry() {
   #   max_kv|max_seqs|rating|notes|temperature|top_p|frequency_penalty|presence_penalty
   local id repo role engine quant gb gated rp tp
   read -r -p "new id (short slug): " id;       [ -z "$id" ] && return 0
+  if ! valid_catalog_id "$id"; then err "invalid id '$id' — use only letters, digits, . _ -"; return 0; fi
   if catalog_repo "$id" >/dev/null && [ -n "$(catalog_repo "$id")" ]; then
     err "id '$id' already exists — use 'e $id' to edit"; return 0
   fi
@@ -3004,6 +3152,15 @@ catalog_add_entry() {
     read -r -p "reasoning_parser [qwen3/glm4/gemma4/gpt_oss/deepseek_r1/empty]: " rp
     read -r -p "tool_parser [hermes/qwen/qwen3_coder/glm47/gemma4/granite/gpt-oss/empty]: " tp
   fi
+  # Validate before writing the pipe-delimited row: a '|' in any field would
+  # shift every following column (incl. the BROKEN flag), a bad role/repo would
+  # produce an unusable entry.
+  case "$repo" in */*) : ;; *) err "invalid repo '$repo' — expected 'org/name'"; return 0 ;; esac
+  case "$role" in text|embed|rerank) : ;; *) err "invalid role '$role' (text|embed|rerank)"; return 0 ;; esac
+  local _f
+  for _f in "$repo" "$quant" "$gb" "$gated" "$rp" "$tp"; do
+    if ! valid_catalog_field "$_f"; then err "catalog field '$_f' must not contain '|' or a newline"; return 0; fi
+  done
   # reasoning(8) tool(9) max_kv(10) max_seqs(11) left for per-model override later;
   # rating(12)=3; sampling cols temp(14) top_p(15) freq(16) pres(17) empty = global
   # defaults. Trailing '||||' keeps the row at the full schema-v7 width (17 cols).
@@ -3016,7 +3173,10 @@ catalog_add_entry() {
 catalog_edit_entry() {
   local id=$1 line
   [ -z "${id:-}" ] && { err "usage: e <id>"; return 1; }
-  line=$(/usr/bin/grep -E "^${id}\|" "$CATALOG_FILE" | /usr/bin/head -1)
+  valid_catalog_id "$id" || { err "invalid id '$id'"; return 1; }
+  # Literal field match ($1==id), not a regex — so an id with a '.' can't match
+  # a different row, and read/write agree on which row is touched.
+  line=$(/usr/bin/awk -F'|' -v id="$id" '$1==id{print; exit}' "$CATALOG_FILE")
   [ -z "$line" ] && { err "unknown id: $id"; return 0; }
   local f_id f_repo f_role f_engine f_quant f_gb f_gated f_rp f_tp f_kv f_seqs f_rating f_notes f_temp f_topp f_freq f_pres
   IFS='|' read -r f_id f_repo f_role f_engine f_quant f_gb f_gated f_rp f_tp f_kv f_seqs f_rating f_notes f_temp f_topp f_freq f_pres <<EOF
@@ -3034,23 +3194,37 @@ EOF
   read -r -p "top_p (empty=model default) [$f_topp]: " n_topp;             n_topp=${n_topp:-$f_topp}
   read -r -p "frequency_penalty (empty=off) [$f_freq]: " n_freq;           n_freq=${n_freq:-$f_freq}
   read -r -p "presence_penalty (empty=off) [$f_pres]: " n_pres;            n_pres=${n_pres:-$f_pres}
-  local tmp; tmp=$(/usr/bin/mktemp)
-  /usr/bin/awk -F'|' -v OFS='|' -v id="$id" -v repo="$n_repo" -v gb="$n_gb" -v gated="$n_gated" \
-      -v rp="$n_rp" -v tp="$n_tp" -v kv="$n_kv" -v seqs="$n_seqs" \
-      -v temp="$n_temp" -v topp="$n_topp" -v freq="$n_freq" -v pres="$n_pres" \
-    '!/^#/ && $1==id { $2=repo; $6=gb; $7=gated; $8=rp; $9=tp; $10=kv; $11=seqs; $14=temp; $15=topp; $16=freq; $17=pres } { print }' \
-    "$CATALOG_FILE" >"$tmp" && /bin/mv -f "$tmp" "$CATALOG_FILE"
+  local _f
+  for _f in "$n_repo" "$n_gb" "$n_gated" "$n_rp" "$n_tp" "$n_kv" "$n_seqs" "$n_temp" "$n_topp" "$n_freq" "$n_pres"; do
+    if ! valid_catalog_field "$_f"; then err "catalog field '$_f' must not contain '|' or a newline"; return 0; fi
+  done
+  # Rebuild the full 17-col row (unedited cols kept verbatim) and rewrite via a
+  # plain bash read loop — no `awk -v`, which mangles backslashes / C-escapes in
+  # free-form values (the exact trap save_config_key already documents).
+  local newline; newline="$f_id|$n_repo|$f_role|$f_engine|$f_quant|$n_gb|$n_gated|$n_rp|$n_tp|$n_kv|$n_seqs|$f_rating|$f_notes|$n_temp|$n_topp|$n_freq|$n_pres"
+  local tmp l; tmp=$(/usr/bin/mktemp)
+  while IFS= read -r l || [ -n "$l" ]; do
+    case "$l" in
+      "$id|"*) printf '%s\n' "$newline" ;;
+      *)       printf '%s\n' "$l" ;;
+    esac
+  done <"$CATALOG_FILE" >"$tmp"
+  /bin/mv -f "$tmp" "$CATALOG_FILE"
   /bin/chmod 644 "$CATALOG_FILE"   # mktemp+mv leaves 600 → restore daemon-readable mode
-  ok "updated '$id' (restart vllm with 's $id' if it's the active main)"
+  ok "updated '$id' (re-select it with 's $id' if it's the active main)"
 }
 
 catalog_remove_entry() {
   local id=$1
   [ -z "${id:-}" ] && { err "usage: x <id>"; return 1; }
-  /usr/bin/grep -qE "^${id}\|" "$CATALOG_FILE" || { err "unknown id: $id"; return 0; }
+  # id as a LITERAL field, never a regex: with the old `grep -vE "^${id}\|"`,
+  # `x '.*'` deleted every row (the whole catalog). awk $1==id is exact.
+  valid_catalog_id "$id" || { err "invalid id '$id'"; return 1; }
+  /usr/bin/awk -F'|' -v id="$id" '$1==id{f=1} END{exit !f}' "$CATALOG_FILE" \
+    || { err "unknown id: $id"; return 0; }
   confirm "remove catalog entry '$id' (downloaded files are kept)?" || return 0
   local tmp; tmp=$(/usr/bin/mktemp)
-  /usr/bin/grep -vE "^${id}\|" "$CATALOG_FILE" >"$tmp" && /bin/mv -f "$tmp" "$CATALOG_FILE"
+  /usr/bin/awk -F'|' -v id="$id" '$1!=id{print}' "$CATALOG_FILE" >"$tmp" && /bin/mv -f "$tmp" "$CATALOG_FILE"
   /bin/chmod 644 "$CATALOG_FILE"   # mktemp+mv leaves 600 → restore daemon-readable mode
   ok "removed catalog entry '$id'"
 }
@@ -3059,8 +3233,11 @@ print_catalog_table() {
   local fmt="  %-16s %-5s %-6s %-7s %-10s %-4s %-5s %-3s %-6s %s\n"
   printf "$fmt" ID ROLE STATUS FLAG ENGINE GB GATED RAT ALIAS REPO
   printf "$fmt" ---------------- ---- ------ ------- ---------- ---- ----- --- ------ ----
-  local id repo role engine quant gb gated rp tp kv seqs rating notes
-  while IFS='|' read -r id repo role engine quant gb gated rp tp kv seqs rating notes; do
+  # Read all 17 schema columns so `notes` is exactly column 13 — not a catch-all
+  # that swallows temp/top_p/freq/pres (incl. their pipes) and could mis-match
+  # BROKEN against a sampling value.
+  local id repo role engine quant gb gated rp tp kv seqs rating notes temp topp freq pres
+  while IFS='|' read -r id repo role engine quant gb gated rp tp kv seqs rating notes temp topp freq pres; do
     case "$id" in ''|\#*) continue ;; esac
     local st mark tag="" flag=""
     st=$(model_status "$repo")
@@ -3319,19 +3496,29 @@ menu_uninstall() {
               "$LIBEXEC_DIR"/silicon-exporter.py \
               "$LIBEXEC_DIR"/ondemand-exporter.py "$LIBEXEC_DIR"/llm-watchdog.sh \
               "$LIBEXEC_DIR"/mqtt-bridge.py "$LIBEXEC_DIR"/dashboard.py \
-              "$LIBEXEC_DIR"/dashboard-ui.html "$LIBEXEC_DIR"/paperless-ocr.py
+              "$LIBEXEC_DIR"/dashboard-ui.html "$LIBEXEC_DIR"/paperless-ocr.py \
+              "$LIBEXEC_DIR"/mflux-server.py "$LIBEXEC_DIR"/say-tts-server.py \
+              "$LIBEXEC_DIR"/vnc-secfilter.py
   /bin/rm -rf /usr/local/etc/macstudio-models
   /bin/rm -f /usr/local/etc/litellm.config.yaml
   /bin/rm -f "$SBIN_DIR/set-iogpu-wired-limit.sh" "$SBIN_DIR/weekly-autoupdate.sh"
-  for b in llm-status llm-restart llm-update llm-service-ctl llm-logs llm-models; do
+  for b in llm-status llm-restart llm-update llm-service-ctl llm-logs llm-models paperless-ocr; do
     /bin/rm -f "$BIN_DIR/$b"
   done
+  # Remove the sudoers drop-ins this tool wrote — especially macstudio-ondemand,
+  # which grants passwordless `launchctl stop`; leaving it after uninstall is a
+  # lingering privilege grant.
+  /bin/rm -f /etc/sudoers.d/macstudio-tui /etc/sudoers.d/macstudio-ondemand \
+             /etc/sudoers.d/99-macstudio-bootstrap
+  /bin/rm -rf /usr/local/share/novnc
   warn "Kept: Python venvs ($VENV_DIR) and the HuggingFace model cache"
   warn "      (${HF_CACHE_DIR:-~/.cache/huggingface}). Delete those by hand to reclaim disk."
+  warn "Left ON (system settings, one-way like install): Screen Sharing/VNC, the SMB share,"
+  warn "     the iogpu.wired_limit sysctl, and pmset power settings. Revert those in System Settings."
   if [ -f "$MOTD_BACKUP" ]; then /bin/cp -f "$MOTD_BACKUP" "$MOTD_FILE"; fi
   /bin/rm -f "$CONF_FILE" "$REPO_POINTER_FILE"
   /bin/rm -rf "$LOG_DIR"
-  ok "uninstalled (Homebrew + Ollama untouched)"
+  ok "uninstalled (Homebrew + your venvs/models untouched)"
   pause_enter
 }
 
@@ -3363,7 +3550,7 @@ main_menu() {
     verify_and_summary
     echo "Main menu:"
     echo "  1) Install / update everything   (recommended — applies current config)"
-    echo "  2) Select services to install…   (toggle MLX / Ollama / immich / docling / …)"
+    echo "  2) Select services to install…   (toggle MLX / images / voice / immich / docling / …)"
     echo "  3) Models & aliases…             (download MLX models, pick main / embed / rerank)"
     echo "  4) Change settings…"
     echo "  5) Service control…"
@@ -3398,6 +3585,9 @@ MacStudio LLM Server — setup.sh v${SCRIPT_VERSION}
   sudo bash setup.sh             Interactive TUI (recommended)
   sudo bash setup.sh --apply     Non-interactive install/update (no prompts)
   sudo bash setup.sh --status    Print live status and exit
+  sudo bash setup.sh --models    Open the model manager (download / pick main / embed / rerank)
+  sudo bash setup.sh --check-updates
+                                 Show available brew / venv / oMLX updates (no changes)
   sudo bash setup.sh --set-model <main|embed|rerank> <id>
                                  Switch a model slot non-interactively (same
                                  validation as the TUI; used by the MQTT bridge
@@ -3477,6 +3667,16 @@ fi
 FIRST_RUN=0
 [ -f "$CONF_FILE" ] || FIRST_RUN=1
 
+# Reject an unknown flag BEFORE self-elevating, so a typo doesn't first prompt
+# for a sudo password and only then report the error. A non-dash positional
+# falls through to the TUI dispatch below unchanged.
+case "${1:-}" in
+  ""|--help|-h|--apply|--status|--models|--check-updates|--set-model|--set-config|\
+  --set-service-power|--config-schema|--download-model|--delete-model|--add-model|\
+  --edit-model|--remove-model|--set-hf-token) : ;;
+  -*) err "unknown flag: $1"; show_help; exit 2 ;;
+esac
+
 # Self-elevate before doing real work. Use the stripped argv for the help
 # check (so `-d --help` still skips sudo), but pass the ORIGINAL argv to
 # the re-exec so global modifiers survive.
@@ -3495,7 +3695,7 @@ esac
 unset _orig_args
 
 case "${1:-}" in
-  --apply)  APPLY_MODE=1; INTERACTIVE=0; shift; apply_everything "$@" ;;
+  --apply)  INTERACTIVE=0; shift; apply_everything "$@" ;;
   --status) INTERACTIVE=0; load_config; verify_and_summary ;;
   --models) need_root "$@"; menu_models ;;
   --set-model) need_root "$@"; shift; cli_set_model "$@" ;;

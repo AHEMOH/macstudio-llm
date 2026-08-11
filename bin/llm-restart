@@ -32,8 +32,14 @@ label_for() {
     voicewyoming-proxy) echo com.local.voicewyoming.proxy ;;
     node)            echo com.local.node.exporter ;;
     silicon)         echo com.local.silicon.exporter ;;
+    ondemand)        echo com.local.ondemand.exporter ;;
     watchdog)        echo com.local.llm.watchdog ;;
     preventsleep)    echo com.local.preventsleep ;;
+    dashboard)       echo com.local.dashboard ;;
+    mqtt)            echo com.local.mqtt.bridge ;;
+    vncfilter)       echo com.local.vncfilter ;;
+    novnc)           echo com.local.novnc ;;
+    paperless)       echo com.local.paperless.ocr ;;
     *)               echo "" ;;
   esac
 }
@@ -41,10 +47,16 @@ label_for() {
 ALL_SHORT_NAMES=(main litellm immich-proxy immich docling-proxy docling \
                  images-proxy images \
                  voicestt-proxy voicestt voicetts-proxy voicetts voicewyoming-proxy \
-                 node silicon watchdog preventsleep)
-ALL_ALWAYS_ON=(main litellm immich-proxy docling-proxy images-proxy voicestt-proxy voicetts-proxy voicewyoming-proxy node silicon watchdog preventsleep)
+                 node silicon ondemand watchdog preventsleep \
+                 dashboard mqtt vncfilter novnc paperless)
+ALL_ALWAYS_ON=(main litellm immich-proxy docling-proxy images-proxy \
+               voicestt-proxy voicetts-proxy voicewyoming-proxy \
+               node silicon ondemand watchdog preventsleep \
+               dashboard mqtt vncfilter novnc paperless)
 
+implicit_all=0
 if [ $# -eq 0 ] || [ "${1:-}" = all ]; then
+  implicit_all=1
   set -- "${ALL_ALWAYS_ON[@]}"
 fi
 
@@ -64,6 +76,8 @@ for name in "$@"; do
   fi
   if /bin/launchctl print "system/$label" >/dev/null 2>&1; then
     /bin/launchctl kickstart -k "system/$label" && echo "restarted: $name ($label)"
+  elif [ "$implicit_all" = 1 ]; then
+    :  # disabled/absent service — skip quietly when restarting "all"
   else
     echo "not registered: $name ($label)" >&2
     rc=1

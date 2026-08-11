@@ -38,6 +38,7 @@ import json
 import os
 import queue
 import re
+import shlex
 import signal
 import socket
 import struct
@@ -264,6 +265,23 @@ def run_out(cmd, timeout=15):
     return p.stdout.strip()
 
 
+def _conf_unquote(v):
+    """Undo bash conf_quote (printf %q): '' , 'x', "x", or backslash-escaped
+    tokens like `Katya\\ \\(Enhanced\\)`. shlex handles quotes AND escapes."""
+    v = v.strip()
+    if not v:
+        return v
+    try:
+        parts = shlex.split(v)
+    except ValueError:
+        parts = None
+    if parts is not None and len(parts) == 1:
+        return parts[0]
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+        return v[1:-1]
+    return v
+
+
 def parse_conf(path=CONF_FILE) -> dict:
     conf = {}
     try:
@@ -273,10 +291,7 @@ def parse_conf(path=CONF_FILE) -> dict:
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 k, _, v = line.partition("=")
-                k, v = k.strip(), v.strip()
-                if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
-                    v = v[1:-1]
-                conf[k] = v
+                conf[k.strip()] = _conf_unquote(v)
     except OSError:
         pass
     return conf
@@ -860,6 +875,22 @@ class Bridge:
                 self.cmd_queue.task_done()
 
     def do_switch(self, model):
+        # The payload comes straight off the broker. There's no shell (argv list
+        # below), but validate anyway so a bogus/hostile id never reaches
+        # setup.sh: charset guard first, then membership in the selectable-main
+        # set (same rule the dashboard applies).
+        if not re.match(r"^[A-Za-z0-9._-]+$", model):
+            self.mqtt.publish(self.model_status_topic, "error: invalid model id", retain=True)
+            log(f"rejected model id (charset): {model!r}")
+            return
+        conf = parse_conf()
+        hf_cache = conf.get("HF_CACHE_DIR") or os.path.expanduser("~/.cache/huggingface")
+        engine = conf.get("TEXT_ENGINE", "omlx")
+        valid = text_model_options(hf_cache, engine)
+        if valid and model not in valid:
+            self.mqtt.publish(self.model_status_topic, f"error: unknown/undownloaded model {model}", retain=True)
+            log(f"rejected model id (not selectable): {model!r}")
+            return
         setup = self.find_setup_sh()
         if not setup or not os.path.exists(setup):
             self.mqtt.publish(self.model_status_topic, "error: setup.sh not found", retain=True)

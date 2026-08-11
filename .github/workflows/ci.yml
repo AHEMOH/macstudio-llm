@@ -1,0 +1,52 @@
+name: sanity
+
+# The repo's documented pre-PR sanity check (CLAUDE.md), as automation:
+#   1. bash -n over every shell script
+#   2. py_compile over every Python service
+#   3. catalog schema width (17 columns)
+#   4. plist XML well-formedness (templates still contain @VAR@ placeholders,
+#      so we check XML well-formedness, not plist/DTD semantics)
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bash -n (shell syntax)
+        run: |
+          set -e
+          bash -n setup.sh
+          for f in wrappers/*.sh services/*.sh bin/*; do
+            echo "checking $f"
+            bash -n "$f"
+          done
+
+      - name: py_compile (python services)
+        run: python3 -m py_compile services/*.py
+
+      - name: catalog schema (17 columns)
+        run: |
+          bad=$(awk -F'|' '!/^#/ && NF { if (NF != 17) print "BAD " $1 }' models/catalog.tsv)
+          if [ -n "$bad" ]; then
+            echo "catalog rows with wrong column count:"; echo "$bad"; exit 1
+          fi
+          echo "catalog OK"
+
+      - name: plist XML well-formedness
+        run: |
+          python3 - <<'PY'
+          import glob, sys, xml.dom.minidom as dom
+          bad = []
+          for f in sorted(glob.glob("daemons/*.plist")):
+              try:
+                  dom.parse(f)
+              except Exception as e:
+                  bad.append(f"{f}: {e}")
+          if bad:
+              print("\n".join(bad)); sys.exit(1)
+          print("all plists are well-formed XML")
+          PY
