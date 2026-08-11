@@ -306,7 +306,7 @@ present):
 | **Homebrew** | official installer, `NONINTERACTIVE=1`, as `TARGET_USER` | if absent |
 | **python@3.12** | `brew install python@3.12` (MLX/docling wheels need ≥3.10) | if `INSTALL_MLX=1` or `INSTALL_DOCLING=1` |
 | **omlx project + venv** | `git clone` `OMLX_REPO`@`OMLX_REPO_REF` + `pip install -e .` (editable, alpha-stage, not on PyPI) in `$VENV_DIR/omlx` | if `INSTALL_MLX=1` |
-| **litellm venv** | `pip install 'litellm[proxy]==1.96.1'` (pinned) in `$VENV_DIR/litellm` | if `INSTALL_MLX=1` |
+| **litellm venv** | `pip install 'litellm[proxy]==1.96.0'` (pinned) in `$VENV_DIR/litellm` | if `INSTALL_MLX=1` |
 | **node_exporter** | `brew install node_exporter` | if `INSTALL_EXPORTERS=1` (off by default) |
 | **mactop + macmon** | `brew install mactop macmon` | if `INSTALL_TUI=1` |
 | **docling-serve venv** | `pip install 'docling[…]' 'docling-serve[ui]'` | if `INSTALL_DOCLING=1` |
