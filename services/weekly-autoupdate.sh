@@ -83,7 +83,12 @@ PY
 done
 omlx_dir="${OMLX_PROJECT_DIR:-$TARGET_HOME/projects/omlx}"
 if [ -d "$omlx_dir/.git" ]; then
-  omlx_installed=$(run_as_user "/usr/bin/git -C '$omlx_dir' describe --tags --exact-match 2>/dev/null || /usr/bin/git -C '$omlx_dir' rev-parse --short HEAD 2>/dev/null")
+  # Pass $omlx_dir as a positional arg ($1) instead of interpolating it into the
+  # bash -lc script string — a "'" in the path would otherwise break out of the
+  # quoting and run as root.
+  omlx_installed=$(sudo -u "$TARGET_USER" -H bash -lc \
+    '/usr/bin/git -C "$1" describe --tags --exact-match 2>/dev/null || /usr/bin/git -C "$1" rev-parse --short HEAD 2>/dev/null' \
+    _ "$omlx_dir")
   omlx_latest=$(/usr/bin/git ls-remote --tags --refs "${OMLX_REPO:-https://github.com/jundot/omlx}" 2>/dev/null \
     | /usr/bin/awk -F/ '{print $NF}' | /usr/bin/sort -V | /usr/bin/tail -1)
   printf "  %-10s installed=%s  latest_tag=%s\n" omlx "${omlx_installed:-?}" "${omlx_latest:-?}"
@@ -102,6 +107,7 @@ fi
 
 step "macOS minor / security updates (no --restart; FileVault-aware)"
 su_out=$(/usr/bin/mktemp)
+trap 'rm -f "$su_out" 2>/dev/null || true' EXIT   # also clean up on Ctrl-C/kill mid-update
 /usr/sbin/softwareupdate --install --all --agree-to-license 2>&1 | /usr/bin/tee "$su_out"
 if /usr/bin/grep -qiE 'require that you restart|\[restart\]|restart.* required|action: restart' "$su_out"; then
   /bin/mkdir -p /var/macstudio

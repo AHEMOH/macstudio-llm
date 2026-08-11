@@ -29,7 +29,7 @@
     explicit step via 'llm-models' and never happens on the fly.
 
   Dashboard:    http://<this-mac>:@DASHBOARD_PORT@   (browser control — token: DASHBOARD_TOKEN in macstudio.conf)
-  Settings:     sudo bash /opt/macstudio/setup.sh
+  Settings:     cd ~/macstudio-llm && sudo bash setup.sh   (menu-driven TUI)
   Logs:         tail -F /var/log/macstudio/omlx-main.log    (or litellm.log / images-serve.log)
   Weekly auto:  @AUTOUPDATE_HUMAN@ → /var/log/macstudio/autoupdate.log
 

@@ -113,7 +113,21 @@ def macmon_loop() -> None:
                     globals()["_mm_snap"] = {"ts": time.time(), "data": data}
             except Exception as exc:
                 log(f"macmon read error: {exc}")
-            rc = proc.wait()
+                # macmon may still be alive after a read error — kill it so the
+                # wait() below can't block this sampler thread forever (which
+                # would silently freeze _mm_snap).
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            try:
+                rc = proc.wait(timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                rc = proc.wait()
             log(f"macmon exited rc={rc}")
             if not got_any:
                 failures += 1

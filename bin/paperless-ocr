@@ -23,7 +23,7 @@ export PATH="$VENV_DIR/paperlessocr/bin:/opt/homebrew/bin:/usr/bin:/bin"
 export PAPERLESS_OCR_LANGS="${PAPERLESS_OCR_LANGS:-ru-RU,en-US}"
 export PAPERLESS_OCR_RECMODE="${PAPERLESS_OCR_RECMODE:-accurate}"
 export PAPERLESS_OCR_FONT="${PAPERLESS_OCR_FONT:-/System/Library/Fonts/Supplemental/Arial Unicode.ttf}"
-export PAPERLESS_OCR_DPI="${PAPERLESS_OCR_DPI:-200}"
+export PAPERLESS_OCR_DPI="${PAPERLESS_OCR_DPI:-300}"   # match the daemon default (200 misses small text)
 export PAPERLESS_OCR_INBOX="${PAPERLESS_OCR_INBOX:-${TARGET_HOME:-/Users/mac}/paperless-ocr/inbox}"
 
 exec "$PY" /usr/local/libexec/paperless-ocr.py --ocr "$@"

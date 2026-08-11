@@ -27,9 +27,14 @@ behind an alias can be swapped (`llm-models`) without the app noticing.
 | `main-fast` | Exactly `main` but **thinking OFF** — fast, non-reasoning chat / tool use / web / cron / email | same as `main` | **same loaded model**, thinking-off |
 | `embed` | Dense text **embeddings** for RAG (1024-dim, multilingual) | `/v1/embeddings` | BAAI/bge-m3, served by the SAME oMLX process as `main` |
 | `rerank` | Cross-encoder **reranker** (scores docs against a query) | `/v1/rerank`, `/rerank` | BAAI/bge-reranker-v2-m3, served by the SAME oMLX process as `main` |
+| `image` | Text-to-**image** generation (opt-in `INSTALL_IMAGES`) | `/v1/images/generations` | FLUX via mflux, on-demand backend (public :5005) — see "Images service" below |
+| `stt` | **Speech-to-text** (opt-in `INSTALL_VOICE`) | `/v1/audio/transcriptions` | FluidAudio/Parakeet on the ANE, on-demand (public :5006) |
+| `tts` | **Text-to-speech** (opt-in `INSTALL_VOICE`) | `/v1/audio/speech` | macOS `say`, on-demand (public :5007); pass a `voice` field |
 
-The gateway exposes `main`, `main-fast`, `embed`, `rerank`. For images, send `image_url`
-straight to `main`/`main-fast` (both multimodal). `main` and `main-fast` point at the **one** big loaded model (they
+The gateway always exposes `main`, `main-fast`, `embed`, `rerank`; `image` (when
+`INSTALL_IMAGES=1`) and `stt`/`tts` (when `INSTALL_VOICE=1`) are added on top. For
+image *understanding*, send `image_url` straight to `main`/`main-fast` (both
+multimodal) — the `image` alias is for image *generation*. `main` and `main-fast` point at the **one** big loaded model (they
 differ only in DEFAULT thinking, so picking one does **not** load a second model).
 `main`/`main-fast` share Gemma's reference sampling (**temperature 1.0 / top_p 0.95 /
 top_k 64**); temp+top_p come from the catalog, `top_k` from `GEMMA_TOP_K` (via `extra_body`, since

@@ -41,6 +41,10 @@ BACKEND_PORT = int(os.environ.get("BACKEND_PORT", "5900"))
 ALLOWED_SEC_TYPES = {
     int(t) for t in os.environ.get("ALLOWED_SEC_TYPES", "2").split(",") if t.strip()
 }
+# Cap how long the RFB handshake may take. A client that connects and then sends
+# nothing would otherwise pin both this proxy's socket AND a screensharingd
+# session open forever (readexactly() has no timeout of its own).
+HANDSHAKE_TIMEOUT = float(os.environ.get("VNC_FILTER_HANDSHAKE_TIMEOUT_SEC", "15"))
 
 
 def log(msg: str) -> None:
@@ -118,7 +122,13 @@ async def handle_client(client_reader: asyncio.StreamReader, client_writer: asyn
         return
 
     try:
-        proceed = await filter_handshake(client_reader, client_writer, backend_reader, backend_writer, peer)
+        proceed = await asyncio.wait_for(
+            filter_handshake(client_reader, client_writer, backend_reader, backend_writer, peer),
+            timeout=HANDSHAKE_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        log(f"handshake timed out (> {HANDSHAKE_TIMEOUT}s) for {peer} — dropping")
+        proceed = False
     except (asyncio.IncompleteReadError, ConnectionError, OSError) as exc:
         log(f"handshake filter failed for {peer}: {exc}")
         proceed = False

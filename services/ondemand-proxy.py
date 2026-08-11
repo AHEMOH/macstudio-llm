@@ -6,7 +6,7 @@ Listens on LISTEN_PORT. On the first incoming connection, kickstarts the
 backend LaunchDaemon (BACKEND_LABEL), polls HEALTH_URL until it returns 200,
 then proxies traffic to BACKEND_HOST:BACKEND_PORT. Every 30 s, if
 now - last_request > IDLE_TIMEOUT_SEC and the backend has a live pid, runs
-`launchctl stop BACKEND_LABEL` so RAM returns to Ollama.
+`launchctl stop BACKEND_LABEL` so RAM is freed for the resident main model.
 
 Configuration via environment (set by the wrapper script):
   LISTEN_HOST, LISTEN_PORT
@@ -60,6 +60,7 @@ MAX_PENDING_WAITERS = 8
 consecutive_failures = 0
 cooldown_until = 0.0      # monotonic; skip kickstart while time.monotonic() < this
 pending_waiters = 0       # clients currently blocked in ensure_backend_up()
+active_requests = 0       # connections currently piping to the backend
 
 
 def log(msg: str) -> None:
@@ -104,10 +105,10 @@ def stop_backend() -> None:
     # this proxy runs as TARGET_USER (non-root), and the bare call failed
     # with "Not privileged to stop service" on every single attempt,
     # completely silently until the error logging below was added.
-    # TARGET_USER already has passwordless (NOPASSWD: ALL) sudo configured
-    # on this Mac (a precondition of this whole project's SSH-based
-    # workflow), so `sudo -n` elevates just this one call without making
-    # the proxy process itself run as root. `-n` (non-interactive) makes
+    # setup.sh's apply_ondemand_sudoers grants TARGET_USER a NARROW
+    # passwordless sudo rule — `NOPASSWD: /bin/launchctl stop com.local.*`,
+    # exactly this call and nothing else — so `sudo -n` elevates just this
+    # one command without making the proxy run as root. `-n` (non-interactive) makes
     # sudo fail fast instead of hanging if that assumption is ever wrong,
     # rather than silently blocking this async loop for up to `timeout`.
     r = subprocess.run(
@@ -146,7 +147,10 @@ async def ensure_backend_up() -> bool:
     global consecutive_failures, cooldown_until
     # Fast path outside the lock: healthy traffic shouldn't serialize behind one
     # slow probe, and it clears the back-off the moment the backend recovers.
-    if health_ok():
+    # health_ok()/kickstart_backend() do blocking I/O — run them off the event
+    # loop (to_thread) so one slow probe/wake doesn't freeze every other
+    # connection this proxy is serving.
+    if await asyncio.to_thread(health_ok):
         _note_healthy()
         return True
     # Back-off: a prior wake failed and we're still inside its cooldown window —
@@ -157,17 +161,17 @@ async def ensure_backend_up() -> bool:
     async with startup_lock:
         # Re-check under the lock: another client may have just brought it up, or
         # opened a fresh cooldown, while we waited for the lock.
-        if health_ok():
+        if await asyncio.to_thread(health_ok):
             _note_healthy()
             return True
         if time.monotonic() < cooldown_until:
             return False
         log(f"waking {BACKEND_LABEL}")
-        kickstart_backend()
+        await asyncio.to_thread(kickstart_backend)
         deadline = time.monotonic() + STARTUP_TIMEOUT_SEC
         while time.monotonic() < deadline:
             await asyncio.sleep(1.0)
-            if health_ok():
+            if await asyncio.to_thread(health_ok):
                 elapsed = STARTUP_TIMEOUT_SEC - (deadline - time.monotonic())
                 log(f"{BACKEND_LABEL} healthy after {elapsed:.1f}s")
                 _note_healthy()
@@ -199,7 +203,7 @@ async def pipe(src: asyncio.StreamReader, dst: asyncio.StreamWriter) -> None:
 
 
 async def handle_client(client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter) -> None:
-    global last_request_ts, pending_waiters
+    global last_request_ts, pending_waiters, active_requests
     last_request_ts = time.time()
     peer = client_writer.get_extra_info("peername")
     try:
@@ -233,11 +237,18 @@ async def handle_client(client_reader: asyncio.StreamReader, client_writer: asyn
             client_writer.write(http_503(body))
             await client_writer.drain()
             return
-        await asyncio.gather(
-            pipe(client_reader, backend_writer),
-            pipe(backend_reader, client_writer),
-            return_exceptions=True,
-        )
+        # Count this as an in-flight request for the whole pipe duration so the
+        # idle_watchdog can't stop the backend mid-stream on a request that runs
+        # longer than IDLE_TIMEOUT_SEC (last_request_ts alone only marks start/end).
+        active_requests += 1
+        try:
+            await asyncio.gather(
+                pipe(client_reader, backend_writer),
+                pipe(backend_reader, client_writer),
+                return_exceptions=True,
+            )
+        finally:
+            active_requests -= 1
     finally:
         # close() schedules the transport shut; wait_closed() ensures the fd is
         # actually released before this coroutine ends (prevents fd build-up under
@@ -262,9 +273,12 @@ async def idle_watchdog() -> None:
     while True:
         await asyncio.sleep(IDLE_CHECK_INTERVAL_SEC)
         idle_for = time.time() - last_request_ts if last_request_ts > 0 else float("inf")
-        if idle_for > IDLE_TIMEOUT_SEC and backend_pid() > 0:
+        # Never stop while a request is still piping (a long streaming/SSE call can
+        # outlast IDLE_TIMEOUT_SEC). backend_pid()/stop_backend() do blocking I/O
+        # → run off the loop.
+        if idle_for > IDLE_TIMEOUT_SEC and active_requests == 0 and await asyncio.to_thread(backend_pid) > 0:
             log(f"idle for {idle_for:.0f}s — stopping {BACKEND_LABEL}")
-            stop_backend()
+            await asyncio.to_thread(stop_backend)
 
 
 async def main() -> None:

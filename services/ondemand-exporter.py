@@ -80,9 +80,13 @@ def tcp_listening(port: int, host: str = "127.0.0.1") -> bool:
     try:
         with socket.create_connection((host, port), TCP_PROBE_TIMEOUT):
             return True
+    except ConnectionRefusedError:
+        return False  # backend simply down / sleeping — the normal case, not an error
     except OSError:
-        return False
-    except Exception:
+        # Anything else (timeout, host unreachable, …) is an actual scrape
+        # problem. create_connection only ever raises OSError, so the old bare
+        # `except Exception` after `except OSError` was unreachable dead code and
+        # this counter never moved.
         _scrape_errors["tcp"] += 1
         return False
 

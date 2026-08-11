@@ -17,11 +17,18 @@ import os
 import random
 import subprocess
 import tempfile
+import threading
 import time
 
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
+
+# Only one generation at a time: each request loads a full FLUX model, so two
+# concurrent LAN requests would race to allocate ~full-model RAM and can OOM the
+# box that also holds the resident main LLM. A busy backend returns 429 rather
+# than queueing (an occasional-use tool, not a chat API).
+_gen_lock = threading.Lock()
 
 MODEL_PATH = os.environ["MFLUX_MODEL_PATH"]
 MODEL_NAME = os.environ.get("MFLUX_MODEL", "dev")
@@ -32,6 +39,9 @@ MFLUX_BIN = os.environ.get("MFLUX_BIN") or ("mflux-generate-flux2" if IS_FLUX2 e
 STEPS = os.environ.get("MFLUX_STEPS") or ("4" if MODEL_NAME == "schnell" or MODEL_NAME.startswith("flux2-klein") else "20")
 GEN_TIMEOUT_SEC = int(os.environ.get("MFLUX_GEN_TIMEOUT_SEC", "900"))
 BACKEND_PORT = int(os.environ.get("IMAGES_BACKEND_PORT", "15005"))
+# Upper bound on requested image dimensions — an unbounded width/height from the
+# request JSON is a trivial LAN OOM vector. FLUX wants multiples of 16.
+MAX_DIM = int(os.environ.get("MFLUX_MAX_DIM", "1536"))
 
 
 @app.route("/health")
@@ -55,8 +65,23 @@ def generate():
     except (ValueError, AttributeError):
         width = height = 1024
 
+    def _clamp(v):
+        v = max(256, min(MAX_DIM, v))
+        return v - (v % 16)  # FLUX requires multiples of 16
+    width, height = _clamp(width), _clamp(height)
+
     seed = random.randint(0, 2**31 - 1)
 
+    # Serialize generations — refuse rather than queue/race for model RAM.
+    if not _gen_lock.acquire(blocking=False):
+        return jsonify({"error": {"message": "image backend busy — one generation at a time"}}), 429
+    try:
+        return _run_generation(prompt, width, height, seed)
+    finally:
+        _gen_lock.release()
+
+
+def _run_generation(prompt, width, height, seed):
     with tempfile.TemporaryDirectory() as tmpdir:
         out_path = os.path.join(tmpdir, "out.png")
         cmd = [

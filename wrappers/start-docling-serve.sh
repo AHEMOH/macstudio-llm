@@ -18,5 +18,9 @@ export DOCLING_SERVE_ENABLE_REMOTE_SERVICES="true"
 export DOCLING_SERVE_ALLOW_CUSTOM_VLM_CONFIG="true"
 
 PROJ="${DOCLING_PROJECT_DIR:-$HOME/projects/docling-serve}"
+if [ ! -x "$PROJ/.venv/bin/docling-serve" ]; then
+  echo "docling-serve not built at $PROJ/.venv — run: sudo bash setup.sh --apply" >&2
+  exit 78
+fi
 cd "$PROJ"
 exec "$PROJ/.venv/bin/docling-serve" run --host 127.0.0.1 --port "${DOCLING_BACKEND_PORT:-15001}" --enable-ui

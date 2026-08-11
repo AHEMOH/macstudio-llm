@@ -19,8 +19,9 @@ PDFs/images ──▶ docling  ──▶ chunks ──▶ embed (bge-m3) ──�
 
 Everything except Qdrant + the Haystack glue already runs here:
 - **docling-serve** — on-demand at `:5001` (proxy). Converts + chunks in one call.
-- **`embed`** / **`rerank`** — LiteLLM aliases at `:11434` (Infinity, BAAI/bge-m3 +
-  bge-reranker-v2-m3). See [INTEGRATIONS.md](../INTEGRATIONS.md).
+- **`embed`** / **`rerank`** — LiteLLM aliases at `:11434` (served by the same
+  resident oMLX process as `main`: BAAI/bge-m3 + bge-reranker-v2-m3). See
+  [INTEGRATIONS.md](../INTEGRATIONS.md).
 - **`main`** / **`main-fast`** — the generation model at `:11434`.
 
 Key idea: **align the chunker's tokenizer to the embedder.** bge-m3's tokenizer is used by
@@ -58,7 +59,7 @@ curl -s http://mac.home.arpa:11434/v1/embeddings \
   | python3 -c 'import sys,json;d=json.load(sys.stdin);print(len(d["data"]),"vectors, dim",len(d["data"][0]["embedding"]))'
 ```
 
-Batch chunks (Infinity batches internally). Output is 1024-dim dense vectors.
+Batch chunks (oMLX batches internally). Output is 1024-dim dense vectors.
 
 ## 3. Store in Qdrant
 
