@@ -1748,8 +1748,22 @@ ensure_python_venvs() {
   # thinking-toggle extra_body passthrough. The text/embed/rerank engine is
   # oMLX (venv 'omlx', cloned+editable-installed by ensure_omlx_project()
   # below — alpha-stage/not-on-PyPI, so it needs its own git-clone flow, not
-  # this generic pip-spec helper).
-  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.96.1'
+  # this generic pip-spec helper). NOTE: 1.96.1 is yanked on PyPI ("half
+  # published"), hence 1.96.0. The proxy daemon loads litellm at start, so a
+  # pin bump must kickstart it — handled right below via the before/after
+  # version compare.
+  local _litellm_before=""
+  [ -x "$vdir/litellm/bin/pip" ] && _litellm_before=$(/usr/bin/sudo -u "$TARGET_USER" -H \
+      "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
+  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.96.0'
+  local _litellm_after=""
+  [ -x "$vdir/litellm/bin/pip" ] && _litellm_after=$(/usr/bin/sudo -u "$TARGET_USER" -H \
+      "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
+  if [ -n "$_litellm_before" ] && [ "$_litellm_before" != "$_litellm_after" ] \
+      && daemon_running com.local.litellm.proxy; then
+    /bin/launchctl kickstart -k system/com.local.litellm.proxy >/dev/null 2>&1 \
+      && ok "restarted com.local.litellm.proxy to pick up litellm $_litellm_after (was $_litellm_before)"
+  fi
 
   # FLUX image generation: mflux (MLX-native, no PyTorch/ComfyUI) + flask for the
   # thin OpenAI-compatible front end in mflux-server.py. On-demand, catalog-
