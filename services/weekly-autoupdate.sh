@@ -6,9 +6,10 @@
 # frozen (a surprise version jump broke a model once):
 #   1. Homebrew: brew update, upgrade node_exporter, cleanup
 #   2. macOS minor / security updates (no auto-reboot — see below)
-# NOT touched here: oMLX (pinned via OMLX_REPO_REF), litellm,
-# immich-ml, docling, and the models. Upgrade those deliberately via
-# `setup.sh` ("Check for updates" → set the pin → Install/update everything).
+# NOT touched here: oMLX (pinned via OMLX_REPO_REF), litellm/mflux (exact ==
+# pins in setup.sh's ensure_python_venvs), the voice project (VOICE_REPO_REF),
+# docling/paperless/novnc venvs (pinned at build), immich-ml, and the models.
+# Upgrade those deliberately: bump the pin in config/setup.sh, then --apply.
 # The run logs available-but-held versions so you can see when an update exists.
 #
 # Reboots are FileVault-aware: we NEVER pass --restart to softwareupdate,
@@ -62,9 +63,10 @@ run_as_user '/opt/homebrew/bin/brew cleanup -s --prune=7' || true
 
 # DELIBERATELY NOT auto-upgraded: a surprise version jump broke a model before.
 # oMLX is pinned via OMLX_REPO_REF (a git tag, not a PyPI package — checked
-# against GitHub releases below); litellm, immich-ml and docling stay at
-# their installed versions. Upgrade them on purpose with `setup.sh` (menu:
-# Check for updates -> set the pin -> Install/update everything).
+# against GitHub releases below); litellm/mflux carry exact == pins in
+# setup.sh (2026-08 review: LiteLLM had a real PyPI supply-chain incident),
+# and immich-ml/docling stay at their installed versions. Upgrade them on
+# purpose: bump the pin, then `sudo bash setup.sh --apply`.
 step "held versions (available but NOT auto-upgraded — bump deliberately)"
 for pair in "litellm:litellm"; do
   vn=${pair%%:*}; pk=${pair##*:}
