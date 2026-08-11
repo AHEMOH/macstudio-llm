@@ -26,8 +26,9 @@ raise a couple of config keys.
   model that does **text *and* images in the same chat** plus tool calling, plus
   the BGE embed/rerank pair, ALL in one process. Soft RAM ceiling
   (`OMLX_MEMORY_GUARD_GB`) and a per-model context cap (`OMLX_MAX_CONTEXT_WINDOW`,
-  pre-seeded into `~/.omlx/model_settings.json`). Reasoning is left to the model/client
-  by default; tool calling is auto-detected from the model's chat template.
+  pre-seeded into `~/.omlx/model_settings.json`). Reasoning is pinned ON for `main`
+  and OFF for `main-fast` at the gateway; tool calling is auto-detected from the
+  model's chat template.
   Version pinned via `OMLX_REPO_REF` (v0.5.7).
 - **LiteLLM gateway** on the public port (:11434): apps talk OpenAI `/v1` (and
   Anthropic `/v1/messages`) to the stable aliases — `main` (text + images, reasons by

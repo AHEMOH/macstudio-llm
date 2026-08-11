@@ -2037,19 +2037,26 @@ render_litellm_config() {
   m_freq=$(catalog_field "${ALIAS_MAIN:-}" 16)
   m_pres=$(catalog_field "${ALIAS_MAIN:-}" 17)
 
-  # emit_model <alias> <served-name> <port> [temp] [top_p] [freq_pen] [pres_pen] [max_tok] [nothink] [top_k]
+  # emit_model <alias> <served-name> <port> [temp] [top_p] [freq_pen] [pres_pen] [max_tok] [thinking] [top_k]
   # One LiteLLM model_list entry; optional sampling lines only when non-empty.
   # extra_body carries up to two things, merged into ONE object:
-  #   nothink (arg 9) non-empty -> suppress the model's reasoning at the proxy (so clients
-  #     like OpenWebUI never see a thinking block, and short-output tasks like paperless
-  #     extraction aren't eaten by hidden think tokens). oMLX's wire form is the NESTED
+  #   thinking (arg 9): "" = don't set (leave to the model/template default),
+  #     "on" = force enable_thinking true, anything else non-empty = force it
+  #     false (suppresses reasoning at the proxy, so clients like OpenWebUI
+  #     never see a thinking block and short-output tasks aren't eaten by
+  #     hidden think tokens). oMLX's wire form is the NESTED
   #     `chat_template_kwargs.enable_thinking` (confirmed via source read of omlx/server.py
   #     AND live-tested) — unlike mlx_vlm.server's old top-level `enable_thinking` key.
+  #     Since the oMLX v0.5.7 bump the Gemma template default flipped to
+  #     thinking-OFF (verified live 2026-08-11: without the kwarg, main answered
+  #     a multi-step math prompt with 8 completion tokens and no
+  #     reasoning_content; with enable_thinking:true the same prompt produced a
+  #     783-char reasoning trace) — so 'main' now pins thinking ON explicitly
+  #     instead of trusting the default, else main == main-fast in behavior.
   #   top_k (arg 10) non-empty -> Gemma's reference sampling. top_k is NOT a native OpenAI
   #     param, so it MUST ride in extra_body (catalog has no top_k column). At temperature 0
   #     it is inert, so we don't bother passing it to deterministic aliases.
   # LiteLLM forwards extra_body verbatim (drop_params leaves it untouched).
-  local _nothink_body='{"chat_template_kwargs": {"enable_thinking": false}}'
   emit_model() {
     # api_key: oMLX has no auth when OMLX_API_KEY is unset (the common case,
     # OMLX_BIND_HOST=127.0.0.1), so "dummy" is fine then — but once an admin
@@ -2062,11 +2069,16 @@ render_litellm_config() {
     [ -n "${6:-}" ] && printf '      frequency_penalty: %s\n' "$6"
     [ -n "${7:-}" ] && printf '      presence_penalty: %s\n' "$7"
     [ -n "${8:-}" ] && printf '      max_tokens: %s\n' "$8"
-    local _eb=""
-    if [ -n "${9:-}" ] && [ -n "${10:-}" ]; then
-      _eb=$(printf '{"chat_template_kwargs": {"enable_thinking": false}, "top_k": %s}' "${10}")
-    elif [ -n "${9:-}" ]; then
-      _eb="$_nothink_body"
+    local _eb="" _think=""
+    case "${9:-}" in
+      "") ;;
+      on) _think=true ;;
+      *)  _think=false ;;
+    esac
+    if [ -n "$_think" ] && [ -n "${10:-}" ]; then
+      _eb=$(printf '{"chat_template_kwargs": {"enable_thinking": %s}, "top_k": %s}' "$_think" "${10}")
+    elif [ -n "$_think" ]; then
+      _eb=$(printf '{"chat_template_kwargs": {"enable_thinking": %s}}' "$_think")
     elif [ -n "${10:-}" ]; then
       _eb=$(printf '{"top_k": %s}' "${10}")
     fi
@@ -2079,15 +2091,16 @@ render_litellm_config() {
     echo "# change aliases via 'llm-models'. Apps see only model_name aliases."
     echo "model_list:"
     # main: Gemma reference sampling (temp/top_p from catalog, top_k via extra_body);
-    # thinking is left to the model/client (a reasoning model thinks by default; a client
-    # can pass enable_thinking per request).
+    # thinking pinned ON at the proxy (emit_model arg 9 = on) — since oMLX
+    # v0.5.7 the template default is thinking-OFF, so relying on "a reasoning
+    # model thinks by default" no longer holds (see emit_model comment).
     # main-fast: thinking ALWAYS off at the proxy (emit_model arg 9).
-    emit_model main "$main_served" "${MAIN_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" "" "${GEMMA_TOP_K:-64}"
+    emit_model main "$main_served" "${MAIN_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" on "${GEMMA_TOP_K:-64}"
     # main-fast = SAME loaded gemma model as 'main' (shares :18000 -> only ONE resident),
     # exactly 'main' sampling but thinking OFF at the proxy
     # (fast, non-reasoning chat / tools / web / cron / email). (main-metadata was retired.)
     if [ "${PRESET_ALIASES:-1}" = 1 ]; then
-      emit_model main-fast "$main_served" "${MAIN_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" 1 "${GEMMA_TOP_K:-64}"
+      emit_model main-fast "$main_served" "${MAIN_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" off "${GEMMA_TOP_K:-64}"
     fi
     # Embeddings + reranking now served by the SAME resident omlx process as
     # main (mlx-<id> served-name, MAIN_BACKEND_PORT). 'embed' uses the generic
