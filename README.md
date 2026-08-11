@@ -13,7 +13,7 @@ Designed for a 32 GB M1 Max but scales unchanged to bigger Apple Silicon — jus
 raise a couple of config keys.
 
 > **Text engine — oMLX.** The always-on backend is **oMLX**
-> (pinned `OMLX_REPO_REF=v0.5.1`), serving **one unified multimodal
+> (pinned `OMLX_REPO_REF=v0.5.7`), serving **one unified multimodal
 > model** that handles **text *and* images in the same chat** plus tool calling —
 > AND, in the SAME process, the BGE embed/rerank pair — with an SSD
 > paged-prefix-cache and continuous batching. The default main is `gemma4-26b-qat`
@@ -28,7 +28,7 @@ raise a couple of config keys.
   (`OMLX_MEMORY_GUARD_GB`) and a per-model context cap (`OMLX_MAX_CONTEXT_WINDOW`,
   pre-seeded into `~/.omlx/model_settings.json`). Reasoning is left to the model/client
   by default; tool calling is auto-detected from the model's chat template.
-  Version pinned via `OMLX_REPO_REF` (v0.5.1).
+  Version pinned via `OMLX_REPO_REF` (v0.5.7).
 - **LiteLLM gateway** on the public port (:11434): apps talk OpenAI `/v1` (and
   Anthropic `/v1/messages`) to the stable aliases — `main` (text + images, reasons by
   default), `main-fast` (same model, thinking-off), `embed` (BGE-M3 embeddings)
@@ -306,7 +306,7 @@ present):
 | **Homebrew** | official installer, `NONINTERACTIVE=1`, as `TARGET_USER` | if absent |
 | **python@3.12** | `brew install python@3.12` (MLX/docling wheels need ≥3.10) | if `INSTALL_MLX=1` or `INSTALL_DOCLING=1` |
 | **omlx project + venv** | `git clone` `OMLX_REPO`@`OMLX_REPO_REF` + `pip install -e .` (editable, alpha-stage, not on PyPI) in `$VENV_DIR/omlx` | if `INSTALL_MLX=1` |
-| **litellm venv** | `pip install 'litellm[proxy]'` in `$VENV_DIR/litellm` | if `INSTALL_MLX=1` |
+| **litellm venv** | `pip install 'litellm[proxy]==1.96.1'` (pinned) in `$VENV_DIR/litellm` | if `INSTALL_MLX=1` |
 | **node_exporter** | `brew install node_exporter` | if `INSTALL_EXPORTERS=1` (off by default) |
 | **mactop + macmon** | `brew install mactop macmon` | if `INSTALL_TUI=1` |
 | **docling-serve venv** | `pip install 'docling[…]' 'docling-serve[ui]'` | if `INSTALL_DOCLING=1` |
@@ -392,7 +392,7 @@ use the menu) to change a live box.
 | `MAIN_BACKEND_PORT` | `18000` | Internal port `oMLX` binds (serves main + embed + rerank) |
 | `LLM_REQUEST_TIMEOUT` | `3600` | Per-request timeout (s) for the text engine **and** LiteLLM; long docs/OCR |
 | `TEXT_ENGINE` | `omlx` | The engine (`oMLX`) — one unified process for main (text+images+tools) + embed + rerank |
-| `OMLX_REPO` / `OMLX_REPO_REF` | `github.com/jundot/omlx` / `v0.5.1` | Git source + pinned tag for the `omlx` venv (alpha-stage, not on PyPI) |
+| `OMLX_REPO` / `OMLX_REPO_REF` | `github.com/jundot/omlx` / `v0.5.7` | Git source + pinned tag for the `omlx` venv (alpha-stage, not on PyPI) |
 | `OMLX_PROJECT_DIR` | `/Users/mac/projects/omlx` | Where the oMLX git checkout lives |
 | `OMLX_MODEL_DIR` | `/Users/mac/.cache/omlx-models` | `--model-dir` symlink farm making every downloaded model discoverable |
 | `OMLX_MEMORY_GUARD_GB` | `30` | Soft RAM ceiling for the one oMLX process (`--memory-guard-gb`) |
@@ -412,10 +412,11 @@ use the menu) to change a live box.
 | `INSTALL_EXPORTERS` | `0` | Prometheus exporters — **off by default** |
 | `INSTALL_IMAGES` | `0` | FLUX text-to-image via mflux (`image` alias, public :5005) — **off by default** |
 | `IMAGES_PUBLIC_PORT` / `IMAGES_BACKEND_PORT` | `5005` / `15005` | Image-generation ports (proxy / backend) |
-| `MFLUX_MODEL` / `MFLUX_QUANTIZE` / `MFLUX_STEPS` | `dev` / `8` / *(empty)* | FLUX model, quantization bits, sampling steps (empty = model default, dev=20) |
+| `MFLUX_MODEL` / `MFLUX_QUANTIZE` / `MFLUX_STEPS` | `flux2-klein-4b` / `4` / *(empty)* | Image model (FLUX.2 Klein 4B default; `dev`/`schnell` = FLUX.1), quantization bits, sampling steps (empty = model default) |
 | `INSTALL_VOICE` | `0` | Speech-to-Text (`stt`) + Text-to-Speech (`tts`) — **off by default** |
 | `INSTALL_IMMICH` | `0` | Metal/ANE Immich-ML backend (:3003) — **off by default** (needs macOS 26 + a running Immich server) |
 | `VOICE_PROJECT_DIR` | `/Users/mac/projects/macos-speech-server` | Where FluidAudio's `macos-speech-server` is cloned+built |
+| `VOICE_REPO_REF` | `ad16a6a…` (full SHA) | Pinned `macos-speech-server` commit — bump deliberately, then `--apply` (same discipline as `OMLX_REPO_REF`) |
 | `VOICESTT_PUBLIC_PORT` / `VOICESTT_BACKEND_PORT` | `5006` / `15006` | Speech-to-Text ports (proxy / backend) |
 | `IDLE_TIMEOUT_VOICESTT` / `STARTUP_TIMEOUT_VOICESTT` | `900` / `60` | STT idle-to-sleep / wake-deadline seconds |
 | `VOICETTS_PUBLIC_PORT` / `VOICETTS_BACKEND_PORT` | `5007` / `15007` | Text-to-Speech ports (proxy / backend) |

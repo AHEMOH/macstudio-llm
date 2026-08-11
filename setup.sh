@@ -111,6 +111,7 @@ CONFIG_KEYS=(
   MFLUX_MODEL_DIR
   INSTALL_VOICE
   VOICE_PROJECT_DIR
+  VOICE_REPO_REF
   VOICESTT_PUBLIC_PORT
   VOICESTT_BACKEND_PORT
   IDLE_TIMEOUT_VOICESTT
@@ -219,7 +220,7 @@ config_default() {
     LLM_REQUEST_TIMEOUT)         echo 3600 ;;
     TEXT_ENGINE)                 echo omlx ;;
     OMLX_REPO)                   echo https://github.com/jundot/omlx ;;
-    OMLX_REPO_REF)               echo v0.5.1 ;;
+    OMLX_REPO_REF)               echo v0.5.7 ;;
     OMLX_PROJECT_DIR)            echo /Users/mac/projects/omlx ;;
     OMLX_MODEL_DIR)              echo /Users/mac/.cache/omlx-models ;;
     OMLX_MEMORY_GUARD_GB)        echo 30 ;;
@@ -240,12 +241,13 @@ config_default() {
     IMAGES_BACKEND_PORT)         echo 15005 ;;
     IDLE_TIMEOUT_IMAGES)         echo 900 ;;
     STARTUP_TIMEOUT_IMAGES)      echo 60 ;;
-    MFLUX_MODEL)                 echo dev ;;
-    MFLUX_QUANTIZE)              echo 8 ;;
+    MFLUX_MODEL)                 echo flux2-klein-4b ;;
+    MFLUX_QUANTIZE)              echo 4 ;;
     MFLUX_STEPS)                 echo "" ;;
     MFLUX_MODEL_DIR)             echo /Users/mac/.cache/mflux-models ;;
     INSTALL_VOICE)               echo 0 ;;
     VOICE_PROJECT_DIR)           echo /Users/mac/projects/macos-speech-server ;;
+    VOICE_REPO_REF)              echo ad16a6a9d5ce7d36a4c83cab32f64db83d4bfbec ;;
     VOICESTT_PUBLIC_PORT)        echo 5006 ;;
     VOICESTT_BACKEND_PORT)       echo 15006 ;;
     IDLE_TIMEOUT_VOICESTT)       echo -1 ;;
@@ -348,7 +350,7 @@ config_hint() {
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
     TEXT_ENGINE)                 echo "Engine serving 'main'/'embed'/'rerank': omlx (UNIFIED text+images+embed+rerank in ONE process, SSD paged-prefix-cache, continuous batching). The only supported engine" ;;
     OMLX_REPO)                   echo "Git URL of oMLX (jundot/omlx), cloned+editable-installed into OMLX_PROJECT_DIR" ;;
-    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.5.1, alpha-stage) — bump deliberately + --apply, mirrors MLXVLM_VERSION's old pin discipline" ;;
+    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.5.7, alpha-stage) — bump deliberately + --apply, STABLE tags only (v0.5.2/3 fixed resident-process memory leaks, v0.5.4 added ~2x Gemma-4 decode + 4x embedding batching; expect one SSD-prefix-cache cold start per model after a bump). Mirrors MLXVLM_VERSION's old pin discipline" ;;
     OMLX_PROJECT_DIR)            echo "Where ensure_omlx_project() clones+builds oMLX (git clone + pip install -e, one-time + on ref bump during --apply)" ;;
     OMLX_MODEL_DIR)              echo "--model-dir symlink farm (mlx-<catalog-id> per downloaded row) that makes every model — main AND embed/rerank — discoverable by the one resident oMLX process" ;;
     OMLX_MEMORY_GUARD_GB)        echo "oMLX's soft RAM ceiling (--memory-guard-gb) — matches the project's 30GB wired-memory hard rule. oMLX has no hard --max-kv-size-equivalent flag" ;;
@@ -369,12 +371,13 @@ config_hint() {
     IMAGES_BACKEND_PORT)         echo "Internal port mflux-server.py binds (127.0.0.1 only, default 15005)" ;;
     IDLE_TIMEOUT_IMAGES)         echo "Seconds before the images backend sleeps (default 900); -1 = never sleep. Low idle cost either way — mflux-server.py holds no model in memory between requests" ;;
     STARTUP_TIMEOUT_IMAGES)      echo "Seconds the proxy waits for the images backend to report healthy after waking (default 60 — fast, since health is just 'is Flask up + is the quantized model on disk', not a model load)" ;;
-    MFLUX_MODEL)                 echo "FLUX variant for mflux: dev (gated on HF, better quality) or schnell (ungated, faster, more artifacts on text/hands). Tested 2026-07: dev+4-bit is quality-safe and fits alongside main (28.35 of 32GB); dev+8-bit is closer to full quality but noticeably degrades main during generation (17 tok/s vs 48 baseline) and briefly spikes swap ~3GB — acceptable for infrequent use, revisit if usage grows. flux2-klein-9b is also available (FLUX.2's distilled 9B variant, mflux ships a separate mflux-generate-flux2 CLI for it, handled automatically) — NOT the default: unquantized weights are ~32GB (large one-time download) and projected 4-bit footprint (~13GB) is right at the 32GB ceiling alongside main, with no real on-Mac measurement yet. Opt in only after measuring swap/tok-s impact per CLAUDE.md's Images-service section" ;;
-    MFLUX_QUANTIZE)              echo "mflux quantization bits: 3,4,5,6, or 8. Lower = smaller/faster/safer alongside main, higher = closer to full bf16 quality. See MFLUX_MODEL hint for the 4 vs 8 bit measurements" ;;
+    MFLUX_MODEL)                 echo "Image model for mflux (default flux2-klein-4b — FLUX.2 Klein 4B, ~7.75GB bf16, 30-40s per 1024px image on M1 Max, the practical FLUX.2 size for 32GB; mflux auto-selects its separate mflux-generate-flux2 CLI from the flux2- prefix). FLUX.1 alternatives: dev (gated on HF; 2026-07 measurements: 4-bit quality-safe at 28.35 of 32GB combined, 8-bit closer to bf16 but degrades main to 17 tok/s + ~3GB swap spike during generation) or schnell (ungated, faster, more artifacts). flux2-klein-9b is UNFIT for 32GB — measured 2026-08: ~29GB at fp16, 180-240s per image, bandwidth-bound (see CLAUDE.md)" ;;
+    MFLUX_QUANTIZE)              echo "mflux quantization bits: 3,4,5,6, or 8 (default 4). Lower = smaller/faster/safer alongside main, higher = closer to full bf16 quality. See MFLUX_MODEL hint for the FLUX.1-dev 4 vs 8 bit measurements" ;;
     MFLUX_STEPS)                 echo "Inference steps per image; empty = model default (schnell=4, dev=20, flux2-klein=4)" ;;
     MFLUX_MODEL_DIR)             echo "Where ensure_mflux_model() saves the pre-quantized checkpoint (mflux-save, one-time during --apply). Subdirectory name is <MFLUX_MODEL>-q<MFLUX_QUANTIZE>" ;;
     INSTALL_VOICE)               echo "1 = run two on-demand voice backends exposed via LiteLLM as 'stt'/'tts' aliases for OpenWebUI's native voice input/output: Speech-to-Text via FluidAudio's macos-speech-server (Parakeet, Apple Neural Engine — measured zero GPU contention with the resident main LLM) and Text-to-Speech via macOS's own 'say' (faster and bug-free vs. macos-speech-server's bundled TTS, see CLAUDE.md). Opt-in (default 0) — NOT part of the model catalog, same reasoning as INSTALL_IMAGES" ;;
     VOICE_PROJECT_DIR)           echo "Where ensure_voice_project() clones+builds FluidAudio's macos-speech-server (git clone + swift build -c release, one-time during --apply, several minutes)" ;;
+    VOICE_REPO_REF)              echo "Pinned macos-speech-server commit — full 40-char SHA so it stays fetchable (default = upstream HEAD as of 2026-05-22). Same pin discipline as OMLX_REPO_REF; bump deliberately + --apply. Before bumping, check the local Wyoming-languages patch still applies (upstream PR #23 covers the same fix — if it ever merges, retire patches/macos-speech-server-wyoming-languages.patch instead of fighting the conflict)" ;;
     VOICESTT_PUBLIC_PORT)        echo "Public on-demand-proxy port for the Speech-to-Text backend (default 5006)" ;;
     VOICESTT_BACKEND_PORT)       echo "Internal port the speech-server binary binds (127.0.0.1 only, default 15006)" ;;
     IDLE_TIMEOUT_VOICESTT)       echo "Seconds before the STT backend sleeps; default -1 = never sleep. Deliberately kept warm — this backend is shared by TWO independent on-demand proxies (com.local.voicestt.proxy for LiteLLM's 'stt' HTTP alias, com.local.voicewyoming.proxy for Home Assistant), and letting either one auto-sleep it would fight the other's wake cycle. Small footprint either way (~200MB Parakeet model)" ;;
@@ -391,7 +394,7 @@ config_hint() {
     IMMICH_COLIMA_MEMORY)        echo "RAM in GiB for the Colima VM that runs immich-ml (default 6, raised from colima's stock 2GB on 2026-07-29 — that default OOM-killed the ONNX worker mid-load once a larger CLIP model was selected; see CLAUDE.md). Passed to 'colima start --memory'" ;;
     IMMICH_SESSION_USER)         echo "Dedicated, non-admin macOS account that auto-logs-in so Colima's own LaunchAgent (registered via 'brew services start colima') has a GUI/Aqua session to bootstrap into after a cold boot. Created + auto-login configured manually (sysadminctl), not by --apply — see CLAUDE.md. com.local.immich.ml's plist runs as this user (UserName), so it talks to THIS user's colima docker socket, not TARGET_USER's" ;;
     IMMICH_ML_IMAGE)             echo "Official Immich machine-learning image (ghcr.io/immich-app/immich-machine-learning). Replaces the old immich-ml-metal MLX fork — CPU-only on Apple Silicon (no Metal/Vulkan hwaccel tag exists for this image; confirmed with Immich maintainers), but the fork couldn't load Immich's multilingual (NLLB-CLIP) search models at all, so this is required for non-English Smart Search regardless of performance" ;;
-    IMMICH_ML_IMAGE_TAG)         echo "Tag suffix for IMMICH_ML_IMAGE (default 'release' = latest stable, matching Immich's own compose convention). No -cuda/-rocm/-openvino/-armnn/-rknn variant applies on Apple Silicon — plain CPU" ;;
+    IMMICH_ML_IMAGE_TAG)         echo "Tag suffix for IMMICH_ML_IMAGE (default 'release' = latest stable, matching Immich's own compose convention). DELIBERATELY floating (the one unpinned tool): the ML image must track the Portainer-managed Immich SERVER version on the other host — a pin here would silently desync on the next server update. No -cuda/-rocm/-openvino/-armnn/-rknn variant applies on Apple Silicon — plain CPU" ;;
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
     AUTOUPDATE_WEEKDAY)          echo "launchd weekday: 0=Sun 1=Mon … 6=Sat" ;;
     AUTO_ACCEPT)                 echo "1 = skip all 'press Enter to proceed' prompts in TUI" ;;
@@ -1146,9 +1149,12 @@ ensure_docling_venv() {
   fi
   /usr/bin/sudo -u "$TARGET_USER" -H "$pydir/.venv/bin/pip" install --upgrade pip wheel >/dev/null 2>&1 \
     || warn "pip upgrade inside venv returned non-zero"
-  log "pip install 'docling[ocrmac,vlm,htmlrender,easyocr]' 'docling-serve[ui]' — this downloads torch/transformers/easyocr"
+  # Pinned to the known-good live versions (2026-08 review) — this builder only
+  # runs on a fresh/missing venv, so the pins protect rebuilds from pulling an
+  # untested docling; bump both together, deliberately.
+  log "pip install 'docling[ocrmac,vlm,htmlrender,easyocr]==2.97.0' 'docling-serve[ui]==1.21.0' — this downloads torch/transformers/easyocr"
   if ! /usr/bin/sudo -u "$TARGET_USER" -H "$pydir/.venv/bin/pip" install \
-        'docling[ocrmac,vlm,htmlrender,easyocr]' 'docling-serve[ui]' >/var/log/macstudio/docling-venv-install.log 2>&1; then
+        'docling[ocrmac,vlm,htmlrender,easyocr]==2.97.0' 'docling-serve[ui]==1.21.0' >/var/log/macstudio/docling-venv-install.log 2>&1; then
     warn "docling pip install failed; see /var/log/macstudio/docling-venv-install.log"
     return 1
   fi
@@ -1182,8 +1188,11 @@ ensure_paperless_ocr_venv() {
   fi
   /usr/bin/sudo -u "$TARGET_USER" -H "$venv/bin/pip" install --upgrade pip wheel >/dev/null 2>&1 \
     || warn "pip upgrade inside paperless-ocr venv returned non-zero"
+  # Pinned to the known-good live versions (2026-08 review); rebuild-protection
+  # only — this builder skips whenever the imports above already succeed.
   if ! /usr/bin/sudo -u "$TARGET_USER" -H "$venv/bin/pip" install \
-        ocrmac pymupdf requests fonttools >/var/log/macstudio/paperless-ocr-venv-install.log 2>&1; then
+        'ocrmac==1.0.1' 'pymupdf==1.28.0' 'requests==2.34.2' 'fonttools==4.63.0' \
+        >/var/log/macstudio/paperless-ocr-venv-install.log 2>&1; then
     warn "paperless-ocr pip install failed; see /var/log/macstudio/paperless-ocr-venv-install.log"
     return 1
   fi
@@ -1329,8 +1338,9 @@ ensure_novnc_venv() {
   fi
   /usr/bin/sudo -u "$TARGET_USER" -H "$venv/bin/pip" install --upgrade pip wheel >/dev/null 2>&1 \
     || warn "pip upgrade inside novnc venv returned non-zero"
+  # websockify pinned to the known-good live version (2026-08 review).
   if ! /usr/bin/sudo -u "$TARGET_USER" -H "$venv/bin/pip" install \
-        websockify >/var/log/macstudio/novnc-venv-install.log 2>&1; then
+        'websockify==0.13.0' >/var/log/macstudio/novnc-venv-install.log 2>&1; then
     warn "novnc pip install failed; see /var/log/macstudio/novnc-venv-install.log"
     return 1
   fi
@@ -1343,28 +1353,36 @@ ensure_novnc_venv() {
 }
 
 ensure_novnc_assets() {
-  # Download the noVNC HTML5 client (static files) once — websockify serves these as
+  # Download the noVNC HTML5 client (static files) — websockify serves these as
   # its --web root so the browser gets a full VNC UI at /vnc.html. Pinned release,
-  # fetched at --apply time (not vendored in git). Idempotent: skips if vnc.html exists.
+  # fetched at --apply time (not vendored in git). Idempotent via a version stamp
+  # ($dir/.novnc-version): a bare "vnc.html exists" check would make a version
+  # bump here a silent no-op on live installs. On upgrade the new tree is staged
+  # in a temp dir and swapped in whole, so a failed download never leaves a
+  # half-extracted web root (websockify reads these per-request; no restart needed).
   { [ "${INSTALL_NOVNC:-1}" = 1 ] && [ "${INSTALL_REMOTE:-1}" = 1 ]; } || return 0
-  local ver=1.5.0 dir=/usr/local/share/novnc
-  if [ -f "$dir/vnc.html" ]; then
-    ok "noVNC web assets present at $dir"
+  local ver=1.7.0 dir=/usr/local/share/novnc
+  if [ -f "$dir/vnc.html" ] && [ "$(/bin/cat "$dir/.novnc-version" 2>/dev/null)" = "$ver" ]; then
+    ok "noVNC web assets present at $dir (v$ver)"
     return 0
   fi
   log "Downloading noVNC $ver web assets -> $dir"
-  /bin/mkdir -p "$dir"
-  local tgz; tgz=$(/usr/bin/mktemp)
+  local tgz tmpdir; tgz=$(/usr/bin/mktemp); tmpdir=$(/usr/bin/mktemp -d)
   if ! /usr/bin/curl -fsSL "https://github.com/novnc/noVNC/archive/refs/tags/v${ver}.tar.gz" -o "$tgz"; then
-    warn "could not download noVNC $ver (browser VNC will 404). Check network; re-run --apply."
-    /bin/rm -f "$tgz"; return 1
+    warn "could not download noVNC $ver (browser VNC stays on the previous version or 404s). Check network; re-run --apply."
+    /bin/rm -f "$tgz"; /bin/rm -rf "$tmpdir"; return 1
   fi
-  if /usr/bin/tar -xzf "$tgz" -C "$dir" --strip-components=1 >/dev/null 2>&1; then
-    /bin/chmod -R a+rX "$dir"
+  if /usr/bin/tar -xzf "$tgz" -C "$tmpdir" --strip-components=1 >/dev/null 2>&1 \
+      && [ -f "$tmpdir/vnc.html" ]; then
+    printf '%s' "$ver" > "$tmpdir/.novnc-version"
+    /bin/chmod -R a+rX "$tmpdir"
+    /bin/rm -rf "$dir"
+    /bin/mkdir -p "$(/usr/bin/dirname "$dir")"
+    /bin/mv "$tmpdir" "$dir"
     ok "noVNC $ver extracted to $dir"
   else
     warn "noVNC tarball extraction failed"
-    /bin/rm -f "$tgz"; return 1
+    /bin/rm -f "$tgz"; /bin/rm -rf "$tmpdir"; return 1
   fi
   /bin/rm -f "$tgz"
 }
@@ -1671,15 +1689,37 @@ ensure_python_venvs() {
     esac
   }
 
+  # _venv_pins_ok <name> <pip-spec…> — every exact "pkg==ver" spec must match the
+  # installed version (extras like [proxy] are stripped for the pip-show lookup;
+  # unpinned specs are skipped). This is what makes a pin bump in this file take
+  # effect on the next --apply: _venv_ok alone only proves the console script
+  # exists, so version drift would otherwise persist until a full venv rebuild.
+  _venv_pins_ok() {
+    local v="$vdir/$1" spec base want have; shift
+    for spec in "$@"; do
+      case "$spec" in *==*) ;; *) continue ;; esac
+      base=${spec%%==*}; base=${base%%\[*}
+      want=${spec##*==}
+      have=$(/usr/bin/sudo -u "$TARGET_USER" -H "$v/bin/pip" show "$base" 2>/dev/null \
+               | /usr/bin/awk '/^Version:/{print $2; exit}')
+      [ "$have" = "$want" ] || return 1
+    done
+    return 0
+  }
+
   # _ensure_venv <name> <check-token> <pip-args…>
   _ensure_venv() {
     local name=$1 tok=$2; shift 2
     local v="$vdir/$name"
     if _venv_ok "$name" "$tok"; then
-      ok "venv '$name' present ($v)"
-      return 0
+      if _venv_pins_ok "$name" "$@"; then
+        ok "venv '$name' present ($v)"
+        return 0
+      fi
+      log "venv '$name' present but a pinned version drifted — installing pinned versions into the existing venv (no rebuild)"
+    else
+      log "building venv '$name' at $v (downloads wheels; several minutes)"
     fi
-    log "building venv '$name' at $v (downloads wheels; several minutes)"
     if [ ! -x "$v/bin/python" ]; then
       /usr/bin/sudo -u "$TARGET_USER" -H /opt/homebrew/bin/python3.12 -m venv "$v"
     fi
@@ -1690,25 +1730,35 @@ ensure_python_venvs() {
       warn "pip install for venv '$name' failed; see $LOG_DIR/${name}-venv-install.log"
       return 1
     fi
-    if _venv_ok "$name" "$tok"; then
+    if _venv_ok "$name" "$tok" && _venv_pins_ok "$name" "$@"; then
       ok "venv '$name' built"
     else
-      warn "venv '$name' pip succeeded but check '$tok' failed"
+      warn "venv '$name' pip succeeded but check '$tok' (or a version pin) failed"
       return 1
     fi
   }
 
-  # litellm floats (no engine pin needed — it's the gateway, not the engine).
-  # The text/embed/rerank engine is oMLX (venv 'omlx', cloned+editable-installed
-  # by ensure_omlx_project() below — alpha-stage/not-on-PyPI, so it needs its
-  # own git-clone flow, not this generic pip-spec helper).
-  _ensure_venv litellm bin:litellm       'litellm[proxy]'
+  # litellm is PINNED exactly (2026-08 review): three serious 2026 proxy CVEs
+  # (worst: pre-auth SQLi, CVSS 9.3, fixed in 1.83.7) plus a real PyPI
+  # supply-chain incident (compromised 1.82.7/1.82.8 live for ~40 min on
+  # 2026-03-24) make an unpinned gateway venv the stack's biggest exposure —
+  # a fresh install/rebuild would blindly pull that day's latest. Bump
+  # deliberately, then re-verify the rerank alias (LiteLLM's Infinity
+  # transformer shapes are this repo's historical breakage point) and the
+  # thinking-toggle extra_body passthrough. The text/embed/rerank engine is
+  # oMLX (venv 'omlx', cloned+editable-installed by ensure_omlx_project()
+  # below — alpha-stage/not-on-PyPI, so it needs its own git-clone flow, not
+  # this generic pip-spec helper).
+  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.96.1'
 
   # FLUX image generation: mflux (MLX-native, no PyTorch/ComfyUI) + flask for the
   # thin OpenAI-compatible front end in mflux-server.py. On-demand, catalog-
-  # independent (see CLAUDE.md) — only built when INSTALL_IMAGES=1.
+  # independent (see CLAUDE.md) — only built when INSTALL_IMAGES=1. Pinned
+  # (2026-08): upstream moved to a community org (mflux-community/mflux, PyPI
+  # name unchanged) and is adding model families + deprecating CLI flags fast —
+  # exactly the churn a per-request shell-out server must not absorb silently.
   if [ "${INSTALL_IMAGES:-0}" = 1 ]; then
-    _ensure_venv mflux bin:mflux-generate 'mflux' 'flask' 'huggingface_hub[cli]'
+    _ensure_venv mflux bin:mflux-generate 'mflux==0.18.1' 'flask==3.1.3' 'huggingface_hub[cli]==1.22.0'
   fi
 }
 
@@ -1771,6 +1821,7 @@ ensure_voice_project() {
   # boundary silence-dropping bug).
   [ "${INSTALL_VOICE:-0}" = 1 ] || return 0
   local dir="${VOICE_PROJECT_DIR:-/Users/mac/projects/macos-speech-server}"
+  local ref="${VOICE_REPO_REF:-ad16a6a9d5ce7d36a4c83cab32f64db83d4bfbec}"
   local port="${VOICESTT_BACKEND_PORT:-15006}"
   local wport="${VOICE_WYOMING_BACKEND_PORT:-15008}"
 
@@ -1787,10 +1838,29 @@ ensure_voice_project() {
       warn "git clone of macos-speech-server failed; see $LOG_DIR/voicestt-clone.log"
       return 1
     fi
-  else
-    /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" pull --ff-only \
-      >"$LOG_DIR/voicestt-clone.log" 2>&1 \
-      || warn "git pull for macos-speech-server failed (continuing with existing checkout); see $LOG_DIR/voicestt-clone.log"
+  fi
+
+  # Pin the checkout at VOICE_REPO_REF — same discipline as OMLX_REPO_REF
+  # (previously this tracked the default branch via `git pull`, making --apply
+  # network-dependent and able to break the local Wyoming patch below on any
+  # upstream push). Tracked files are reset FIRST so an already-applied patch
+  # can't block the checkout; the patch is re-applied right below, so this
+  # stays idempotent. When already on the pin (the common case) this needs no
+  # network at all. The targeted fetch requires a full 40-char SHA (GitHub
+  # only serves reachable-SHA fetches by full object name).
+  /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" checkout -- . >/dev/null 2>&1 || true
+  local cur; cur=$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" rev-parse HEAD 2>/dev/null || echo none)
+  if [ "$cur" != "$ref" ]; then
+    /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" fetch --depth 1 origin "$ref" \
+        >>"$LOG_DIR/voicestt-clone.log" 2>&1 \
+      || /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" fetch origin \
+        >>"$LOG_DIR/voicestt-clone.log" 2>&1 || true
+    if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" checkout --detach "$ref" \
+          >>"$LOG_DIR/voicestt-clone.log" 2>&1; then
+      ok "macos-speech-server pinned at ${ref:0:12} (VOICE_REPO_REF)"
+    else
+      warn "could not check out VOICE_REPO_REF=${ref:0:12} (continuing with existing checkout ${cur:0:12}); see $LOG_DIR/voicestt-clone.log"
+    fi
   fi
 
   # Local patch: upstream hardcodes "en" as the ONLY language it ever
@@ -1866,8 +1936,8 @@ YAML
   # Always invoke swift build rather than skipping when a binary already
   # exists — Swift Package Manager's build is incremental (a no-op re-run
   # takes seconds), and skipping unconditionally would silently leave a
-  # stale binary in place after a git pull or a patch-file change to the
-  # source (found the hard way while developing the language patch above).
+  # stale binary in place after a VOICE_REPO_REF bump or a patch-file change
+  # to the source (found the hard way while developing the language patch above).
   local bin_before; bin_before=$(hash_file "$dir/.build/release/speech-server")
   log "building macos-speech-server (swift build -c release; incremental after the first run)"
   if /usr/bin/sudo -u "$TARGET_USER" -H /bin/sh -c "cd '$dir' && swift build -c release" \
