@@ -352,7 +352,7 @@ config_hint() {
     OMLX_REPO)                   echo "Git URL of oMLX (jundot/omlx), cloned+editable-installed into OMLX_PROJECT_DIR" ;;
     OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.6.0, alpha-stage) — bump deliberately + --apply, STABLE tags only (v0.5.2/3 fixed resident-process memory leaks, v0.5.4 added ~2x Gemma-4 decode + 4x embedding batching, v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; expect one SSD-prefix-cache cold start per model after a bump). Mirrors MLXVLM_VERSION's old pin discipline" ;;
     OMLX_PROJECT_DIR)            echo "Where ensure_omlx_project() clones+builds oMLX (git clone + pip install -e, one-time + on ref bump during --apply)" ;;
-    OMLX_MODEL_DIR)              echo "--model-dir symlink farm (mlx-<catalog-id> per downloaded row) that makes every model — main AND embed/rerank — discoverable by the one resident oMLX process" ;;
+    OMLX_MODEL_DIR)              echo "--model-dir symlink farm (one <org>--<name> HF-repo entry per downloaded row) that makes every model — main AND embed/rerank — discoverable by the one resident oMLX process under its real HF repo name" ;;
     OMLX_MEMORY_GUARD_GB)        echo "oMLX's soft RAM ceiling (--memory-guard-gb) — matches the project's 30GB wired-memory hard rule. oMLX has no hard --max-kv-size-equivalent flag" ;;
     OMLX_SSD_CACHE_DIR)          echo "oMLX's paged-prefix SSD cache directory (--paged-ssd-cache-dir) — gives ~15x TTFT on repeated long prompts. Empty = disabled" ;;
     OMLX_SSD_CACHE_MAX_SIZE)     echo "Max size of the SSD paged-prefix cache (--paged-ssd-cache-max-size), e.g. 20GB" ;;
@@ -1408,32 +1408,60 @@ catalog_engine() { catalog_field "$1" 4; }
 catalog_gb()     { catalog_field "$1" 6; }
 
 # ensure_omlx_model_dir — build/refresh the --model-dir symlink farm. EVERY
-# omlx-engine catalog row that's fully downloaded gets a mlx-<id> entry —
-# including gemma4 rows that would auto-discover fine via HF-cache scanning
-# alone — so served-name is ALWAYS "mlx-<catalog-id>", independent of
-# model_discovery.py's _is_hf_cache_mlx_compatible() heuristic (alpha-stage;
-# this is exactly the heuristic that silently skipped raw BAAI/* checkpoints
-# in the sandboxed eval). Symlinking ALL downloaded rows (not just the
+# omlx-engine catalog row that's fully downloaded gets an entry named after
+# its HF repo in oMLX's own org--name encoding ("mlx-community--gemma-4-…",
+# "BAAI--bge-m3") — served names are ALWAYS real HF repo names, never
+# self-generated ids (user rule, 2026-08-16; previously "mlx-<catalog-id>").
+# The farm is still required despite HF-cache auto-discovery being on:
+# model_discovery.py's _is_hf_cache_mlx_compatible() heuristic (alpha-stage)
+# silently skips raw BAAI/* checkpoints in the cache, and a repo's cache can
+# be split across snapshots (the farm entry unions them). For repos the cache
+# scan DOES also find (mlx-community/*), the farm entry carries the IDENTICAL
+# id, so oMLX's discovery merge dedupes them into ONE served entry (verified
+# in model_discovery.py: duplicate model_ids are dropped with a log line) —
+# no more double-listed gemma. Symlinking ALL downloaded rows (not just the
 # currently active ALIAS_MAIN/EMBED/RERANK) is what lets set_model_alias
 # switch embed/rerank to an already-downloaded model WITHOUT restarting.
+# After building, stale entries (old-scheme names, removed/undownloaded rows)
+# are pruned — but ONLY if they contain no regular files: symlinks are ours
+# to delete, real weights never are (a hand-placed 24.6GB Ornith nest was
+# found here 2026-08-16 whose HF-cache entries were empty stubs — pruning
+# real files would have destroyed the only copy).
 ensure_omlx_model_dir() {
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   local root="${OMLX_MODEL_DIR:-$TARGET_HOME/.cache/omlx-models}"
   local hf="${HF_CACHE_DIR:-$TARGET_HOME/.cache/huggingface}"
   /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$root"
   [ -f "$CATALOG_FILE" ] || return 0
-  local id repo role engine rest any=0
+  local id repo role engine rest any=0 expected=" "
   while IFS='|' read -r id repo role engine rest; do
     case "$id" in ''|\#*) continue ;; esac
     [ "$engine" = omlx ] || continue
     [ "$(model_status "$repo")" = ok ] || continue
     _omlx_symlink_one "$id" "$repo" "$root" "$hf" && any=1
+    expected="$expected${repo//\//--} "
   done <"$CATALOG_FILE"
   [ "$any" = 1 ] || dbg "no downloaded omlx-engine catalog rows yet"
+  # Prune farm entries we no longer own (old mlx-<catalog-id> names, rows that
+  # were removed or whose download vanished). Safety rule: an entry containing
+  # ANY regular file is never touched — our entries are pure symlink dirs, so
+  # real files mean a human put weights here (warn instead; see header comment).
+  local entry name
+  for entry in "$root"/*/; do
+    [ -d "$entry" ] || continue
+    name=$(/usr/bin/basename "$entry")
+    case "$expected" in *" $name "*) continue ;; esac
+    if /usr/bin/find "$entry" -type f 2>/dev/null | /usr/bin/grep -q .; then
+      warn "omlx model-dir: NOT pruning '$name' — contains real files (not our symlinks); remove manually if unwanted"
+      continue
+    fi
+    /usr/bin/sudo -u "$TARGET_USER" -H /bin/rm -rf "$entry"
+    ok "omlx model-dir: pruned stale entry '$name'"
+  done
 }
 
 # _omlx_symlink_one <catalog-id> <hf-repo> <model-dir-root> <hf-cache-dir>
-# Wipes and rebuilds ONE mlx-<id> dir from the UNION of every snapshot
+# Wipes and rebuilds ONE <org>--<name> dir from the UNION of every snapshot
 # directory under the repo's HF-cache entry — not just what refs/main points
 # at — because a repo's cache CAN be split across snapshots (observed for
 # BAAI/bge-m3 in the sandboxed eval: one snapshot had config.json+tokenizer
@@ -1443,7 +1471,8 @@ _omlx_symlink_one() {
   local id=$1 repo=$2 root=$3 hf=$4
   local snaproot="$hf/hub/models--${repo//\//--}/snapshots"
   [ -d "$snaproot" ] || return 1
-  local target="$root/mlx-$id"
+  local served="${repo//\//--}"
+  local target="$root/$served"
   /usr/bin/sudo -u "$TARGET_USER" -H /bin/rm -rf "$target"
   /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$target"
   local snap f base n
@@ -1456,7 +1485,7 @@ _omlx_symlink_one() {
     done
   done
   n=$(/usr/bin/find "$target" -type l 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')
-  ok "omlx model-dir: mlx-$id -> $repo ($n files)"
+  ok "omlx model-dir: $served ($id, $n files)"
 }
 
 # ensure_omlx_settings — pre-seed OMLX_MAX_CONTEXT_WINDOW for the ACTIVE main
@@ -1469,9 +1498,10 @@ _omlx_symlink_one() {
 # once at startup and only ever rewritten by oMLX's own admin API, so it's
 # safe for us to own via a targeted merge). Shape confirmed by reading
 # omlx/model_settings.py: {"version": 1, "models": {"<model_id>": {...}}} —
-# keyed by the resolved model id, which is the SAME mlx-<catalog-id>
-# served-name the --model-dir symlink farm already uses (confirmed via the
-# server's own "Discovered model: mlx-<id>" startup log lines). oMLX has no
+# keyed by the resolved model id, which is the SAME <org>--<name> HF-repo
+# served-name the --model-dir symlink farm uses (and that oMLX's own HF-cache
+# discovery produces for the same repo). A legacy "mlx-<catalog-id>" key from
+# the pre-2026-08-16 naming scheme is dropped on write. oMLX has no
 # --max-kv-size CLI equivalent, only --memory-guard-gb (soft RAM ceiling) +
 # this per-model cap.
 ensure_omlx_settings() {
@@ -1479,7 +1509,9 @@ ensure_omlx_settings() {
   [ -n "${OMLX_MAX_CONTEXT_WINDOW:-}" ] || return 0
   local id="${ALIAS_MAIN:-}"
   [ -n "$id" ] || return 0
-  local served="mlx-$id"
+  local repo; repo=$(catalog_repo "$id")
+  [ -n "$repo" ] || { dbg "omlx settings: '$id' has no catalog repo yet"; return 0; }
+  local served="${repo//\//--}"
   local dir="${TARGET_HOME:-/Users/mac}/.omlx"
   local file="$dir/model_settings.json"
   /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$dir"
@@ -1487,6 +1519,7 @@ ensure_omlx_settings() {
   local tmp; tmp=$(/usr/bin/mktemp)
   /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env \
     OMLX_SETTINGS_FILE="$file" OMLX_MODEL_KEY="$served" OMLX_CTX="$OMLX_MAX_CONTEXT_WINDOW" \
+    OMLX_LEGACY_KEY="mlx-$id" \
     /usr/bin/python3 - >"$tmp" <<'PY'
 import json, os
 path, key, ctx = os.environ["OMLX_SETTINGS_FILE"], os.environ["OMLX_MODEL_KEY"], int(os.environ["OMLX_CTX"])
@@ -1496,6 +1529,9 @@ except (OSError, ValueError):
     data = {}
 data.setdefault("version", 1)
 data.setdefault("models", {})
+legacy = os.environ.get("OMLX_LEGACY_KEY", "")
+if legacy and legacy != key:
+    data["models"].pop(legacy, None)
 data["models"].setdefault(key, {})
 data["models"][key]["max_context_window"] = ctx
 print(json.dumps(data, indent=2))
@@ -2017,15 +2053,16 @@ render_litellm_config() {
     return 0
   fi
   # Every model — main AND embed/rerank — is served by the SAME resident omlx
-  # process now, discoverable via its uniform mlx-<catalog-id> --model-dir
-  # entry (ensure_omlx_model_dir()). Served names are a deterministic function
-  # of the catalog id, not a transform of the HF repo string.
-  local main_served="mlx-${ALIAS_MAIN}"
+  # process now, discoverable via its --model-dir farm entry
+  # (ensure_omlx_model_dir()). Served names are the HF repo in oMLX's own
+  # org--name encoding ("mlx-community--gemma-4-…", "BAAI--bge-m3") — real
+  # repo names only, never self-generated ids (user rule, 2026-08-16).
+  local main_served="${main_repo//\//--}"
   embed_repo=$(catalog_repo "${ALIAS_EMBED:-}")
   rerank_repo=$(catalog_repo "${ALIAS_RERANK:-}")
   local embed_served="" rerank_served=""
-  [ -n "$embed_repo" ]  && embed_served="mlx-${ALIAS_EMBED}"
-  [ -n "$rerank_repo" ] && rerank_served="mlx-${ALIAS_RERANK}"
+  [ -n "$embed_repo" ]  && embed_served="${embed_repo//\//--}"
+  [ -n "$rerank_repo" ] && rerank_served="${rerank_repo//\//--}"
 
   # Per-model DEFAULT sampling (schema v7, cols 14-17) for the active main model.
   # We inject per-model default sampling into the LiteLLM alias; clients can
@@ -2103,7 +2140,7 @@ render_litellm_config() {
       emit_model main-fast "$main_served" "${MAIN_BACKEND_PORT:-18000}" "$m_temp" "$m_topp" "$m_freq" "$m_pres" "" off "${GEMMA_TOP_K:-64}"
     fi
     # Embeddings + reranking now served by the SAME resident omlx process as
-    # main (mlx-<id> served-name, MAIN_BACKEND_PORT). 'embed' uses the generic
+    # main (<org>--<name> served-name, MAIN_BACKEND_PORT). 'embed' uses the generic
     # 'openai/<served-name>' provider — the SAME mechanism 'main'/'image' use —
     # confirmed working (verified live 2026-07-13: 1024-dim vectors from
     # /v1/embeddings). 'rerank' CANNOT use a bare 'openai/' provider — LiteLLM's
@@ -2922,11 +2959,16 @@ set_model_alias() {
     # above already repointed the alias at the new served-name on the SAME
     # running process. Defensive fallback (oMLX rescanning --model-dir for a
     # NEW entry without a restart is unverified): probe /v1/models and only
-    # restart if the new served-name genuinely isn't listed yet.
-    local _served="mlx-$id"
+    # restart if the new served-name genuinely isn't listed yet. The probe
+    # MUST send the API key — oMLX enforces OMLX_API_KEY on /v1/models too
+    # (confirmed 401 without it, 2026-08-16; an unauthenticated probe would
+    # silently force a restart on EVERY embed/rerank switch).
+    local _served_repo; _served_repo=$(catalog_repo "$id")
+    local _served="${_served_repo//\//--}"
     if daemon_running com.local.omlx.main \
-       && ! /usr/bin/curl -fsS "http://127.0.0.1:${MAIN_BACKEND_PORT:-18000}/v1/models" 2>/dev/null \
-            | /usr/bin/grep -q "\"$_served\""; then
+       && ! /usr/bin/curl -fsS -H "Authorization: Bearer ${OMLX_API_KEY:-dummy}" \
+            "http://127.0.0.1:${MAIN_BACKEND_PORT:-18000}/v1/models" 2>/dev/null \
+            | /usr/bin/grep -qF "\"$_served\""; then
       warn "omlx.main doesn't list '$_served' yet — restarting to pick it up"
       /bin/launchctl kickstart -k system/com.local.omlx.main >/dev/null 2>&1 \
         && ok "restarted com.local.omlx.main"
