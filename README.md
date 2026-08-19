@@ -135,7 +135,7 @@ Switching `embed`/`rerank` to an already-downloaded model does **not** restart
 the daemon.
 
 > **Connecting apps?** See **[INTEGRATIONS.md](INTEGRATIONS.md)** for the
-> endpoint reference and ready-to-paste configs (Open WebUI, paperless-gpt,
+> endpoint reference and ready-to-paste configs (Open WebUI, paperless-ngx,
 > OpenAI/Anthropic SDKs, vision/OCR).
 
 ## Quick start

@@ -1,0 +1,57 @@
+diff --git a/omlx/server.py b/omlx/server.py
+index 332ae689..16a68aca 100644
+--- a/omlx/server.py
++++ b/omlx/server.py
+@@ -3578,6 +3578,52 @@ async def create_chat_completion(
+         # Gemma 4 drops required params that lack descriptions — enrich them
+         if tools_for_template and "gemma" in (resolved_model or "").lower():
+             tools_for_template = enrich_tool_params_for_gemma4(tools_for_template)
++
++        # Honour tool_choice="required"/"any" and the named-function object.
++        # Only `tool_choice == "none"` is inspected above; every other value is
++        # silently downgraded to "auto", so a model that prefers prose (Gemma 4
++        # on short prompts) returns no tool call at all. Clients that hard-
++        # require one -- llama-index's chat_with_tools(tool_required=True), used
++        # by paperless-ngx v3 AI suggestions -- then fail with "Expected at
++        # least one tool call, but got 0 tool calls". Reuse the same prompt-
++        # injection degrade path that response_format already uses above.
++        forced_tool_name = None
++        force_tool_call = False
++        if tools_for_template and not tools_disabled:
++            tc = request.tool_choice
++            if isinstance(tc, str):
++                force_tool_call = tc in ("required", "any")
++            elif isinstance(tc, dict):
++                tc_fn = tc.get("function")
++                if isinstance(tc_fn, dict):
++                    forced_tool_name = tc_fn.get("name")
++                forced_tool_name = forced_tool_name or tc.get("name")
++                force_tool_call = bool(forced_tool_name) or tc.get("type") in (
++                    "any",
++                    "required",
++                )
++        if force_tool_call:
++            if forced_tool_name:
++                tool_instruction = (
++                    "You MUST answer by calling the function "
++                    f"`{forced_tool_name}`. Do not reply with prose, "
++                    "explanations or markdown -- emit only that function call."
++                )
++            else:
++                available = ", ".join(
++                    f"`{t['function']['name']}`"
++                    for t in tools_for_template
++                    if isinstance(t.get("function"), dict)
++                    and t["function"].get("name")
++                )
++                tool_instruction = (
++                    "You MUST answer by calling one of the provided functions"
++                    + (f" ({available})" if available else "")
++                    + ". Do not reply with prose, explanations or markdown -- "
++                    "emit only the function call."
++                )
++            messages = _inject_json_instruction(messages, tool_instruction)
++
+         await _ensure_tokenizer_for_system_probe(engine, messages)
+         messages = prepare_system_messages_for_template(
+             messages,
