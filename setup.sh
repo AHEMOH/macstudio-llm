@@ -1639,6 +1639,15 @@ ensure_omlx_project() {
     return 1
   fi
 
+  # Hash omlx/server.py as the RUNNING daemon currently has it — i.e. WITH the
+  # local patch — before the reset further down wipes it. Comparing against the
+  # post-`git apply` hash then only differs on a real change (fresh clone, ref
+  # bump, edited patch file). Taking this hash after the reset would compare
+  # clean-vs-patched every time and restart the daemon (30-60 s model reload) on
+  # every single --apply.
+  local srv_before=""
+  [ -f "$dir/omlx/server.py" ] && srv_before=$(hash_file "$dir/omlx/server.py")
+
   if [ ! -d "$dir/.git" ]; then
     if [ ! -x /usr/bin/git ]; then
       warn "git not found; cannot clone omlx"
@@ -1686,7 +1695,6 @@ ensure_omlx_project() {
   # patch needs no reinstall, only a daemon restart (handled via `changed`).
   local omlx_patch="$REPO_DIR/patches/omlx-honor-tool-choice.patch"
   if [ -f "$omlx_patch" ] && [ -f "$dir/omlx/server.py" ]; then
-    local srv_before; srv_before=$(hash_file "$dir/omlx/server.py")
     if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" apply "$omlx_patch" \
           >"$LOG_DIR/omlx-patch.log" 2>&1; then
       ok "applied oMLX tool_choice patch"
