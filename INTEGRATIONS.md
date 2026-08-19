@@ -1,7 +1,7 @@
 # Connecting clients & services
 
 How to point apps at this server, what the endpoints look like, and ready-to-paste
-configs for the common clients (Home Assistant, Open WebUI, paperless-gpt, the
+configs for the common clients (Home Assistant, Open WebUI, paperless-ngx, the
 OpenAI/Anthropic SDKs, embeddings/RAG). For *what the server is* and *how to
 install/operate it*, see [README.md](README.md).
 
@@ -384,13 +384,94 @@ usual while the on-demand proxy starts it.
 
 ---
 
-## paperless-gpt (and paperless-ngx AI)
+## paperless-ngx — native AI features (v3.0+)
 
-> **For OCR, prefer the Apple-Vision worker below** (next section) — it supersedes the
-> `OCR_PROVIDER=llm` path here for OCR quality. Keep paperless-gpt if you also want
-> LLM-generated titles/tags.
+**paperless-ngx v3.0.0** (2026-07-22) added AI features natively, so the third-party
+`paperless-gpt` container is no longer needed for titles/tags. They speak plain
+OpenAI protocol (`openai-like`), which makes this gateway a drop-in backend — nothing
+on the Mac needs changing, and no document content leaves the LAN.
 
-Point the OpenAI provider at the gateway for LLM tasks (titles/tags):
+Two independent tiers:
+
+| Tier | What you get | Switched on by |
+|---|---|---|
+| **Suggestions** | A "Suggest" control per document: title, correspondent, document type, tags, storage path, dates. Opt-in per request; the classic classifier keeps working alongside it. | `PAPERLESS_AI_ENABLED` + `PAPERLESS_AI_LLM_BACKEND` |
+| **Chat / RAG** | Document chat, similar-document retrieval, and suggestions grounded in real examples from your library | additionally `PAPERLESS_AI_LLM_EMBEDDING_BACKEND` + a one-time index build |
+
+Add to the **`webserver`** service's `environment:` (that one container also runs the
+Celery worker and scheduler, so this is the only place it belongs). Quote every value —
+Compose trips over bare booleans:
+
+```yaml
+environment:
+  PAPERLESS_AI_ENABLED: "true"
+  PAPERLESS_AI_LLM_ALLOW_INTERNAL_ENDPOINTS: "true"    # must stay true for a LAN endpoint
+  # text LLM — suggestions + chat answers
+  PAPERLESS_AI_LLM_BACKEND: "openai-like"              # NOT "openai" — no such value
+  PAPERLESS_AI_LLM_ENDPOINT: "http://mac.home.arpa:11434/v1"
+  PAPERLESS_AI_LLM_MODEL: "main-fast"                  # thinking-off: fast, clean JSON
+  PAPERLESS_AI_LLM_API_KEY: "sk-local"                 # dummy; also used for embeddings
+  PAPERLESS_AI_LLM_CONTEXT_SIZE: "32768"               # default 8192 is needlessly tight
+  PAPERLESS_AI_LLM_REQUEST_TIMEOUT: "300"              # default 120 s is too short
+  PAPERLESS_AI_LLM_OUTPUT_LANGUAGE: "German"           # free text, goes into the prompt
+  # embeddings — vector index for chat + similar documents
+  PAPERLESS_AI_LLM_EMBEDDING_BACKEND: "openai-like"
+  PAPERLESS_AI_LLM_EMBEDDING_ENDPOINT: "http://mac.home.arpa:11434/v1"
+  PAPERLESS_AI_LLM_EMBEDDING_MODEL: "embed"            # BGE-M3, 1024-dim, multilingual
+  PAPERLESS_AI_LLM_EMBEDDING_CHUNK_SIZE: "1024"
+  PAPERLESS_LLM_INDEX_TASK_CRON: "10 2 * * *"          # note: no AI_ in this one
+```
+
+Then build the vector index **once** (`docker compose exec webserver …`, or Portainer →
+Containers → the paperless container → Console):
+
+```sh
+document_llmindex rebuild
+```
+
+It reads every document, chunks it, and embeds the chunks via `embed` on the Mac — run it
+in the evening on a large library. `PAPERLESS_LLM_INDEX_TASK_CRON` keeps it current after
+that. Other subcommands: `update` (incremental, what the cron task runs), `compact`,
+`migrate`. It's a positional subcommand, **not** a `--rebuild` flag.
+
+**Things that cost people an hour:**
+
+- **The database beats the environment.** Any AI field filled in under *Settings →
+  Application Configuration* silently overrides the `PAPERLESS_AI_*` env vars. Leave
+  them empty if you configure via Compose.
+- **`PAPERLESS_AI_LLM_EMBEDDING_API_KEY` does not exist** — embeddings reuse
+  `PAPERLESS_AI_LLM_API_KEY`. Nor does `PAPERLESS_AI_LLM_URL`; it's `..._ENDPOINT`.
+- **`rerank` is unused here** — paperless has no reranker hook. That alias stays for the
+  docling/Qdrant RAG pipeline.
+- **Embedding dimensions are probed at runtime** (v3.0 replaced the beta's FAISS store
+  with sqlite-vec), so `embed`'s 1024 dims need no declaration. Changing the embedding
+  model later triggers an automatic index rebuild.
+- **Keep the index off network storage.** It's a SQLite file under the `data` volume;
+  SQLite locking over NFS/SMB is trouble.
+- **`mac.home.arpa` must resolve inside the container.** If `curl -s
+  http://mac.home.arpa:11434/v1/models` fails from the container's console, use the Mac's
+  LAN IP in both `..._ENDPOINT` vars.
+- **`PAPERLESS_OCR_PAGES` bounds what the AI sees** for documents paperless OCRs itself
+  (e-mail attachments, text-less scans) — the AI only ever reads indexed text. Documents
+  arriving through the Apple-Vision worker below carry a full text layer, so they are
+  unaffected.
+
+> **Suggestions need `patches/omlx-honor-tool-choice.patch`.** paperless asks for
+> suggestions via forced tool calling (`tool_choice: required`). Stock oMLX honours only
+> `tool_choice: none` and silently downgrades everything else to `auto`, so Gemma 4
+> answers in prose and paperless fails with a misleading 400 *"Invalid AI configuration"*
+> (the real error, `Expected at least one tool call`, only shows in the paperless
+> container log). `setup.sh --apply` applies the patch automatically. **Chat, RAG and
+> embeddings are unaffected** and work on stock oMLX.
+
+*Fallback with no Mac dependency:* `PAPERLESS_AI_LLM_EMBEDDING_BACKEND: "huggingface"`
+and drop `..._EMBEDDING_MODEL` — paperless downloads a small model into the `data` volume
+and runs it on the Docker host's CPU. Weaker on German/Russian, but self-contained.
+
+### paperless-gpt (superseded)
+
+Only worth running if you want its automation on top of the native features. Point its
+OpenAI provider at the gateway:
 
 ```yaml
 environment:
@@ -400,10 +481,9 @@ environment:
   OPENAI_BASE_URL: http://mac.home.arpa:11434/v1
 ```
 
-For OCR, use the **paperless-ngx Apple-Vision OCR** worker (next section) — it supersedes
-paperless-gpt's `OCR_PROVIDER=llm` path. If you insist on the `OCR_PROVIDER=llm` route, point
-its `VISION_LLM_MODEL` at `main-fast` (the multimodal VLM); there is no dedicated OCR gateway
-alias to enable.
+For OCR, use the **Apple-Vision worker** below rather than paperless-gpt's
+`OCR_PROVIDER=llm` path. If you insist on that route, point `VISION_LLM_MODEL` at
+`main-fast` (the multimodal VLM); there is no dedicated OCR gateway alias.
 
 ---
 

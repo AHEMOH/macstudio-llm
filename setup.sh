@@ -1654,6 +1654,10 @@ ensure_omlx_project() {
     changed=1
   else
     local head_before; head_before=$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" rev-parse HEAD 2>/dev/null)
+    # Reset tracked files FIRST so the local tool_choice patch below can't block
+    # the checkout (same discipline as ensure_voice_project's Wyoming patch —
+    # the patch is re-applied right after, so this stays idempotent).
+    /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" checkout -- . >/dev/null 2>&1 || true
     /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" fetch --tags origin "$ref" \
       >"$LOG_DIR/omlx-clone.log" 2>&1 \
       || warn "git fetch for omlx failed (continuing with existing checkout); see $LOG_DIR/omlx-clone.log"
@@ -1661,6 +1665,35 @@ ensure_omlx_project() {
       >>"$LOG_DIR/omlx-clone.log" 2>&1 \
       || warn "git checkout $ref for omlx failed; see $LOG_DIR/omlx-clone.log"
     [ "$head_before" != "$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" rev-parse HEAD 2>/dev/null)" ] && changed=1
+  fi
+
+  # Local patch: oMLX inspects `tool_choice` at exactly ONE place
+  # (server.py: `tools_disabled = request.tool_choice == "none"`), so
+  # "required"/"any" and the named-function object are silently downgraded to
+  # "auto". Gemma 4 then answers short prompts in prose and returns NO tool
+  # call, which breaks every client that hard-requires one — measured
+  # 2026-08-19 against paperless-ngx v3 AI suggestions (llama-index
+  # `chat_with_tools(tool_required=True)` → `ValueError: Expected at least one
+  # tool call`, surfaced in the UI as a misleading 400 "Invalid AI
+  # configuration"). The patch reuses oMLX's OWN prompt-injection degrade path
+  # (the one `response_format` already falls back to) and touches only
+  # create_chat_completion — NOT create_response, which has no `tools_disabled`
+  # in scope. Verified: required + named tool_choice now emit tool_calls, while
+  # bare (no tool_choice) and `none` keep their previous behaviour.
+  # Upstream fixed the identical gap for the Anthropic endpoint (jundot/omlx#1258,
+  # closed completed 2026-07-07) but never for OpenAI chat — retire this patch
+  # if that lands. oMLX is installed editable (`pip install -e`), so a source
+  # patch needs no reinstall, only a daemon restart (handled via `changed`).
+  local omlx_patch="$REPO_DIR/patches/omlx-honor-tool-choice.patch"
+  if [ -f "$omlx_patch" ] && [ -f "$dir/omlx/server.py" ]; then
+    local srv_before; srv_before=$(hash_file "$dir/omlx/server.py")
+    if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" apply "$omlx_patch" \
+          >"$LOG_DIR/omlx-patch.log" 2>&1; then
+      ok "applied oMLX tool_choice patch"
+    else
+      warn "failed to apply oMLX tool_choice patch; see $LOG_DIR/omlx-patch.log (continuing unpatched — clients that force a tool call, e.g. paperless-ngx AI suggestions, will fail)"
+    fi
+    [ "$srv_before" != "$(hash_file "$dir/omlx/server.py")" ] && changed=1
   fi
 
   local pyproject="$dir/pyproject.toml"
