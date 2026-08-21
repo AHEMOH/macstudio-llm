@@ -220,7 +220,7 @@ config_default() {
     LLM_REQUEST_TIMEOUT)         echo 3600 ;;
     TEXT_ENGINE)                 echo omlx ;;
     OMLX_REPO)                   echo https://github.com/jundot/omlx ;;
-    OMLX_REPO_REF)               echo v0.6.0 ;;
+    OMLX_REPO_REF)               echo v0.6.3rc2 ;;
     OMLX_PROJECT_DIR)            echo /Users/mac/projects/omlx ;;
     OMLX_MODEL_DIR)              echo /Users/mac/.cache/omlx-models ;;
     OMLX_MEMORY_GUARD_GB)        echo 30 ;;
@@ -350,7 +350,7 @@ config_hint() {
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
     TEXT_ENGINE)                 echo "Engine serving 'main'/'embed'/'rerank': omlx (UNIFIED text+images+embed+rerank in ONE process, SSD paged-prefix-cache, continuous batching). The only supported engine" ;;
     OMLX_REPO)                   echo "Git URL of oMLX (jundot/omlx), cloned+editable-installed into OMLX_PROJECT_DIR" ;;
-    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.6.0, alpha-stage) — bump deliberately + --apply, STABLE tags only (v0.5.2/3 fixed resident-process memory leaks, v0.5.4 added ~2x Gemma-4 decode + 4x embedding batching, v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; expect one SSD-prefix-cache cold start per model after a bump). Mirrors MLXVLM_VERSION's old pin discipline" ;;
+    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.6.3rc2, alpha-stage) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 pinned deliberately 2026-08-21 as the DELIBERATE RC exception: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch, gemma4 regression-tested clean; expect one SSD-prefix-cache cold start per model after a bump). Mirrors MLXVLM_VERSION's old pin discipline" ;;
     OMLX_PROJECT_DIR)            echo "Where ensure_omlx_project() clones+builds oMLX (git clone + pip install -e, one-time + on ref bump during --apply)" ;;
     OMLX_MODEL_DIR)              echo "--model-dir symlink farm (one <org>--<name> HF-repo entry per downloaded row) that makes every model — main AND embed/rerank — discoverable by the one resident oMLX process under its real HF repo name" ;;
     OMLX_MEMORY_GUARD_GB)        echo "oMLX's soft RAM ceiling (--memory-guard-gb) — matches the project's 30GB wired-memory hard rule. oMLX has no hard --max-kv-size-equivalent flag" ;;
@@ -1622,14 +1622,14 @@ ensure_omlx_project() {
   # $VENV_DIR/omlx (matches mlxvlm/litellm/infinity/mflux — every wrapper execs
   # "$VENV_DIR/<name>/bin/...", zero special-casing needed).
   #
-  # OMLX_REPO_REF is a PINNED TAG (v0.6.0), not a floating branch — mirrors
+  # OMLX_REPO_REF is a PINNED TAG (v0.6.3rc2), not a floating branch — mirrors
   # MLXVLM_VERSION's old pin discipline. Unlike ensure_voice_project's
   # `git pull --ff-only` (tracks a moving branch), we `fetch` + explicit
   # `checkout "$ref"` every run — a no-op when already on that tag.
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   local dir="${OMLX_PROJECT_DIR:-$TARGET_HOME/projects/omlx}"
   local repo="${OMLX_REPO:-https://github.com/jundot/omlx}"
-  local ref="${OMLX_REPO_REF:-v0.6.0}"
+  local ref="${OMLX_REPO_REF:-v0.6.3rc2}"
   local vdir="${VENV_DIR:-/Users/mac/.macstudio-venvs}/omlx"
   local changed=0
 
@@ -3499,7 +3499,7 @@ menu_models() {
 menu_updates() {
   load_config
   printf "\n${C_BOLD}── Check for updates (read-only) ──────────────${C_RST}\n"
-  printf "oMLX pin: OMLX_REPO_REF=%s   (engine — frozen unless you bump it)\n\n" "${OMLX_REPO_REF:-v0.6.0}"
+  printf "oMLX pin: OMLX_REPO_REF=%s   (engine — frozen unless you bump it)\n\n" "${OMLX_REPO_REF:-v0.6.3rc2}"
   local odir="${OMLX_PROJECT_DIR:-/Users/mac/projects/omlx}"
   if [ -d "$odir/.git" ]; then
     local installed latest
