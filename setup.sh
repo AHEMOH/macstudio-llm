@@ -1826,13 +1826,13 @@ ensure_python_venvs() {
   # oMLX (venv 'omlx', cloned+editable-installed by ensure_omlx_project()
   # below — alpha-stage/not-on-PyPI, so it needs its own git-clone flow, not
   # this generic pip-spec helper). NOTE: 1.96.1 is yanked on PyPI ("half
-  # published"), hence 1.96.0. The proxy daemon loads litellm at start, so a
-  # pin bump must kickstart it — handled right below via the before/after
-  # version compare.
+  # published", now a 404) — 1.98.0 verified live+unyanked at the 2026-08-27
+  # bump. The proxy daemon loads litellm at start, so a pin bump must
+  # kickstart it — handled right below via the before/after version compare.
   local _litellm_before=""
   [ -x "$vdir/litellm/bin/pip" ] && _litellm_before=$(/usr/bin/sudo -u "$TARGET_USER" -H \
       "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
-  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.96.0'
+  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.98.0'
   local _litellm_after=""
   [ -x "$vdir/litellm/bin/pip" ] && _litellm_after=$(/usr/bin/sudo -u "$TARGET_USER" -H \
       "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
@@ -1849,7 +1849,7 @@ ensure_python_venvs() {
   # name unchanged) and is adding model families + deprecating CLI flags fast —
   # exactly the churn a per-request shell-out server must not absorb silently.
   if [ "${INSTALL_IMAGES:-0}" = 1 ]; then
-    _ensure_venv mflux bin:mflux-generate 'mflux==0.18.1' 'flask==3.1.3' 'huggingface_hub[cli]==1.22.0'
+    _ensure_venv mflux bin:mflux-generate 'mflux==0.19.1' 'flask==3.1.3' 'huggingface_hub[cli]==1.22.0'
   fi
 }
 
