@@ -2333,12 +2333,18 @@ render_services() {
       [ -n "$_lbl" ] && restart_labels="$restart_labels $_lbl"
       if [ "$name" = ondemand-proxy.py ]; then
         # Shared by EVERY on-demand proxy — there is no single label to map, so
-        # restart all loaded *.proxy daemons (found the hard way 2026-09-08: the
-        # kickstart-via-sudo fix would otherwise have sat on disk while the
-        # running proxies kept executing the old code until the next reboot).
+        # restart all loaded on-demand *.proxy daemons (found the hard way
+        # 2026-09-08: the kickstart-via-sudo fix would otherwise have sat on
+        # disk while the running proxies kept executing the old code until the
+        # next reboot). com.local.litellm.proxy is the LiteLLM GATEWAY, not an
+        # ondemand-proxy.py instance — never bounce it for a proxy-code change
+        # (the first rollout did, costing an unnecessary gateway restart).
         local _p
         for _p in "${ALL_LABELS[@]}"; do
-          case "$_p" in *.proxy) restart_labels="$restart_labels $_p" ;; esac
+          case "$_p" in
+            com.local.litellm.*) ;;
+            *.proxy) restart_labels="$restart_labels $_p" ;;
+          esac
         done
       fi
     fi
