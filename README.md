@@ -533,7 +533,11 @@ backend plist (`com.local.immich.ml`) is registered with
 `KeepAlive=false, RunAtLoad=false` and stays stopped. On the
 first TCP connection the proxy kickstarts the backend, polls its health endpoint,
 then streams traffic. A 30 s loop stops the backend after `IDLE_TIMEOUT_*`
-seconds of idle (set `-1` to keep it warm forever). Transparent to clients apart
+seconds of idle (set `-1` to keep it warm forever). The proxy runs as the
+non-root service user; `setup.sh` writes a narrow sudoers grant
+(`/etc/sudoers.d/macstudio-ondemand`) for exactly the two `launchctl`
+sub-commands it needs — `stop` for idle-sleep and `kickstart -k` for restarting
+a backend that is running but no longer answering. Transparent to clients apart
 from a short cold-start latency. (`main`/`embed`/`rerank` are NOT on-demand —
 `com.local.omlx.main` is always-on and serves all three from one process.)
 

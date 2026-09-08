@@ -91,12 +91,26 @@ def backend_pid() -> int:
 
 
 def kickstart_backend() -> None:
-    r = subprocess.run(
-        ["/bin/launchctl", "kickstart", "-k", f"system/{BACKEND_LABEL}"],
-        capture_output=True, text=True, timeout=10,
-    )
-    if r.returncode != 0:
-        log(f"launchctl kickstart returned {r.returncode}: {r.stderr.strip() or r.stdout.strip()}")
+    # An unprivileged `kickstart -k` works on a STOPPED system-domain daemon
+    # (the normal wake path) but fails with "Operation not permitted" when the
+    # backend is running-but-wedged — confirmed live 2026-09-08: the Wyoming
+    # fd-leak in macos-speech-server left the process alive yet resetting every
+    # connection, and this proxy looped for 34h unable to restart it. Try the
+    # plain call first, then escalate through the narrow sudoers grant
+    # (`kickstart -k system/com.local.*`, see apply_ondemand_sudoers in
+    # setup.sh) — same `sudo -n` pattern as stop_backend(). A missing grant
+    # therefore degrades to the old behaviour instead of breaking waking.
+    cmd = ["/bin/launchctl", "kickstart", "-k", f"system/{BACKEND_LABEL}"]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    if r.returncode == 0:
+        return
+    first_err = r.stderr.strip() or r.stdout.strip()
+    r = subprocess.run(["/usr/bin/sudo", "-n", *cmd], capture_output=True, text=True, timeout=10)
+    if r.returncode == 0:
+        log(f"launchctl kickstart needed root ({first_err}); restarted {BACKEND_LABEL} via sudo")
+        return
+    log(f"launchctl kickstart returned {r.returncode}: {r.stderr.strip() or r.stdout.strip()} "
+        f"(unprivileged attempt: {first_err})")
 
 
 def stop_backend() -> None:

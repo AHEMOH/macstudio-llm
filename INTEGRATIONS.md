@@ -293,12 +293,38 @@ just falls back to English-only until the patch is refreshed.
 3. Host: the Mac's IP/hostname (`mac.home.arpa`); Port: `10300`
 4. Home Assistant discovers both an STT and a TTS entity on that one connection
 
-**Using it in a voice pipeline:** Settings → Voice assistants → (create or edit a
-pipeline) → set **Speech-to-text** and **Text-to-speech** to the newly discovered
-`macos-speech-server` entities. Pick a **Conversation agent** separately (this repo
-doesn't wire one up automatically — HA's built-in "OpenAI Conversation" integration
-can point at `main-fast` via the same gateway if you want the Mac's LLM as the
-assistant's brain, but that's a separate, unconfigured step).
+**Using it in a voice pipeline:** Settings → Voice assistants → **Add assistant**
+(or edit an existing one):
+
+1. **Language:** e.g. Russian — only offered thanks to the language patch above
+2. **Conversation agent:** pick one separately (this repo doesn't wire one up — HA's
+   built-in "OpenAI Conversation" integration can point at `main-fast` via the same
+   gateway if you want the Mac's LLM as the assistant's brain, but that's a separate,
+   unconfigured step)
+3. **Speech-to-text:** the `macos-speech-server` entity from the Wyoming integration
+4. **Text-to-speech:** the `macos-speech-server` entity from the same integration;
+   **Voice:** `Katya (Enhanced)` (or any installed voice tagged `ru`)
+
+Test it from Settings → Voice assistants → ⋮ on the assistant → **Debug**, then assign
+the assistant to your Assist satellites / the HA app's microphone button.
+
+**Troubleshooting — "Wyoming doesn't answer" / the STT+TTS entities are unavailable:**
+Host + port `10300` is all HA needs, so an outage is almost always the shared Mac
+backend, not the HA configuration. Check in this order:
+
+1. `llm-logs voicewyoming-proxy` — repeating `did not become healthy within 60s` and
+   `launchctl kickstart returned 1: … Operation not permitted` means the backend is
+   alive but wedged and the proxy could not restart it (fixed 2026-09-08: the proxy now
+   escalates via `sudo -n`; an older install needs one `sudo bash setup.sh --apply`).
+2. `sudo llm-restart voicestt` — restarts `com.local.voicestt.serve`; HA recovers within
+   seconds (reload the Wyoming integration entry if the entities stay unavailable).
+3. `llm-logs voicestt` — every connection must log both `Wyoming connection opened` and
+   `Wyoming connection closed`. Only "opened" lines mean the fd-leak fix
+   (`patches/macos-speech-server-wyoming-close-on-eof.patch`) isn't built in yet →
+   `sudo bash setup.sh --apply` (rebuilds the Swift binary, then restarts the backend).
+
+The same backend also serves Open WebUI's `stt` alias (:5006), so that fails at the same
+time — one restart fixes both.
 
 **TTS voice for Home Assistant** comes from `speech-server.yaml`'s
 `tts.avspeech.default_voice`, which `ensure_voice_project()` sets to

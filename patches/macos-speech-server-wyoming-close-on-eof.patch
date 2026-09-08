@@ -1,0 +1,53 @@
+diff --git a/Sources/speech-server/Wyoming/WyomingNIOHandler.swift b/Sources/speech-server/Wyoming/WyomingNIOHandler.swift
+--- a/Sources/speech-server/Wyoming/WyomingNIOHandler.swift
++++ b/Sources/speech-server/Wyoming/WyomingNIOHandler.swift
+@@ -45,16 +45,28 @@ final class WyomingChannelHandler: ChannelInboundHandler, @unchecked Sendable {
+         // Single consumer Task: processes events strictly in arrival order.
+         // Each event's response stream is fully drained before the next event is dequeued,
+         // ensuring audio is sent before synthesize-stopped.
+         Task {
++            var lastWrite: EventLoopFuture<Void>? = nil
+             for await event in eventStream {
+                 log.notice("Wyoming event received: \(event.type)")
+                 for await responseData in await session.handle(event: event) {
+                     var outBuf = channel.allocator.buffer(capacity: responseData.count)
+                     outBuf.writeBytes(responseData)
+-                    channel.writeAndFlush(outBuf, promise: nil)
++                    lastWrite = channel.writeAndFlush(outBuf)
+                 }
+             }
++            // The event stream only finishes once the client is done (inputClosed,
++            // channelInactive or an error). Close the connection ourselves after the
++            // last queued response has actually been written: with
++            // allowRemoteHalfClosure enabled NIO never closes it for us, and an
++            // unclosed channel keeps its fd forever (one leaked fd per connection
++            // until the process hits the 256-fd limit and resets every new socket).
++            if let lastWrite {
++                lastWrite.whenComplete { _ in channel.close(promise: nil) }
++            } else {
++                channel.close(promise: nil)
++            }
+         }
+
+         context.fireChannelActive()
+     }
+@@ -77,6 +89,19 @@ final class WyomingChannelHandler: ChannelInboundHandler, @unchecked Sendable {
+         context.close(promise: nil)
+     }
+
++    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
++        // WyomingServer sets allowRemoteHalfClosure, so a client FIN arrives here as
++        // ChannelEvent.inputClosed instead of closing the channel. Finish the event
++        // stream; the consumer Task (channelActive) closes the channel once every
++        // queued response is on the wire.
++        if let channelEvent = event as? ChannelEvent, case .inputClosed = channelEvent {
++            logger.debug("Wyoming client finished sending; closing after pending responses")
++            eventContinuation?.finish()
++        } else {
++            context.fireUserInboundEventTriggered(event)
++        }
++    }
++
+     func channelInactive(context: ChannelHandlerContext) {
+         logger.notice("Wyoming connection closed")
+         eventContinuation?.finish()

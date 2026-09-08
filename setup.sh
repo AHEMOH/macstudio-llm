@@ -377,7 +377,7 @@ config_hint() {
     MFLUX_MODEL_DIR)             echo "Where ensure_mflux_model() saves the pre-quantized checkpoint (mflux-save, one-time during --apply). Subdirectory name is <MFLUX_MODEL>-q<MFLUX_QUANTIZE>" ;;
     INSTALL_VOICE)               echo "1 = run two on-demand voice backends exposed via LiteLLM as 'stt'/'tts' aliases for OpenWebUI's native voice input/output: Speech-to-Text via FluidAudio's macos-speech-server (Parakeet, Apple Neural Engine — measured zero GPU contention with the resident main LLM) and Text-to-Speech via macOS's own 'say' (faster and bug-free vs. macos-speech-server's bundled TTS, see CLAUDE.md). Opt-in (default 0) — NOT part of the model catalog, same reasoning as INSTALL_IMAGES" ;;
     VOICE_PROJECT_DIR)           echo "Where ensure_voice_project() clones+builds FluidAudio's macos-speech-server (git clone + swift build -c release, one-time during --apply, several minutes)" ;;
-    VOICE_REPO_REF)              echo "Pinned macos-speech-server commit — full 40-char SHA so it stays fetchable (default = upstream HEAD as of 2026-05-22). Same pin discipline as OMLX_REPO_REF; bump deliberately + --apply. Before bumping, check the local Wyoming-languages patch still applies (upstream PR #23 covers the same fix — if it ever merges, retire patches/macos-speech-server-wyoming-languages.patch instead of fighting the conflict)" ;;
+    VOICE_REPO_REF)              echo "Pinned macos-speech-server commit — full 40-char SHA so it stays fetchable (default = upstream HEAD as of 2026-05-22). Same pin discipline as OMLX_REPO_REF; bump deliberately + --apply. Before bumping, check the local patches (patches/macos-speech-server-*.patch: Wyoming languages + Wyoming fd-leak close-on-EOF) still apply — if upstream ever merges an equivalent fix (PR #23 covers the languages one), retire that patch instead of fighting the conflict" ;;
     VOICESTT_PUBLIC_PORT)        echo "Public on-demand-proxy port for the Speech-to-Text backend (default 5006)" ;;
     VOICESTT_BACKEND_PORT)       echo "Internal port the speech-server binary binds (127.0.0.1 only, default 15006)" ;;
     IDLE_TIMEOUT_VOICESTT)       echo "Seconds before the STT backend sleeps; default -1 = never sleep. Deliberately kept warm — this backend is shared by TWO independent on-demand proxies (com.local.voicestt.proxy for LiteLLM's 'stt' HTTP alias, com.local.voicewyoming.proxy for Home Assistant), and letting either one auto-sleep it would fight the other's wake cycle. Small footprint either way (~200MB Parakeet model)" ;;
@@ -1956,26 +1956,39 @@ ensure_voice_project() {
     fi
   fi
 
-  # Local patch: upstream hardcodes "en" as the ONLY language it ever
-  # advertises over Wyoming, for both Parakeet's ASR model (actually
-  # multilingual, 25 languages incl. Russian) and every AVSpeechSynthesizer
-  # TTS voice (regardless of the voice's real locale — Katya/Milena/Yuri are
-  # ru_RU, but got reported as "en"). This makes Home Assistant's pipeline
-  # language picker only ever offer English, even though transcription/
-  # synthesis themselves already work fine in Russian via the plain HTTP
-  # 'stt'/'tts' aliases. Reset to a clean upstream tree first so re-applying
-  # is idempotent across repeated --apply runs (a raw `git apply` on an
-  # already-patched tree would fail).
+  # Local patches (patches/macos-speech-server-*.patch, applied in filename
+  # order). Reset to a clean upstream tree first so re-applying is idempotent
+  # across repeated --apply runs (a raw `git apply` on an already-patched tree
+  # would fail).
+  # - ...-wyoming-languages.patch: upstream hardcodes "en" as the ONLY language
+  #   it ever advertises over Wyoming, for both Parakeet's ASR model (actually
+  #   multilingual, 25 languages incl. Russian) and every AVSpeechSynthesizer
+  #   TTS voice (regardless of the voice's real locale — Katya/Milena/Yuri are
+  #   ru_RU, but got reported as "en"). This makes Home Assistant's pipeline
+  #   language picker only ever offer English, even though transcription/
+  #   synthesis themselves already work fine in Russian via the plain HTTP
+  #   'stt'/'tts' aliases.
+  # - ...-wyoming-close-on-eof.patch: upstream enables NIO's
+  #   allowRemoteHalfClosure on Wyoming connections but never handles the
+  #   resulting inputClosed event, so a connection's channel (and fd) is NEVER
+  #   released — one leaked fd per HA connection. Confirmed live 2026-09-08:
+  #   2785 "connection opened" / 0 "connection closed" log lines, 237 CLOSED
+  #   sockets held; at macOS's 256-fd soft limit the process stayed alive but
+  #   reset EVERY new connection on BOTH ports (Wyoming AND the HTTP 'stt'
+  #   port), ~2h after each start under HA's ~30s describe cadence. Upstream
+  #   HEAD (= VOICE_REPO_REF) has no fix — retire the patch when one lands.
   /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" checkout -- . >/dev/null 2>&1 || true
-  local patch_file="$REPO_DIR/patches/macos-speech-server-wyoming-languages.patch"
-  if [ -f "$patch_file" ]; then
+  : >"$LOG_DIR/voicestt-patch.log"
+  local patch_file
+  for patch_file in "$REPO_DIR"/patches/macos-speech-server-*.patch; do
+    [ -f "$patch_file" ] || continue
     if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" apply "$patch_file" \
-          >"$LOG_DIR/voicestt-patch.log" 2>&1; then
-      ok "applied macos-speech-server Wyoming-language patch"
+          >>"$LOG_DIR/voicestt-patch.log" 2>&1; then
+      ok "applied $(basename "$patch_file")"
     else
-      warn "failed to apply macos-speech-server Wyoming-language patch; see $LOG_DIR/voicestt-patch.log (continuing with unpatched upstream — HA's pipeline language picker will only offer English)"
+      warn "failed to apply $(basename "$patch_file"); see $LOG_DIR/voicestt-patch.log (continuing without it — HA's language picker may be English-only / the Wyoming fd-leak fix may be missing)"
     fi
-  fi
+  done
 
   # Two independent consumers share this ONE backend process now:
   # - LiteLLM's 'stt' alias (OpenWebUI etc.) via the HTTP port ($port),
@@ -2318,6 +2331,16 @@ render_services() {
       changed=$((changed+1)); ok "updated $dst"
       local _lbl; _lbl=$(service_py_label "$name")
       [ -n "$_lbl" ] && restart_labels="$restart_labels $_lbl"
+      if [ "$name" = ondemand-proxy.py ]; then
+        # Shared by EVERY on-demand proxy — there is no single label to map, so
+        # restart all loaded *.proxy daemons (found the hard way 2026-09-08: the
+        # kickstart-via-sudo fix would otherwise have sat on disk while the
+        # running proxies kept executing the old code until the next reboot).
+        local _p
+        for _p in "${ALL_LABELS[@]}"; do
+          case "$_p" in *.proxy) restart_labels="$restart_labels $_p" ;; esac
+        done
+      fi
     fi
   done
   if install_if_different "$REPO_DIR/services/llm-watchdog.sh" "$LIBEXEC_DIR/llm-watchdog.sh" 755; then
@@ -2525,11 +2548,19 @@ apply_ondemand_sudoers() {
   # docs/immich-ml-idle-sleep-bug.md): every on-demand backend was silently
   # never going to sleep for exactly this reason, masked because the old
   # code discarded launchctl's returncode/stderr entirely. Narrowly scoped to
-  # the ONE sub-command the proxy actually needs — `launchctl stop com.local.*`
+  # the sub-commands the proxy actually needs (with the label pattern baked in)
   # — NOT the whole binary: a bare `NOPASSWD: /bin/launchctl` would let
   # TARGET_USER run `sudo launchctl bootstrap <plist>` / `submit`, i.e.
-  # arbitrary root code, which is no better than NOPASSWD:ALL. Waking uses
-  # kickstart and needs no sudo, so it isn't granted here.
+  # arbitrary root code, which is no better than NOPASSWD:ALL. Exactly two
+  # sub-commands are granted: `stop com.local.*` (idle-sleep) and `kickstart -k
+  # system/com.local.*` (wake/restart). An UNprivileged `kickstart -k` works on
+  # a STOPPED system daemon — which is why waking always worked — but fails
+  # with "Operation not permitted" when the backend is running-but-wedged:
+  # confirmed live 2026-09-08 when the Wyoming fd-leak left speech-server alive
+  # yet resetting every connection, and com.local.voicewyoming.proxy spent 34h
+  # in a 5-min kickstart/back-off loop unable to restart it. The proxy tries
+  # the plain kickstart first and only falls back to `sudo -n` on failure, so a
+  # missing grant degrades to the old behaviour instead of breaking waking.
   local f=/etc/sudoers.d/macstudio-ondemand
   local user="${TARGET_USER:-mac}"
   # Never build a sudoers line from an unvalidated user (visudo -cf checks
@@ -2538,8 +2569,11 @@ apply_ondemand_sudoers() {
     warn "refusing to write $f: TARGET_USER '$user' is not a safe, existing account"
     return 1
   fi
-  local desired="$user ALL=(root) NOPASSWD: /bin/launchctl stop com.local.*"
-  if [ -f "$f" ] && /usr/bin/grep -qxF "$desired" "$f"; then
+  local desired
+  desired=$(printf '%s\n%s' \
+    "$user ALL=(root) NOPASSWD: /bin/launchctl stop com.local.*" \
+    "$user ALL=(root) NOPASSWD: /bin/launchctl kickstart -k system/com.local.*")
+  if [ -f "$f" ] && [ "$(/bin/cat "$f")" = "$desired" ]; then
     ok "$f present"
     return 0
   fi
