@@ -1,8 +1,8 @@
 diff --git a/omlx/server.py b/omlx/server.py
-index 332ae689..16a68aca 100644
+index 72a60068..e7332fe5 100644
 --- a/omlx/server.py
 +++ b/omlx/server.py
-@@ -3578,6 +3578,52 @@ async def create_chat_completion(
+@@ -3738,6 +3738,53 @@ async def create_chat_completion(
          # Gemma 4 drops required params that lack descriptions — enrich them
          if tools_for_template and "gemma" in (resolved_model or "").lower():
              tools_for_template = enrich_tool_params_for_gemma4(tools_for_template)
@@ -13,8 +13,9 @@ index 332ae689..16a68aca 100644
 +        # on short prompts) returns no tool call at all. Clients that hard-
 +        # require one -- llama-index's chat_with_tools(tool_required=True), used
 +        # by paperless-ngx v3 AI suggestions -- then fail with "Expected at
-+        # least one tool call, but got 0 tool calls". Reuse the same prompt-
-+        # injection degrade path that response_format already uses above.
++        # least one tool call, but got 0 tool calls". Prompt-injection degrade,
++        # like response_format above -- but into the LAST USER turn, not the
++        # system turn (see _inject_tool_instruction for why).
 +        forced_tool_name = None
 +        force_tool_call = False
 +        if tools_for_template and not tools_disabled:
@@ -50,8 +51,52 @@ index 332ae689..16a68aca 100644
 +                    + ". Do not reply with prose, explanations or markdown -- "
 +                    "emit only the function call."
 +                )
-+            messages = _inject_json_instruction(messages, tool_instruction)
++            messages = _inject_tool_instruction(messages, tool_instruction)
 +
          await _ensure_tokenizer_for_system_probe(engine, messages)
          messages = prepare_system_messages_for_template(
              messages,
+@@ -4099,6 +4146,43 @@ def _inject_json_instruction(messages: list, instruction: str) -> list:
+     return messages
+ 
+ 
++def _inject_tool_instruction(messages: list, instruction: str) -> list:
++    """
++    Inject a forced-tool-call instruction into the LAST user message.
++
++    Deliberately NOT the system turn that _inject_json_instruction uses:
++    Gemma 4 reliably ignores a MUST-call instruction placed in the system
++    turn (measured 2026-09-16 on gemma-4-26B-A4B-it-qat-4bit, temperature 0:
++    0/8 forced calls, even when the client itself put the instruction into
++    its own system message), but follows the identical text appended to the
++    last user message (6/6 across chit-chat, unrelated questions, multi-tool,
++    named-function and document-classification prompts, thinking on and off).
++    Falls back to the system-turn injection when there is no user message.
++    """
++    messages = list(messages)  # Make a copy
++    for idx in range(len(messages) - 1, -1, -1):
++        msg = messages[idx]
++        role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
++        if role != "user":
++            continue
++        content = (
++            msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
++        )
++        if isinstance(content, list):
++            # Multimodal parts list (text/image_url) -- append a text part.
++            new_content = list(content) + [{"type": "text", "text": instruction}]
++        else:
++            new_content = f"{content or ''}\n\n{instruction}"
++        if isinstance(msg, dict):
++            msg = dict(msg)
++            msg["content"] = new_content
++        else:
++            msg.content = new_content
++        messages[idx] = msg
++        return messages
++    return _inject_json_instruction(messages, instruction)
++
++
+ def _normalize_structured_outputs(
+     structured_outputs=None, guided_grammar: str | None = None
+ ):

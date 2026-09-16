@@ -1684,10 +1684,15 @@ ensure_omlx_project() {
   # 2026-08-19 against paperless-ngx v3 AI suggestions (llama-index
   # `chat_with_tools(tool_required=True)` → `ValueError: Expected at least one
   # tool call`, surfaced in the UI as a misleading 400 "Invalid AI
-  # configuration"). The patch reuses oMLX's OWN prompt-injection degrade path
-  # (the one `response_format` already falls back to) and touches only
+  # configuration"). The patch prompt-injects a MUST-call instruction (same
+  # degrade idea as oMLX's own `response_format` fallback) — since 2026-09-16
+  # into the LAST USER turn via a new `_inject_tool_instruction` helper, NOT
+  # the system turn: Gemma 4 on oMLX v0.6.4 provably ignores the instruction in
+  # the system turn (0/8 forced calls at temperature 0, even when the client
+  # itself put it there) but follows it in the user turn (6/6 incl. a
+  # paperless-like classification tool, thinking on/off). Touches only
   # create_chat_completion — NOT create_response, which has no `tools_disabled`
-  # in scope. Verified: required + named tool_choice now emit tool_calls, while
+  # in scope. Verified: required + named tool_choice emit tool_calls, while
   # bare (no tool_choice) and `none` keep their previous behaviour.
   # Upstream fixed the identical gap for the Anthropic endpoint (jundot/omlx#1258,
   # closed completed 2026-07-07) but never for OpenAI chat — retire this patch
