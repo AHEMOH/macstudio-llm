@@ -484,7 +484,11 @@ that. Other subcommands: `update` (incremental, what the cron task runs), `compa
 > `tool_choice: none` and silently downgrades everything else to `auto`, so Gemma 4
 > answers in prose and paperless fails with a misleading 400 *"Invalid AI configuration"*
 > (the real error, `Expected at least one tool call`, only shows in the paperless
-> container log). `setup.sh --apply` applies the patch automatically. **Chat, RAG and
+> container log). `setup.sh --apply` applies the patch automatically. Since 2026-09-16
+> the patch puts the forcing instruction into the *last user turn* — Gemma 4 ignores it
+> in the system turn, which had silently broken suggestions again on oMLX v0.6.4. Quick
+> check after any oMLX bump: a `tool_choice: "required"` request to `main-fast` with a
+> chit-chat prompt must come back with `finish_reason: tool_calls`. **Chat, RAG and
 > embeddings are unaffected** and work on stock oMLX.
 
 *Fallback with no Mac dependency:* `PAPERLESS_AI_LLM_EMBEDDING_BACKEND: "huggingface"`
