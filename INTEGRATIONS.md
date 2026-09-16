@@ -274,17 +274,14 @@ that backs the `stt` LiteLLM alias, just on a second port (`VOICE_WYOMING_PUBLIC
 default `10300`, fronted by its own always-on proxy `com.local.voicewyoming.proxy`).
 
 **Non-English languages (e.g. Russian) in the pipeline language picker:**
-Upstream `macos-speech-server` hardcodes "en" as the only language it ever
-advertises over Wyoming — for both the (actually multilingual, 25-language)
-Parakeet ASR model and every AVSpeechSynthesizer TTS voice, regardless of the
-voice's real locale. `setup.sh` applies a local patch
-(`patches/macos-speech-server-wyoming-languages.patch`, auto-applied by
-`ensure_voice_project()` on every `--apply`) that fixes both — after which HA's
-pipeline language dropdown correctly offers Russian (and the other 24 Parakeet
-languages), and voices like Katya/Milena/Yuri show up tagged `ru`. If a fresh
-`--apply` warns that the patch failed to apply (e.g. after an upstream update
-changes the patched lines), the integration still works — the language picker
-just falls back to English-only until the patch is refreshed.
+`macos-speech-server` advertises each provider's real languages over Wyoming
+since upstream commit `2a03e7d` (2026-09-11, included in the pinned
+`VOICE_REPO_REF`): the multilingual Parakeet v3 ASR model is reported with all
+25 of its languages (incl. Russian and German), and every AVSpeechSynthesizer
+TTS voice carries its real locale, so voices like Katya/Milena/Yuri show up
+tagged `ru` and HA's pipeline language dropdown offers Russian. (Older upstream
+builds hardcoded "en" for everything — this repo carried a local patch for that
+from 2026-07 until the upstream fix landed; retired 2026-09-16.)
 
 **Adding the integration in Home Assistant** (manual — no auto-discovery):
 
@@ -296,7 +293,7 @@ just falls back to English-only until the patch is refreshed.
 **Using it in a voice pipeline:** Settings → Voice assistants → **Add assistant**
 (or edit an existing one):
 
-1. **Language:** e.g. Russian — only offered thanks to the language patch above
+1. **Language:** e.g. Russian (Parakeet v3 advertises 25 languages incl. Russian and German)
 2. **Conversation agent:** pick one separately (this repo doesn't wire one up — HA's
    built-in "OpenAI Conversation" integration can point at `main-fast` via the same
    gateway if you want the Mac's LLM as the assistant's brain, but that's a separate,
