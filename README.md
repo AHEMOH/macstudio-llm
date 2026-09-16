@@ -309,7 +309,7 @@ present):
 | **Homebrew** | official installer, `NONINTERACTIVE=1`, as `TARGET_USER` | if absent |
 | **python@3.12** | `brew install python@3.12` (MLX/docling wheels need ≥3.10) | if `INSTALL_MLX=1` or `INSTALL_DOCLING=1` |
 | **omlx project + venv** | `git clone` `OMLX_REPO`@`OMLX_REPO_REF` + `pip install -e .` (editable, alpha-stage, not on PyPI) in `$VENV_DIR/omlx` | if `INSTALL_MLX=1` |
-| **litellm venv** | `pip install 'litellm[proxy]==1.100.0'` (pinned) in `$VENV_DIR/litellm` | if `INSTALL_MLX=1` |
+| **litellm venv** | `pip install 'litellm[proxy]==1.101.0'` (pinned) in `$VENV_DIR/litellm` | if `INSTALL_MLX=1` |
 | **node_exporter** | `brew install node_exporter` | if `INSTALL_EXPORTERS=1` (off by default) |
 | **mactop + macmon** | `brew install mactop macmon` | if `INSTALL_TUI=1` |
 | **docling-serve venv** | `pip install 'docling[…]' 'docling-serve[ui]'` | if `INSTALL_DOCLING=1` |
@@ -419,7 +419,7 @@ use the menu) to change a live box.
 | `INSTALL_VOICE` | `0` | Speech-to-Text (`stt`) + Text-to-Speech (`tts`) — **off by default** |
 | `INSTALL_IMMICH` | `0` | Metal/ANE Immich-ML backend (:3003) — **off by default** (needs macOS 26 + a running Immich server) |
 | `VOICE_PROJECT_DIR` | `/Users/mac/projects/macos-speech-server` | Where FluidAudio's `macos-speech-server` is cloned+built |
-| `VOICE_REPO_REF` | `ad16a6a…` (full SHA) | Pinned `macos-speech-server` commit — bump deliberately, then `--apply` (same discipline as `OMLX_REPO_REF`) |
+| `VOICE_REPO_REF` | `efc40c1…` (full SHA) | Pinned `macos-speech-server` commit — bump deliberately, then `--apply` (same discipline as `OMLX_REPO_REF`) |
 | `VOICESTT_PUBLIC_PORT` / `VOICESTT_BACKEND_PORT` | `5006` / `15006` | Speech-to-Text ports (proxy / backend) |
 | `IDLE_TIMEOUT_VOICESTT` / `STARTUP_TIMEOUT_VOICESTT` | `900` / `60` | STT idle-to-sleep / wake-deadline seconds |
 | `VOICETTS_PUBLIC_PORT` / `VOICETTS_BACKEND_PORT` | `5007` / `15007` | Text-to-Speech ports (proxy / backend) |

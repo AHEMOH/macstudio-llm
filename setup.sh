@@ -247,7 +247,7 @@ config_default() {
     MFLUX_MODEL_DIR)             echo /Users/mac/.cache/mflux-models ;;
     INSTALL_VOICE)               echo 0 ;;
     VOICE_PROJECT_DIR)           echo /Users/mac/projects/macos-speech-server ;;
-    VOICE_REPO_REF)              echo ad16a6a9d5ce7d36a4c83cab32f64db83d4bfbec ;;
+    VOICE_REPO_REF)              echo efc40c1fb307ebdf124b6dd9680fa79fb11e2ed5 ;;
     VOICESTT_PUBLIC_PORT)        echo 5006 ;;
     VOICESTT_BACKEND_PORT)       echo 15006 ;;
     IDLE_TIMEOUT_VOICESTT)       echo -1 ;;
@@ -377,7 +377,7 @@ config_hint() {
     MFLUX_MODEL_DIR)             echo "Where ensure_mflux_model() saves the pre-quantized checkpoint (mflux-save, one-time during --apply). Subdirectory name is <MFLUX_MODEL>-q<MFLUX_QUANTIZE>" ;;
     INSTALL_VOICE)               echo "1 = run two on-demand voice backends exposed via LiteLLM as 'stt'/'tts' aliases for OpenWebUI's native voice input/output: Speech-to-Text via FluidAudio's macos-speech-server (Parakeet, Apple Neural Engine — measured zero GPU contention with the resident main LLM) and Text-to-Speech via macOS's own 'say' (faster and bug-free vs. macos-speech-server's bundled TTS, see CLAUDE.md). Opt-in (default 0) — NOT part of the model catalog, same reasoning as INSTALL_IMAGES" ;;
     VOICE_PROJECT_DIR)           echo "Where ensure_voice_project() clones+builds FluidAudio's macos-speech-server (git clone + swift build -c release, one-time during --apply, several minutes)" ;;
-    VOICE_REPO_REF)              echo "Pinned macos-speech-server commit — full 40-char SHA so it stays fetchable (default = upstream HEAD as of 2026-05-22). Same pin discipline as OMLX_REPO_REF; bump deliberately + --apply. Before bumping, check the local patches (patches/macos-speech-server-*.patch: Wyoming languages + Wyoming fd-leak close-on-EOF) still apply — if upstream ever merges an equivalent fix (PR #23 covers the languages one), retire that patch instead of fighting the conflict" ;;
+    VOICE_REPO_REF)              echo "Pinned macos-speech-server commit — full 40-char SHA so it stays fetchable (default = upstream HEAD as of 2026-09-14). Same pin discipline as OMLX_REPO_REF; bump deliberately + --apply. Before bumping, check the local patch (patches/macos-speech-server-wyoming-close-on-eof.patch, Wyoming fd-leak) still applies — if upstream ever merges an equivalent fix, retire the patch instead of fighting the conflict (done 2026-09-16 for the former Wyoming-languages patch, fixed upstream in 2a03e7d)" ;;
     VOICESTT_PUBLIC_PORT)        echo "Public on-demand-proxy port for the Speech-to-Text backend (default 5006)" ;;
     VOICESTT_BACKEND_PORT)       echo "Internal port the speech-server binary binds (127.0.0.1 only, default 15006)" ;;
     IDLE_TIMEOUT_VOICESTT)       echo "Seconds before the STT backend sleeps; default -1 = never sleep. Deliberately kept warm — this backend is shared by TWO independent on-demand proxies (com.local.voicestt.proxy for LiteLLM's 'stt' HTTP alias, com.local.voicewyoming.proxy for Home Assistant), and letting either one auto-sleep it would fight the other's wake cycle. Small footprint either way (~200MB Parakeet model)" ;;
@@ -1827,14 +1827,17 @@ ensure_python_venvs() {
   # below — alpha-stage/not-on-PyPI, so it needs its own git-clone flow, not
   # this generic pip-spec helper). NOTE: 1.96.1 is yanked on PyPI ("half
   # published", now a 404) — always verify a pin is live+unyanked before
-  # bumping; 1.100.0 verified on PyPI at the 2026-09-06 bump (no CVEs open
-  # against 1.98.0, no infinity-rerank/openai-provider changes in between).
+  # bumping; 1.101.0 verified on PyPI at the 2026-09-16 bump (arm64 abi3 wheel
+  # downloaded into the live venv's pip + unyanked; no CVEs open against
+  # 1.100.0; its embeddings/rerank changes — omit encoding_format when the
+  # client omits it, unique rerank response ids — are benign for the
+  # openai/infinity providers we use).
   # The proxy daemon loads litellm at start, so a pin bump must
   # kickstart it — handled right below via the before/after version compare.
   local _litellm_before=""
   [ -x "$vdir/litellm/bin/pip" ] && _litellm_before=$(/usr/bin/sudo -u "$TARGET_USER" -H \
       "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
-  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.100.0'
+  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.101.0'
   local _litellm_after=""
   [ -x "$vdir/litellm/bin/pip" ] && _litellm_after=$(/usr/bin/sudo -u "$TARGET_USER" -H \
       "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
@@ -1914,7 +1917,7 @@ ensure_voice_project() {
   # boundary silence-dropping bug).
   [ "${INSTALL_VOICE:-0}" = 1 ] || return 0
   local dir="${VOICE_PROJECT_DIR:-/Users/mac/projects/macos-speech-server}"
-  local ref="${VOICE_REPO_REF:-ad16a6a9d5ce7d36a4c83cab32f64db83d4bfbec}"
+  local ref="${VOICE_REPO_REF:-efc40c1fb307ebdf124b6dd9680fa79fb11e2ed5}"
   local port="${VOICESTT_BACKEND_PORT:-15006}"
   local wport="${VOICE_WYOMING_BACKEND_PORT:-15008}"
 
@@ -1960,14 +1963,13 @@ ensure_voice_project() {
   # order). Reset to a clean upstream tree first so re-applying is idempotent
   # across repeated --apply runs (a raw `git apply` on an already-patched tree
   # would fail).
-  # - ...-wyoming-languages.patch: upstream hardcodes "en" as the ONLY language
-  #   it ever advertises over Wyoming, for both Parakeet's ASR model (actually
-  #   multilingual, 25 languages incl. Russian) and every AVSpeechSynthesizer
-  #   TTS voice (regardless of the voice's real locale — Katya/Milena/Yuri are
-  #   ru_RU, but got reported as "en"). This makes Home Assistant's pipeline
-  #   language picker only ever offer English, even though transcription/
-  #   synthesis themselves already work fine in Russian via the plain HTTP
-  #   'stt'/'tts' aliases.
+  # - (RETIRED 2026-09-16) ...-wyoming-languages.patch: upstream used to
+  #   hardcode "en" as the ONLY language advertised over Wyoming, for both
+  #   Parakeet's ASR model (actually multilingual, 25 languages incl. Russian)
+  #   and every AVSpeechSynthesizer TTS voice (Katya/Milena/Yuri are ru_RU),
+  #   so Home Assistant's pipeline language picker only offered English.
+  #   Fixed upstream in 2a03e7d (2026-09-11, part of the efc40c1 pin) — the
+  #   local patch was deleted; the fix now comes straight from the checkout.
   # - ...-wyoming-close-on-eof.patch: upstream enables NIO's
   #   allowRemoteHalfClosure on Wyoming connections but never handles the
   #   resulting inputClosed event, so a connection's channel (and fd) is NEVER
@@ -1976,7 +1978,8 @@ ensure_voice_project() {
   #   sockets held; at macOS's 256-fd soft limit the process stayed alive but
   #   reset EVERY new connection on BOTH ports (Wyoming AND the HTTP 'stt'
   #   port), ~2h after each start under HA's ~30s describe cadence. Upstream
-  #   HEAD (= VOICE_REPO_REF) has no fix — retire the patch when one lands.
+  #   HEAD (= VOICE_REPO_REF efc40c1, re-verified 2026-09-16: still no
+  #   inputClosed handling) has no fix — retire the patch when one lands.
   /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" checkout -- . >/dev/null 2>&1 || true
   : >"$LOG_DIR/voicestt-patch.log"
   local patch_file
@@ -1986,7 +1989,7 @@ ensure_voice_project() {
           >>"$LOG_DIR/voicestt-patch.log" 2>&1; then
       ok "applied $(basename "$patch_file")"
     else
-      warn "failed to apply $(basename "$patch_file"); see $LOG_DIR/voicestt-patch.log (continuing without it — HA's language picker may be English-only / the Wyoming fd-leak fix may be missing)"
+      warn "failed to apply $(basename "$patch_file"); see $LOG_DIR/voicestt-patch.log (continuing without it — the Wyoming fd-leak fix may be missing)"
     fi
   done
 
