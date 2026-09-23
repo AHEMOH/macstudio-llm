@@ -487,9 +487,11 @@ that. Other subcommands: `update` (incremental, what the cron task runs), `compa
 > container log). `setup.sh --apply` applies the patch automatically. Since 2026-09-16
 > the patch puts the forcing instruction into the *last user turn* — Gemma 4 ignores it
 > in the system turn, which had silently broken suggestions again on oMLX v0.6.4. Quick
-> check after any oMLX bump: a `tool_choice: "required"` request to `main-fast` with a
-> chit-chat prompt must come back with `finish_reason: tool_calls`. **Chat, RAG and
-> embeddings are unaffected** and work on stock oMLX.
+> check after any oMLX bump (and after any chat-template change — since 2026-09-23
+> `setup.sh` overlays Google's canonical Gemma 4 template over the mlx-community
+> one): a `tool_choice: "required"` request to `main-fast` with a chit-chat prompt
+> must come back with `finish_reason: tool_calls`. **Chat, RAG and embeddings are
+> unaffected** and work on stock oMLX.
 
 *Fallback with no Mac dependency:* `PAPERLESS_AI_LLM_EMBEDDING_BACKEND: "huggingface"`
 and drop `..._EMBEDDING_MODEL` — paperless downloads a small model into the `data` volume
