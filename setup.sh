@@ -1571,7 +1571,9 @@ _omlx_symlink_one() {
   fi
   if [ "$tpl_before" != missing ] && [ "$tpl_before" != "$(hash_file "$target/chat_template.jinja")" ]; then
     OMLX_TEMPLATE_CHANGED=1
-    ok "omlx model-dir: $served chat_template.jinja changed -> ${overlay:+overlay $(basename "$overlay")}${overlay:-HF snapshot} (daemon restart pending)"
+    local tpl_src="HF snapshot"
+    [ -n "$overlay" ] && tpl_src="overlay $(basename "$overlay")"
+    ok "omlx model-dir: $served chat_template.jinja changed -> $tpl_src (daemon restart pending)"
   fi
   n=$(/usr/bin/find "$target" -type l 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')
   ok "omlx model-dir: $served ($id, $n files${overlay:+ + chat-template overlay})"
