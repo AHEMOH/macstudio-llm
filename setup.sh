@@ -1426,7 +1426,10 @@ catalog_gb()     { catalog_field "$1" 6; }
 # are pruned — but ONLY if they contain no regular files: symlinks are ours
 # to delete, real weights never are (a hand-placed 24.6GB Ornith nest was
 # found here 2026-08-16 whose HF-cache entries were empty stubs — pruning
-# real files would have destroyed the only copy).
+# real files would have destroyed the only copy). The ONE regular file that
+# IS ours: a chat_template.jinja byte-identical to a vendored overlay (see
+# _omlx_template_overlay_for below) — _omlx_is_our_overlay() exempts exactly
+# that; any other real file still protects the entry.
 ensure_omlx_model_dir() {
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   local root="${OMLX_MODEL_DIR:-$TARGET_HOME/.cache/omlx-models}"
@@ -1451,13 +1454,79 @@ ensure_omlx_model_dir() {
     [ -d "$entry" ] || continue
     name=$(/usr/bin/basename "$entry")
     case "$expected" in *" $name "*) continue ;; esac
-    if /usr/bin/find "$entry" -type f 2>/dev/null | /usr/bin/grep -q .; then
+    # `find -type f` does not follow symlinks, so a pure-symlink entry reports
+    # nothing. Our own chat-template overlay IS a regular file — exempt it only
+    # when it hashes to a vendored template; a foreign chat_template.jinja
+    # still counts as "real files".
+    if /usr/bin/find "$entry" -type f ! -name chat_template.jinja 2>/dev/null | /usr/bin/grep -q . \
+       || { [ -f "$entry/chat_template.jinja" ] && [ ! -L "$entry/chat_template.jinja" ] \
+            && ! _omlx_is_our_overlay "$entry/chat_template.jinja"; }; then
       warn "omlx model-dir: NOT pruning '$name' — contains real files (not our symlinks); remove manually if unwanted"
       continue
     fi
     /usr/bin/sudo -u "$TARGET_USER" -H /bin/rm -rf "$entry"
     ok "omlx model-dir: pruned stale entry '$name'"
   done
+  # A changed chat template only takes effect at model load (the tokenizer is
+  # read once), so restart the daemon when _omlx_symlink_one() saw the
+  # effective template content change — first overlay, edited vendored file,
+  # or a retired overlay falling back to the HF snapshot. Not on plain re-runs.
+  if [ "${OMLX_TEMPLATE_CHANGED:-0}" = 1 ]; then
+    if daemon_running com.local.omlx.main; then
+      /bin/launchctl kickstart -k system/com.local.omlx.main >/dev/null 2>&1 \
+        && ok "restarted com.local.omlx.main to load the changed chat template"
+    fi
+    OMLX_TEMPLATE_CHANGED=0
+  fi
+}
+
+# _omlx_template_overlay_for <served-name> — path of a repo-vendored chat
+# template that REPLACES the HF snapshot's chat_template.jinja in this farm
+# entry, or empty for "use the snapshot's own". Why this exists (2026-09-23):
+# oMLX renders prompts with the tokenizer's chat_template.jinja found in the
+# model dir (engine/vlm.py — no template override of its own, and the
+# mlx-community tokenizer_config.json embeds none), and the mlx-community
+# Gemma 4 QAT repos still ship their 2026-06-05 template. Google's canonical
+# 2026-07-09 revision (google/gemma-4-26B-A4B-it@4d7ae49, 18683 B, sha256
+# ae53464b…c6d4 — byte-identical to the 31B-synced copy in
+# mlx-community/gemma-4-26B-A4B-it-qat-OptiQ-4bit, so one file serves every
+# size) fixes multi-turn tool-call loops (turn-tag balance, thought channel
+# re-opened after tool responses), null/missing-key handling and the OpenAI
+# image_url/input_audio aliases — Google quotes up to +10% tool-call accuracy.
+# The community PR updating the repo (mlx-community #2, 2026-07-18) is
+# unmerged. The FARM is the right layer: model_discovery.py registers
+# --model-dir entries FIRST and drops the HF-cache duplicate of the same id
+# (live omlx-main.log: "Duplicate model_id … keeping version from
+# …/omlx-models/…"), so this copy is what actually loads while the HF cache
+# stays pristine and the served name is unchanged. Wire-compat verified
+# against v0.6.4 source: enable_thinking semantics are identical to the old
+# template (main/main-fast pinning unaffected); tools still render into the
+# system turn (the tool_choice patch appends to the LAST USER turn); the new
+# template's raise_exception on string-typed tool_calls[].function.arguments
+# is defused by api/utils.py::_try_parse_json(), which dict-ifies OpenAI-wire
+# arguments before rendering. RETIRE an entry once its upstream repo ships the
+# canonical template (delete the case line + the vendored file; the next
+# --apply re-symlinks the snapshot file and the hash change restarts the daemon).
+_omlx_template_overlay_for() {
+  case "$1" in
+    mlx-community--gemma-4-26B-A4B-it-qat-4bit|mlx-community--gemma-4-12B-it-qat-4bit|\
+    mlx-community--gemma-4-E4B-it-qat-4bit|mlx-community--gemma-4-E2B-it-qat-4bit)
+      echo "$REPO_DIR/patches/chat-templates/gemma-4-canonical-2026-07-09.jinja" ;;
+    *) echo "" ;;
+  esac
+}
+
+# _omlx_is_our_overlay <file> — true when <file> is byte-identical to one of
+# the vendored templates (prune safety rule, see ensure_omlx_model_dir).
+_omlx_is_our_overlay() {
+  local f=$1 t h
+  [ -f "$f" ] || return 1
+  h=$(hash_file "$f")
+  for t in "$REPO_DIR"/patches/chat-templates/*.jinja; do
+    [ -f "$t" ] || continue
+    [ "$h" = "$(hash_file "$t")" ] && return 0
+  done
+  return 1
 }
 
 # _omlx_symlink_one <catalog-id> <hf-repo> <model-dir-root> <hf-cache-dir>
@@ -1473,6 +1542,10 @@ _omlx_symlink_one() {
   [ -d "$snaproot" ] || return 1
   local served="${repo//\//--}"
   local target="$root/$served"
+  # Hash the EFFECTIVE chat template as the running daemon last loaded it
+  # (hash_file follows the symlink) BEFORE the wipe — "missing" for a brand-new
+  # entry, which no daemon can have loaded yet, so no restart is owed then.
+  local tpl_before; tpl_before=$(hash_file "$target/chat_template.jinja")
   /usr/bin/sudo -u "$TARGET_USER" -H /bin/rm -rf "$target"
   /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$target"
   local snap f base n
@@ -1484,8 +1557,24 @@ _omlx_symlink_one() {
       [ -e "$target/$base" ] || /usr/bin/sudo -u "$TARGET_USER" -H /bin/ln -s "$f" "$target/$base"
     done
   done
+  # Chat-template overlay (see _omlx_template_overlay_for): swap the snapshot
+  # symlink for a real 644 copy of the vendored canonical template.
+  local overlay; overlay=$(_omlx_template_overlay_for "$served")
+  if [ -n "$overlay" ]; then
+    if [ -f "$overlay" ]; then
+      /bin/rm -f "$target/chat_template.jinja"
+      /usr/bin/sudo -u "$TARGET_USER" -H /bin/cp "$overlay" "$target/chat_template.jinja"
+      /bin/chmod 644 "$target/chat_template.jinja"
+    else
+      warn "omlx model-dir: overlay $(basename "$overlay") missing from the repo — $served keeps the HF snapshot's chat_template.jinja"
+    fi
+  fi
+  if [ "$tpl_before" != missing ] && [ "$tpl_before" != "$(hash_file "$target/chat_template.jinja")" ]; then
+    OMLX_TEMPLATE_CHANGED=1
+    ok "omlx model-dir: $served chat_template.jinja changed -> ${overlay:+overlay $(basename "$overlay")}${overlay:-HF snapshot} (daemon restart pending)"
+  fi
   n=$(/usr/bin/find "$target" -type l 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')
-  ok "omlx model-dir: $served ($id, $n files)"
+  ok "omlx model-dir: $served ($id, $n files${overlay:+ + chat-template overlay})"
 }
 
 # ensure_omlx_settings — pre-seed OMLX_MAX_CONTEXT_WINDOW for the ACTIVE main
@@ -1832,17 +1921,17 @@ ensure_python_venvs() {
   # below — alpha-stage/not-on-PyPI, so it needs its own git-clone flow, not
   # this generic pip-spec helper). NOTE: 1.96.1 is yanked on PyPI ("half
   # published", now a 404) — always verify a pin is live+unyanked before
-  # bumping; 1.101.0 verified on PyPI at the 2026-09-16 bump (arm64 abi3 wheel
-  # downloaded into the live venv's pip + unyanked; no CVEs open against
-  # 1.100.0; its embeddings/rerank changes — omit encoding_format when the
-  # client omits it, unique rerank response ids — are benign for the
-  # openai/infinity providers we use).
+  # bumping; 1.102.1 verified on PyPI at the 2026-09-23 bump (stable/1.102.x
+  # backport of Anthropic/type fixes, unyanked, cp310-abi3 macOS-arm64 wheel;
+  # no CVE open against 1.101.0 — every 2026 LiteLLM CVE is fixed at <= 1.84 —
+  # so this is pure maintenance; 1.102.0's ~300 changes touch guardrails/
+  # budgets/MCP/sidecars, nothing in the openai/infinity provider paths we use).
   # The proxy daemon loads litellm at start, so a pin bump must
   # kickstart it — handled right below via the before/after version compare.
   local _litellm_before=""
   [ -x "$vdir/litellm/bin/pip" ] && _litellm_before=$(/usr/bin/sudo -u "$TARGET_USER" -H \
       "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
-  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.101.0'
+  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.102.1'
   local _litellm_after=""
   [ -x "$vdir/litellm/bin/pip" ] && _litellm_after=$(/usr/bin/sudo -u "$TARGET_USER" -H \
       "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
@@ -1858,8 +1947,13 @@ ensure_python_venvs() {
   # (2026-08): upstream moved to a community org (mflux-community/mflux, PyPI
   # name unchanged) and is adding model families + deprecating CLI flags fast —
   # exactly the churn a per-request shell-out server must not absorb silently.
+  # 0.19.1 -> 0.20.0 on 2026-09-23: no breaking CLI changes, mflux-generate-flux2
+  # unchanged; 0.19.2's `--steps`-default fix for custom checkpoints is moot here
+  # (mflux-server.py always passes --steps explicitly); 0.20.0's new Qwen-Image-2.1
+  # CLI is NOT usable on this 32GB Mac (see CLAUDE.md). huggingface_hub 1.22.0
+  # satisfies mflux's >=1.1.6,<2.0.
   if [ "${INSTALL_IMAGES:-0}" = 1 ]; then
-    _ensure_venv mflux bin:mflux-generate 'mflux==0.19.1' 'flask==3.1.3' 'huggingface_hub[cli]==1.22.0'
+    _ensure_venv mflux bin:mflux-generate 'mflux==0.20.0' 'flask==3.1.3' 'huggingface_hub[cli]==1.22.0'
   fi
 }
 
