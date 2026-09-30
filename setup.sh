@@ -1923,17 +1923,19 @@ ensure_python_venvs() {
   # below — alpha-stage/not-on-PyPI, so it needs its own git-clone flow, not
   # this generic pip-spec helper). NOTE: 1.96.1 is yanked on PyPI ("half
   # published", now a 404) — always verify a pin is live+unyanked before
-  # bumping; 1.102.1 verified on PyPI at the 2026-09-23 bump (stable/1.102.x
-  # backport of Anthropic/type fixes, unyanked, cp310-abi3 macOS-arm64 wheel;
-  # no CVE open against 1.101.0 — every 2026 LiteLLM CVE is fixed at <= 1.84 —
-  # so this is pure maintenance; 1.102.0's ~300 changes touch guardrails/
-  # budgets/MCP/sidecars, nothing in the openai/infinity provider paths we use).
+  # bumping; 1.102.2 verified on PyPI at the 2026-09-30 bump (stable/1.102.x
+  # backport binding UI/CLI session tokens to their own AES-GCM context —
+  # auth hardening, unyanked, cp310-abi3 macOS-arm64 wheel; 1.102.1 on
+  # 2026-09-23 was Anthropic/type fixes). No CVE open against 1.102.x — every
+  # 2026 LiteLLM CVE is fixed at <= 1.84 — and 1.102.0's ~300 changes touch
+  # guardrails/budgets/MCP/sidecars, nothing in the openai/infinity provider
+  # paths we use; 1.103.x is a new minor, not taken until there is a reason.
   # The proxy daemon loads litellm at start, so a pin bump must
   # kickstart it — handled right below via the before/after version compare.
   local _litellm_before=""
   [ -x "$vdir/litellm/bin/pip" ] && _litellm_before=$(/usr/bin/sudo -u "$TARGET_USER" -H \
       "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
-  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.102.1'
+  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.102.2'
   local _litellm_after=""
   [ -x "$vdir/litellm/bin/pip" ] && _litellm_after=$(/usr/bin/sudo -u "$TARGET_USER" -H \
       "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
