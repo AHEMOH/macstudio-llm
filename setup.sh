@@ -220,7 +220,7 @@ config_default() {
     LLM_REQUEST_TIMEOUT)         echo 3600 ;;
     TEXT_ENGINE)                 echo omlx ;;
     OMLX_REPO)                   echo https://github.com/jundot/omlx ;;
-    OMLX_REPO_REF)               echo v0.6.4 ;;
+    OMLX_REPO_REF)               echo v0.7.0 ;;
     OMLX_PROJECT_DIR)            echo /Users/mac/projects/omlx ;;
     OMLX_MODEL_DIR)              echo /Users/mac/.cache/omlx-models ;;
     OMLX_MEMORY_GUARD_GB)        echo 30 ;;
@@ -350,7 +350,7 @@ config_hint() {
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
     TEXT_ENGINE)                 echo "Engine serving 'main'/'embed'/'rerank': omlx (UNIFIED text+images+embed+rerank in ONE process, SSD paged-prefix-cache, continuous batching). The only supported engine" ;;
     OMLX_REPO)                   echo "Git URL of oMLX (jundot/omlx), cloned+editable-installed into OMLX_PROJECT_DIR" ;;
-    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.6.4, alpha-stage) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; expect one SSD-prefix-cache cold start per model after a bump). Mirrors MLXVLM_VERSION's old pin discipline" ;;
+    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.7.0, alpha-stage) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; v0.7.0 pinned 2026-10-10 — rebuilt memory guard (--memory-guard-gb unchanged), M1 Max native-decode threadgroup fix, mlx 0.32.2 + custom kernels built at pip install; expect one SSD-prefix-cache cold start per model after a bump). Mirrors MLXVLM_VERSION's old pin discipline" ;;
     OMLX_PROJECT_DIR)            echo "Where ensure_omlx_project() clones+builds oMLX (git clone + pip install -e, one-time + on ref bump during --apply)" ;;
     OMLX_MODEL_DIR)              echo "--model-dir symlink farm (one <org>--<name> HF-repo entry per downloaded row) that makes every model — main AND embed/rerank — discoverable by the one resident oMLX process under its real HF repo name" ;;
     OMLX_MEMORY_GUARD_GB)        echo "oMLX's soft RAM ceiling (--memory-guard-gb) — matches the project's 30GB wired-memory hard rule. oMLX has no hard --max-kv-size-equivalent flag" ;;
@@ -1499,7 +1499,8 @@ ensure_omlx_model_dir() {
 # (live omlx-main.log: "Duplicate model_id … keeping version from
 # …/omlx-models/…"), so this copy is what actually loads while the HF cache
 # stays pristine and the served name is unchanged. Wire-compat verified
-# against v0.6.4 source: enable_thinking semantics are identical to the old
+# against v0.6.4 source (re-checked live on v0.7.0, whose Gemma 4 path
+# renders through the tokenizer's chat template = this overlay): enable_thinking semantics are identical to the old
 # template (main/main-fast pinning unaffected); tools still render into the
 # system turn (the tool_choice patch appends to the LAST USER turn); the new
 # template's raise_exception on string-typed tool_calls[].function.arguments
@@ -1713,14 +1714,14 @@ ensure_omlx_project() {
   # $VENV_DIR/omlx (matches mlxvlm/litellm/infinity/mflux — every wrapper execs
   # "$VENV_DIR/<name>/bin/...", zero special-casing needed).
   #
-  # OMLX_REPO_REF is a PINNED TAG (v0.6.4), not a floating branch — mirrors
+  # OMLX_REPO_REF is a PINNED TAG (v0.7.0), not a floating branch — mirrors
   # MLXVLM_VERSION's old pin discipline. Unlike ensure_voice_project's
   # `git pull --ff-only` (tracks a moving branch), we `fetch` + explicit
   # `checkout "$ref"` every run — a no-op when already on that tag.
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   local dir="${OMLX_PROJECT_DIR:-$TARGET_HOME/projects/omlx}"
   local repo="${OMLX_REPO:-https://github.com/jundot/omlx}"
-  local ref="${OMLX_REPO_REF:-v0.6.4}"
+  local ref="${OMLX_REPO_REF:-v0.7.0}"
   local vdir="${VENV_DIR:-/Users/mac/.macstudio-venvs}/omlx"
   local changed=0
 
@@ -1923,19 +1924,20 @@ ensure_python_venvs() {
   # below — alpha-stage/not-on-PyPI, so it needs its own git-clone flow, not
   # this generic pip-spec helper). NOTE: 1.96.1 is yanked on PyPI ("half
   # published", now a 404) — always verify a pin is live+unyanked before
-  # bumping; 1.102.2 verified on PyPI at the 2026-09-30 bump (stable/1.102.x
-  # backport binding UI/CLI session tokens to their own AES-GCM context —
-  # auth hardening, unyanked, cp310-abi3 macOS-arm64 wheel; 1.102.1 on
-  # 2026-09-23 was Anthropic/type fixes). No CVE open against 1.102.x — every
+  # bumping; 1.102.4 verified on PyPI at the 2026-10-10 bump (stable/1.102.x
+  # maintenance: dependency refresh + spend-logged-once fix #44508, unyanked,
+  # cp310-abi3 macOS-arm64 wheel; 1.102.2 on 2026-09-30 bound UI/CLI session
+  # tokens to their own AES-GCM context; 1.102.1 on 2026-09-23 was
+  # Anthropic/type fixes). No CVE open against 1.102.x — every
   # 2026 LiteLLM CVE is fixed at <= 1.84 — and 1.102.0's ~300 changes touch
   # guardrails/budgets/MCP/sidecars, nothing in the openai/infinity provider
-  # paths we use; 1.103.x is a new minor, not taken until there is a reason.
+  # paths we use; 1.103.x/1.104.x are new minors, not taken until there is a reason.
   # The proxy daemon loads litellm at start, so a pin bump must
   # kickstart it — handled right below via the before/after version compare.
   local _litellm_before=""
   [ -x "$vdir/litellm/bin/pip" ] && _litellm_before=$(/usr/bin/sudo -u "$TARGET_USER" -H \
       "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
-  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.102.2'
+  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.102.4'
   local _litellm_after=""
   [ -x "$vdir/litellm/bin/pip" ] && _litellm_after=$(/usr/bin/sudo -u "$TARGET_USER" -H \
       "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
@@ -1954,10 +1956,15 @@ ensure_python_venvs() {
   # 0.19.1 -> 0.20.0 on 2026-09-23: no breaking CLI changes, mflux-generate-flux2
   # unchanged; 0.19.2's `--steps`-default fix for custom checkpoints is moot here
   # (mflux-server.py always passes --steps explicitly); 0.20.0's new Qwen-Image-2.1
-  # CLI is NOT usable on this 32GB Mac (see CLAUDE.md). huggingface_hub 1.22.0
+  # CLI is NOT usable on this 32GB Mac (see CLAUDE.md). 0.20.0 -> 0.22.0 on
+  # 2026-10-10: 0.21.0 renamed only the --metadata flag family (unused here,
+  # old names kept as aliases) and now refuses checkpoints whose weight names
+  # don't match the model; 0.22.0's "re-save" note covers FLUX.1/FIBO/Qwen-Image
+  # checkpoints, not FLUX.2 Klein; --low-ram now frees the Klein transformer
+  # before VAE decode. huggingface_hub 1.22.0
   # satisfies mflux's >=1.1.6,<2.0.
   if [ "${INSTALL_IMAGES:-0}" = 1 ]; then
-    _ensure_venv mflux bin:mflux-generate 'mflux==0.20.0' 'flask==3.1.3' 'huggingface_hub[cli]==1.22.0'
+    _ensure_venv mflux bin:mflux-generate 'mflux==0.22.0' 'flask==3.1.3' 'huggingface_hub[cli]==1.22.0'
   fi
 }
 
@@ -3647,7 +3654,7 @@ menu_models() {
 menu_updates() {
   load_config
   printf "\n${C_BOLD}── Check for updates (read-only) ──────────────${C_RST}\n"
-  printf "oMLX pin: OMLX_REPO_REF=%s   (engine — frozen unless you bump it)\n\n" "${OMLX_REPO_REF:-v0.6.4}"
+  printf "oMLX pin: OMLX_REPO_REF=%s   (engine — frozen unless you bump it)\n\n" "${OMLX_REPO_REF:-v0.7.0}"
   local odir="${OMLX_PROJECT_DIR:-/Users/mac/projects/omlx}"
   if [ -d "$odir/.git" ]; then
     local installed latest
