@@ -25,6 +25,7 @@ SBIN_DIR=/usr/local/sbin
 PLIST_DIR=/Library/LaunchDaemons
 MOTD_FILE=/etc/motd
 MOTD_BACKUP=/etc/motd.macstudio.bak
+MOTD_BASE=/etc/motd.macstudio.base
 
 # --- Labels & their plist source filenames ---------------------------------
 # Always-on services
@@ -529,7 +530,7 @@ render_template() {
   tmp=$(/usr/bin/mktemp -t macstudio-render)
   # $(...) strips trailing newlines; the printf-x trick preserves them.
   content=$(/bin/cat "$src"; printf 'x'); content=${content%x}
-  for k in "${CONFIG_KEYS[@]}" TOTAL_RAM_GB IDLE_MIN_IMMICH IDLE_MIN_DOCLING AUTOUPDATE_HUMAN; do
+  for k in "${CONFIG_KEYS[@]}" TOTAL_RAM_GB IDLE_MIN_IMMICH IDLE_MIN_DOCLING AUTOUPDATE_HUMAN MOTD_SERVICES; do
     val=${!k:-}
     content=${content//"@${k}@"/$val}
   done
@@ -570,7 +571,12 @@ conf_quote() {
 # arithmetic context (e.g. $(( IDLE_TIMEOUT_IMMICH / 60 ))) executes as root.
 # Any value with a non-digit char is reset to the fallback (default 0).
 sanitize_uint() {
-  local name=$1 fallback=${2:-0} val=${!name:-}
+  # Two `local` statements on purpose: bash expands every word of ONE `local`
+  # before assigning any, so `local name=$1 val=${!name}` read the CALLER's
+  # (unset) $name and every value silently became the fallback 0 — which
+  # rendered the autoupdate plist as Sun 00:00 and the motd idle times as 0m.
+  local name=$1 fallback=${2:-0}
+  local val=${!name:-}
   case "$val" in
     ''|*[!0-9]*) printf -v "$name" '%s' "$fallback" ;;
   esac
@@ -579,7 +585,8 @@ sanitize_uint() {
 # Like sanitize_uint but allows a single leading '-' (e.g. IDLE_TIMEOUT_* use
 # -1 = "never sleep"). Still rejects anything else, so no $(...)/[...] survives.
 sanitize_int() {
-  local name=$1 fallback=${2:-0} val=${!name:-}
+  local name=$1 fallback=${2:-0}   # two statements — see sanitize_uint
+  local val=${!name:-}
   case "$val" in
     ''|-|*[!0-9-]*|?*-*) printf -v "$name" '%s' "$fallback" ;;
   esac
@@ -615,6 +622,48 @@ write_default_config() {
     done
   } >"$CONF_FILE"
   /bin/chmod 644 "$CONF_FILE"
+}
+
+# motd_services — the gate-aware service lines for /etc/motd (@MOTD_SERVICES@).
+# Same INSTALL_* gates as ACTIVE_LABELS below; only enabled pieces are listed.
+# Printed as indented "Label    item · item" lines, wrapped at ~66 columns.
+motd_services() {
+  local od=() web=() other=()
+  [ "${INSTALL_IMAGES:-0}" = 1 ] && od+=("images :${IMAGES_PUBLIC_PORT:-5005}")
+  if [ "${INSTALL_VOICE:-0}" = 1 ]; then
+    od+=("stt :${VOICESTT_PUBLIC_PORT:-5006}" "tts :${VOICETTS_PUBLIC_PORT:-5007}" "wyoming :${VOICE_WYOMING_PUBLIC_PORT:-10300}")
+  fi
+  [ "${INSTALL_IMMICH:-0}" = 1 ] && od+=("immich-ml :${ML_PUBLIC_PORT:-3003}")
+  [ "${INSTALL_DOCLING:-1}" = 1 ] && od+=("docling :${DOCLING_PUBLIC_PORT:-5001}")
+  [ "${INSTALL_DASHBOARD:-1}" = 1 ] && web+=("dashboard :${DASHBOARD_PORT:-8090}")
+  if [ "${INSTALL_REMOTE:-1}" = 1 ]; then
+    web+=("VNC :5900")
+    [ "${INSTALL_NOVNC:-1}" = 1 ] && web+=("noVNC :${NOVNC_PORT:-6080}")
+  fi
+  [ "${INSTALL_PAPERLESS_OCR:-0}" = 1 ] && other+=("paperless-ocr")
+  [ "${INSTALL_MQTT:-0}" = 1 ] && other+=("MQTT → HA")
+  [ "${INSTALL_EXPORTERS:-0}" = 1 ] && other+=("exporters :${NODE_EXPORTER_PORT:-9100}/${SILICON_EXPORTER_PORT:-9101}/${ONDEMAND_EXPORTER_PORT:-9103}")
+  local first=1
+  _motd_line() {   # _motd_line <label> <items...>
+    local label=$1; shift
+    [ "$#" -gt 0 ] || return 0
+    local line pad item
+    pad=$(printf '  %-11s' "$label")
+    line=$pad
+    for item in "$@"; do
+      if [ "$line" = "$pad" ]; then line="$line$item"
+      elif [ $(( ${#line} + ${#item} + 3 )) -gt 66 ]; then
+        [ "$first" = 1 ] || printf '
+'; first=0; printf '%s' "$line"
+        line="$(printf '  %-11s' '')$item"
+      else line="$line · $item"; fi
+    done
+    [ "$first" = 1 ] || printf '
+'; first=0; printf '%s' "$line"
+  }
+  _motd_line "On-demand" "${od[@]}"
+  _motd_line "Web" "${web[@]}"
+  _motd_line "Other" "${other[@]}"
 }
 
 load_config() {
@@ -663,6 +712,7 @@ load_config() {
   export IDLE_MIN_DOCLING=$(( IDLE_TIMEOUT_DOCLING / 60 ))
   local dow_names=(Sun Mon Tue Wed Thu Fri Sat)
   export AUTOUPDATE_HUMAN="$(printf '%s %02d:%02d' "${dow_names[$AUTOUPDATE_WEEKDAY]:-?}" "$AUTOUPDATE_HOUR" "$AUTOUPDATE_MINUTE")"
+  export MOTD_SERVICES="$(motd_services)"
   # Compute ACTIVE_LABELS — the subset of ALL_LABELS the current config says
   # should be installed. Used by status/service-control menus. ALL_LABELS is
   # still the authoritative list for plist cleanup on toggle-off.
@@ -2468,6 +2518,9 @@ render_services() {
   if install_if_different "$REPO_DIR/services/weekly-autoupdate.sh" "$SBIN_DIR/weekly-autoupdate.sh" 755; then
     changed=$((changed+1)); ok "updated $SBIN_DIR/weekly-autoupdate.sh"
   fi
+  if install_if_different "$REPO_DIR/services/motd-compose.sh" "$SBIN_DIR/motd-compose.sh" 755; then
+    changed=$((changed+1)); ok "updated $SBIN_DIR/motd-compose.sh"
+  fi
   # The dashboard SPA is a data file dashboard.py re-reads from disk (mtime
   # cache) — an html-only change needs NO daemon restart, so it is deliberately
   # not mapped in service_py_label.
@@ -2583,7 +2636,13 @@ render_motd() {
   if [ ! -f "$MOTD_BACKUP" ] && [ -f "$MOTD_FILE" ]; then
     /bin/cp -f "$MOTD_FILE" "$MOTD_BACKUP"
   fi
-  if render_template "$REPO_DIR/motd.txt" "$MOTD_FILE" 644 root:wheel; then
+  # Two layers: the static template renders into $MOTD_BASE; motd-compose.sh
+  # then writes /etc/motd = base + an optional "action needed" block for the
+  # runtime flags the weekly autoupdate leaves (/var/macstudio/*-pending). The
+  # autoupdate re-runs the composer itself, so the block appears/clears without
+  # an --apply. Both steps write only on a real diff.
+  render_template "$REPO_DIR/motd.txt" "$MOTD_BASE" 644 root:wheel || true
+  if [ -x "$SBIN_DIR/motd-compose.sh" ]      && "$SBIN_DIR/motd-compose.sh" "$MOTD_BASE" "$MOTD_FILE"; then
     ok "motd updated"
   fi
   # Ensure sshd actually shows it
@@ -3661,15 +3720,17 @@ menu_updates() {
     installed=$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$odir" describe --tags --exact-match 2>/dev/null \
       || /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$odir" rev-parse --short HEAD 2>/dev/null)
     latest=$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git ls-remote --tags --refs "${OMLX_REPO:-https://github.com/jundot/omlx}" 2>/dev/null \
-      | /usr/bin/awk -F/ '{print $NF}' | /usr/bin/sort -V | /usr/bin/tail -1)
+      | /usr/bin/awk -F/ '{print $NF}' | /usr/bin/grep -viE 'dev|rc|a[0-9]|b[0-9]' \
+      | /usr/bin/sort -V | /usr/bin/tail -1)   # stable tags only — we never pin dev/rc
     printf "  %-10s installed=%-11s latest_tag=%-11s%s\n" omlx "${installed:-?}" "${latest:-?}" \
       "$([ -n "$latest" ] && [ "$installed" != "$latest" ] && echo '   <-- newer available')"
   fi
   printf "\nLLM stack (installed vs PyPI):\n"
   local pair vn pk py
-  for pair in litellm:litellm; do
+  for pair in litellm:litellm mflux:mflux; do
     vn=${pair%%:*}; pk=${pair##*:}
     py="${VENV_DIR:-/Users/mac/.macstudio-venvs}/$vn/bin/python"
+    [ "$vn" = mflux ] && [ "${INSTALL_IMAGES:-0}" != 1 ] && continue
     if [ ! -x "$py" ]; then printf "  %-10s (venv not built)\n" "$pk"; continue; fi
     /usr/bin/sudo -u "$TARGET_USER" -H "$py" - "$pk" <<'PY' 2>/dev/null || printf "  %-10s (check failed)\n" "$pk"
 import sys, json, urllib.request, importlib.metadata as M
@@ -3690,10 +3751,25 @@ except Exception:
     print("  %-10s installed=%-11s (PyPI n/a — offline?)" % (pkg, cur))
 PY
   done
-  printf "\nHomebrew packages (auto-updated weekly):\n"
+  local vdir="${VOICE_PROJECT_DIR:-/Users/mac/projects/macos-speech-server}"
+  if [ "${INSTALL_VOICE:-0}" = 1 ] && [ -d "$vdir/.git" ]; then
+    local vurl vhead vpin
+    vurl=$(/usr/bin/git -C "$vdir" remote get-url origin 2>/dev/null)
+    vhead=$(/usr/bin/git ls-remote "$vurl" HEAD 2>/dev/null | /usr/bin/cut -c1-7)
+    vpin=$(printf '%s' "${VOICE_REPO_REF:-?}" | /usr/bin/cut -c1-7)
+    printf "  %-10s pinned=%-14s upstream_head=%-8s%s\n" voice "$vpin" "${vhead:-?}" \
+      "$([ -n "$vhead" ] && [ "$vhead" != "$vpin" ] && echo '   <-- upstream moved')"
+  fi
+  printf "\nHomebrew packages (all upgraded by the weekly job):\n"
   brew_ outdated 2>/dev/null | /usr/bin/sed 's/^/  /' || echo "  (brew n/a)"
-  printf "macOS updates:\n"
-  /usr/sbin/softwareupdate -l 2>&1 | /usr/bin/grep -iE 'label:|recommended|^\* |no new software' | /usr/bin/sed 's/^/  /' | /usr/bin/head -8
+  printf "macOS updates (weekly job installs non-OS items; OS updates need you):\n"
+  /usr/sbin/softwareupdate -l 2>&1 | /usr/bin/grep -iE 'title:|no new software' \
+    | /usr/bin/sed 's/^[[:space:]]*/  /' | /usr/bin/head -8
+  if [ -s /var/macstudio/update-pending ]; then
+    printf "  downloaded, waiting for you:\n"
+    /usr/bin/sed 's/.*/    sudo softwareupdate -i "&" -R/' /var/macstudio/update-pending
+  fi
+  [ -f /var/macstudio/reboot-pending ] && printf "  restart pending — run: sudo reboot\n"
   printf "\n${C_DIM}Upgrade the LLM stack on purpose: menu 4 -> set OMLX_REPO_REF -> menu 1.${C_RST}\n"
   pause_enter
 }
@@ -3836,7 +3912,7 @@ menu_uninstall() {
               "$LIBEXEC_DIR"/vnc-secfilter.py
   /bin/rm -rf /usr/local/etc/macstudio-models
   /bin/rm -f /usr/local/etc/litellm.config.yaml
-  /bin/rm -f "$SBIN_DIR/set-iogpu-wired-limit.sh" "$SBIN_DIR/weekly-autoupdate.sh"
+  /bin/rm -f "$SBIN_DIR/set-iogpu-wired-limit.sh" "$SBIN_DIR/weekly-autoupdate.sh" \n             "$SBIN_DIR/motd-compose.sh" "$MOTD_BASE"
   for b in llm-status llm-restart llm-update llm-service-ctl llm-logs llm-models paperless-ocr; do
     /bin/rm -f "$BIN_DIR/$b"
   done

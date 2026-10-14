@@ -1,43 +1,17 @@
-══════════════════════════════════════════════════════════════════════
-  Mac Studio Headless LLM Server          (Apple Silicon, @TOTAL_RAM_GB@ GB)
-══════════════════════════════════════════════════════════════════════
-  Primary:    LiteLLM       :@LITELLM_PORT@   (public gateway; alias 'main' → one MLX model)
-              oMLX          :@MAIN_BACKEND_PORT@   (internal; unified text+images+embed+rerank)
-  On-demand:  immich-ml     :@ML_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_IMMICH@m)
-              docling-serve :@DOCLING_PUBLIC_PORT@    (auto-wakes, idle → sleep @IDLE_MIN_DOCLING@m)
-  Monitoring (opt-in): node_exporter :@NODE_EXPORTER_PORT@
-              silicon       :@SILICON_EXPORTER_PORT@   (GPU, power, thermal, mem-pressure)
-              ondemand      :@ONDEMAND_EXPORTER_PORT@   (proxy + backend state)
-══════════════════════════════════════════════════════════════════════
-  Commands (type them directly — already on PATH):
-    llm-status                      full service + memory overview
-    llm-models                      download MLX models, pick the active main/embed/rerank
-                                    (in there: 't' stores your HuggingFace token,
-                                     needed for gated repos like Gemma — never in git)
-    llm-restart [service|all]       restart services
-    llm-update                      run brew+pip+softwareupdate now
-    llm-service-ctl wake  images    force-wake on-demand service
-    llm-service-ctl sleep docling   force-sleep on-demand service
-    llm-logs [service]              tail /var/log/macstudio/<svc>.log
-    sudo mactop                     live GPU/ANE/CPU/RAM/power TUI
-    sudo macmon                     alternative Apple-Silicon TUI
-
-  Using the model (apps point at the LiteLLM gateway, OpenAI/Anthropic API):
-    curl http://localhost:@LITELLM_PORT@/v1/chat/completions \
-      -d '{"model":"main","messages":[{"role":"user","content":"hi"}]}'
-    The 'main' alias stays stable — switching the underlying model is an
-    explicit step via 'llm-models' and never happens on the fly.
-
-  Dashboard:    http://<this-mac>:@DASHBOARD_PORT@   (browser control — token: DASHBOARD_TOKEN in macstudio.conf)
-  Settings:     cd ~/macstudio-llm && sudo bash setup.sh   (menu-driven TUI)
-  Logs:         tail -F /var/log/macstudio/omlx-main.log    (or litellm.log / images-serve.log)
-  Weekly auto:  @AUTOUPDATE_HUMAN@ → /var/log/macstudio/autoupdate.log
-
-  Maintenance (FileVault is ON — reboot needs a key):
-    sudo fdesetup authrestart       reboot headlessly, stays unattended
-    sudo fdesetup authrestart -delayminutes N   reboot after N minutes
-    cat /var/macstudio/reboot-pending  shows if weekly autoupdate is waiting
-                                      on a reboot (run authrestart to clear)
-    NEVER use plain 'sudo reboot' or 'shutdown -r' — the Mac will wait at
-    the FileVault prompt until someone types a password at the console.
-══════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════
+  Mac Studio LLM Server · @TOTAL_RAM_GB@ GB · main = @ALIAS_MAIN@
+══════════════════════════════════════════════════════════════════
+  Gateway    LiteLLM :@LITELLM_PORT@ → main · main-fast · embed · rerank
+@MOTD_SERVICES@
+──────────────────────────────────────────────────────────────────
+  llm-status              services + memory overview
+  llm-models              download / switch models, HF token ('t')
+  llm-logs <svc>          tail a log    ·   llm-restart <svc|all>
+  llm-service-ctl wake|sleep <svc>      force an on-demand service
+  llm-update              run the weekly update now
+  sudo bash ~/macstudio-llm/setup.sh    settings TUI
+  sudo mactop / macmon    live GPU/CPU/power
+──────────────────────────────────────────────────────────────────
+  Weekly update @AUTOUPDATE_HUMAN@: macOS (non-OS items) + Homebrew;
+  LLM stack stays pinned. Reboot: plain 'sudo reboot' is fine.
+══════════════════════════════════════════════════════════════════
