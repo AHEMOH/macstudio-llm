@@ -2946,10 +2946,14 @@ verify_and_summary() {
 
   echo
   # Scheduled
-  local next
-  next=$(/bin/launchctl print system/com.local.weekly.autoupdate 2>/dev/null \
-         | awk '/next run/{print; exit}')
-  printf "Scheduled autoupdate: %s\n" "${next:-(not scheduled)}"
+  # `launchctl print` has no "next run" line — it lists the calendar descriptor
+  # under "event triggers". Loaded + has a calendar trigger = scheduled.
+  if /bin/launchctl print system/com.local.weekly.autoupdate 2>/dev/null \
+       | /usr/bin/grep -q 'com.apple.launchd.calendarinterval'; then
+    printf "Scheduled autoupdate: weekly %s\n" "${AUTOUPDATE_HUMAN:-?}"
+  else
+    printf "Scheduled autoupdate: (not scheduled)\n"
+  fi
 
   if [ "${INSTALL_DASHBOARD:-1}" = 1 ]; then
     printf "Web dashboard: http://%s:%s/  (token: DASHBOARD_TOKEN in %s)\n" \
