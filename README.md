@@ -66,8 +66,10 @@ raise a couple of config keys.
 - **On-demand companions** on :3003 (immich-ml) and :5001 (docling-serve),
   optional — public ports always listen; the real backend wakes on request and
   sleeps after 15 min, freeing RAM.
-- **Weekly auto-update** (Sat 06:00): **OS + brew system packages only**
-  (`brew update`, macOS security updates). The model/LLM stack is **frozen** —
+- **Weekly auto-update** (Sat 06:00): **OS + Homebrew only** (`brew upgrade`
+  of all formulas, password-free macOS items such as Safari). macOS OS updates
+  need your password on Apple Silicon, so the job only downloads them and the
+  SSH login banner shows the one command to run. The model/LLM stack is **frozen** —
   `oMLX` is pinned via `OMLX_REPO_REF`, and `litellm`/models are never
   auto-upgraded (a surprise version jump once broke a model). The run logs which
   LLM versions are available but held. Bump them deliberately via
@@ -130,7 +132,7 @@ Opt-in Home Assistant (INSTALL_MQTT=1, off by default):
 One-shot at boot:
   com.local.iogpu.wiredlimit                sets iogpu.wired_limit_mb
 Scheduled (Sat 06:00 default):
-  com.local.weekly.autoupdate               brew + macOS security updates (LLM stack frozen)
+  com.local.weekly.autoupdate               brew + macOS updates (OS: notify-only; LLM stack frozen)
 ```
 
 The main model is kept warm; switching it is an **explicit** action (pick in
@@ -438,15 +440,18 @@ use the menu) to change a live box.
 
 ## Updating & version pinning
 
-The weekly job updates **only the OS and brew system packages**; everything that
+The weekly job updates **only macOS and Homebrew** (`brew upgrade` of every
+formula; macOS OS updates are downloaded and announced in the login banner,
+because installing them needs your password); everything that
 serves a model (`oMLX`, `litellm`, `immich-ml`, `docling`, and the model
 weights) stays put until you change it on purpose (a floating auto-upgrade once
 broke a loaded model).
 
 - **See what's available** (read-only): `sudo bash setup.sh --check-updates`
   (or main-menu *Check for updates*). Shows the installed vs latest GitHub tag
-  for oMLX (it isn't on PyPI), installed vs PyPI for `litellm`, `brew
-  outdated`, and macOS updates.
+  for oMLX (it isn't on PyPI; stable tags only), installed vs PyPI for
+  `litellm`/`mflux`, the voice pin vs upstream HEAD, `brew outdated`, macOS
+  updates and any pending update/restart.
 - **Upgrade the engine on purpose:** set `OMLX_REPO_REF` (menu 4, or edit
   `macstudio.conf`) then `sudo bash setup.sh --apply`. The installer checks out
   that exact tag, reinstalls the venv, and restarts `com.local.omlx.main`. It's
@@ -548,7 +553,7 @@ from a short cold-start latency. (`main`/`embed`/`rerank` are NOT on-demand —
 ```
 <repo root>/
 ├── setup.sh            single TUI / --apply entry point
-├── motd.txt            SSH-login banner template
+├── motd.txt            SSH-login banner template (+ gate-aware service lines, "action needed" block)
 ├── models/catalog.tsv  model catalog seed
 ├── wrappers/           scripts plists execute (start-omlx-main, start-litellm, …)
 ├── bin/                user commands (llm-*)
@@ -561,7 +566,7 @@ from a short cold-start latency. (`main`/`embed`/`rerank` are NOT on-demand —
 On the Mac after `--apply`:
 ```
 /usr/local/bin/                 llm-status, llm-models, llm-restart, llm-update, llm-service-ctl, llm-logs
-/usr/local/sbin/                set-iogpu-wired-limit.sh, weekly-autoupdate.sh
+/usr/local/sbin/                set-iogpu-wired-limit.sh, weekly-autoupdate.sh, motd-compose.sh
 /usr/local/libexec/             wrappers + Python services
 /usr/local/etc/macstudio.conf   config (source of truth)
 /usr/local/etc/macstudio-models/catalog.tsv   live model catalog (TUI-managed)
@@ -583,8 +588,9 @@ On the Mac after `--apply`:
 | Need image/vision input | The unified oMLX `main` is multimodal — send `image_url` straight to `main` (or `main-fast`), image **before** the text. For bulk document OCR into paperless, use the separate paperless-ocr service. |
 | Download is slow / rate-limited | Set your HF token: `llm-models` → `t`. |
 | `memory_pressure` reports `Warn` with a model loaded | Use a smaller model, lower `OMLX_MAX_CONTEXT_WINDOW`/`OMLX_MEMORY_GUARD_GB`, or `IOGPU_WIRED_LIMIT_MB` by 1024, via `setup.sh` menu 4. |
-| Mac doesn't come back after reboot / power loss | **FileVault is ON** and no console operator. Use `sudo fdesetup authrestart` for planned reboots; never plain `sudo reboot` on a headless FileVault Mac. |
-| `/var/macstudio/reboot-pending` exists | Weekly autoupdate needs a restart it refused to do (FileVault). Clear with `sudo fdesetup authrestart`. |
+| Mac doesn't come back after reboot / power loss | FileVault must stay **off** (it blocks SSH and the auto-login session until someone unlocks the disk at the console). Check with `fdesetup status`; plain `sudo reboot` is then safe. |
+| `/var/macstudio/update-pending` exists (login banner says *ACTION NEEDED*) | The weekly job downloaded a macOS update it can't install without your password. Run the shown `sudo softwareupdate -i "<label>" -R` (asks the password, reboots). |
+| `/var/macstudio/reboot-pending` exists | An update installed by the weekly job needs a restart: `sudo reboot`. The flag clears on the next weekly run after the reboot. |
 
 ## Uninstalling
 
