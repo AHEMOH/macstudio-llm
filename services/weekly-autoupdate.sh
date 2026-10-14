@@ -139,7 +139,12 @@ while IFS="$tab" read -r label version; do
     macOS*)
       if [ "${version%%.*}" = "$cur_major" ]; then
         echo "  macOS update (current major $cur_major): $label — downloading only (install needs your password)"
-        /usr/sbin/softwareupdate -d "$label" 2>&1 | /usr/bin/tail -3
+        # </dev/null: softwareupdate reads stdin and would otherwise swallow the
+        # rest of this loop's list (2026-10-14: the 27.x line never got logged).
+        # Its trailing "Failed to authenticate" after a SUCCESSFUL download is
+        # the install-preparation step we deliberately leave to the user.
+        /usr/sbin/softwareupdate -d "$label" </dev/null 2>&1 \
+          | /usr/bin/grep -v "Failed to authenticate" | /usr/bin/tail -3
         pending_os="${pending_os}${label}
 "
       else
@@ -148,7 +153,7 @@ while IFS="$tab" read -r label version; do
       ;;
     *)
       echo "  installing: $label"
-      /usr/sbin/softwareupdate -i "$label" --agree-to-license 2>&1 | /usr/bin/tee -a "$su_out"
+      /usr/sbin/softwareupdate -i "$label" --agree-to-license </dev/null 2>&1 | /usr/bin/tee -a "$su_out"
       ;;
   esac
 done <<EOF_UPDATES
