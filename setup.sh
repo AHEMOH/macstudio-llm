@@ -92,6 +92,7 @@ CONFIG_KEYS=(
   OMLX_SSD_CACHE_DIR
   OMLX_SSD_CACHE_MAX_SIZE
   OMLX_HOT_CACHE_MAX_SIZE
+  OMLX_NATIVE_KERNELS
   OMLX_MAX_CONCURRENT_REQUESTS
   OMLX_MAX_CONTEXT_WINDOW
   OMLX_BIND_HOST
@@ -221,13 +222,14 @@ config_default() {
     LLM_REQUEST_TIMEOUT)         echo 3600 ;;
     TEXT_ENGINE)                 echo omlx ;;
     OMLX_REPO)                   echo https://github.com/jundot/omlx ;;
-    OMLX_REPO_REF)               echo v0.7.0 ;;
+    OMLX_REPO_REF)               echo v0.7.3.dev1 ;;
     OMLX_PROJECT_DIR)            echo /Users/mac/projects/omlx ;;
     OMLX_MODEL_DIR)              echo /Users/mac/.cache/omlx-models ;;
     OMLX_MEMORY_GUARD_GB)        echo 30 ;;
     OMLX_SSD_CACHE_DIR)          echo /Users/mac/.cache/omlx-ssd-cache ;;
     OMLX_SSD_CACHE_MAX_SIZE)     echo 20GB ;;
     OMLX_HOT_CACHE_MAX_SIZE)     echo "" ;;
+    OMLX_NATIVE_KERNELS)         echo 1 ;;
     OMLX_MAX_CONCURRENT_REQUESTS) echo 8 ;;
     OMLX_MAX_CONTEXT_WINDOW)     echo 65536 ;;
     OMLX_BIND_HOST)              echo 127.0.0.1 ;;
@@ -351,13 +353,14 @@ config_hint() {
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
     TEXT_ENGINE)                 echo "Engine serving 'main'/'embed'/'rerank': omlx (UNIFIED text+images+embed+rerank in ONE process, SSD paged-prefix-cache, continuous batching). The only supported engine" ;;
     OMLX_REPO)                   echo "Git URL of oMLX (jundot/omlx), cloned+editable-installed into OMLX_PROJECT_DIR" ;;
-    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.7.0, alpha-stage) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; v0.7.0 pinned 2026-10-10 — rebuilt memory guard (--memory-guard-gb unchanged), M1 Max native-decode threadgroup fix, mlx 0.32.2 + custom kernels built at pip install; expect one SSD-prefix-cache cold start per model after a bump). Mirrors MLXVLM_VERSION's old pin discipline" ;;
+    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.7.3.dev1, alpha-stage — a deliberate DEV-tag exception 2026-10-24: +6-12% decode/prefill for gemma4 on M1 Max incl. M1-specific attention routes; return to stable tags at v0.7.3) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; v0.7.0 pinned 2026-10-10 — rebuilt memory guard (--memory-guard-gb unchanged), M1 Max native-decode threadgroup fix, mlx 0.32.2 + custom kernels built at pip install; expect one SSD-prefix-cache cold start per model after a bump). Mirrors MLXVLM_VERSION's old pin discipline" ;;
     OMLX_PROJECT_DIR)            echo "Where ensure_omlx_project() clones+builds oMLX (git clone + pip install -e, one-time + on ref bump during --apply)" ;;
     OMLX_MODEL_DIR)              echo "--model-dir symlink farm (one <org>--<name> HF-repo entry per downloaded row) that makes every model — main AND embed/rerank — discoverable by the one resident oMLX process under its real HF repo name" ;;
     OMLX_MEMORY_GUARD_GB)        echo "oMLX's soft RAM ceiling (--memory-guard-gb) — matches the project's 30GB wired-memory hard rule. oMLX has no hard --max-kv-size-equivalent flag" ;;
     OMLX_SSD_CACHE_DIR)          echo "oMLX's paged-prefix SSD cache directory (--paged-ssd-cache-dir) — gives ~15x TTFT on repeated long prompts. Empty = disabled" ;;
     OMLX_SSD_CACHE_MAX_SIZE)     echo "Max size of the SSD paged-prefix cache (--paged-ssd-cache-max-size), e.g. 20GB" ;;
     OMLX_HOT_CACHE_MAX_SIZE)     echo "oMLX in-memory hot-cache max size (--hot-cache-max-size). Empty = oMLX default" ;;
+    OMLX_NATIVE_KERNELS)         echo "1 = build oMLX's native Metal kernels (make kernels; needs full Xcode + 'xcodebuild -downloadComponent MetalToolchain' + cmake). Gives one shared Metal command queue for main+embed+rerank (no multi-model GPU hang, #4224). 0 = skip, delete built kernels → generic MLX paths" ;;
     OMLX_MAX_CONCURRENT_REQUESTS) echo "oMLX max concurrent in-flight requests (--max-concurrent-requests, continuous batching). Default 8" ;;
     OMLX_MAX_CONTEXT_WINDOW)     echo "Per-model context cap for the active main, pre-seeded into ~/.omlx/model_settings.json (NOT a CLI flag — oMLX has no --max-kv-size equivalent). Default 65536 (64K), preserving today's documented ceiling" ;;
     OMLX_BIND_HOST)              echo "--host oMLX binds. Default 127.0.0.1 (LiteLLM-only, matches every other backend in this repo). Set to 0.0.0.0 to also expose oMLX's own OpenAI/Anthropic/audio API + admin panel directly on the LAN (e.g. for a client that wants oMLX's native /v1/messages, not LiteLLM's translation) — do this ONLY after OMLX_API_KEY is set, since oMLX's inference routes have no auth at all otherwise" ;;
@@ -997,6 +1000,9 @@ ensure_formulas() {
   # work with zero extra dependencies. say-tts-server.py degrades gracefully
   # (501 with a clear message) if this is missing.
   [ "${INSTALL_VOICE:-0}" = 1 ] && ensure_formula ffmpeg
+  # oMLX ≥ v0.7.1 builds its native Metal kernels via `make kernels` (CMake +
+  # nanobind), no longer during `pip install -e` — see ensure_omlx_kernels().
+  [ "${INSTALL_MLX:-1}" = 1 ] && ensure_formula cmake
   # Official Immich-ML image runs under Colima (Docker on a Lima/Virtualization.framework
   # VM) rather than a python venv — see ensure_immich_ml_container().
   if [ "${INSTALL_IMMICH:-0}" = 1 ]; then
@@ -1764,14 +1770,14 @@ ensure_omlx_project() {
   # $VENV_DIR/omlx (matches mlxvlm/litellm/infinity/mflux — every wrapper execs
   # "$VENV_DIR/<name>/bin/...", zero special-casing needed).
   #
-  # OMLX_REPO_REF is a PINNED TAG (v0.7.0), not a floating branch — mirrors
+  # OMLX_REPO_REF is a PINNED TAG (v0.7.3.dev1), not a floating branch — mirrors
   # MLXVLM_VERSION's old pin discipline. Unlike ensure_voice_project's
   # `git pull --ff-only` (tracks a moving branch), we `fetch` + explicit
   # `checkout "$ref"` every run — a no-op when already on that tag.
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   local dir="${OMLX_PROJECT_DIR:-$TARGET_HOME/projects/omlx}"
   local repo="${OMLX_REPO:-https://github.com/jundot/omlx}"
-  local ref="${OMLX_REPO_REF:-v0.7.0}"
+  local ref="${OMLX_REPO_REF:-v0.7.3.dev1}"
   local vdir="${VENV_DIR:-/Users/mac/.macstudio-venvs}/omlx"
   local changed=0
 
@@ -1833,9 +1839,15 @@ ensure_omlx_project() {
   # the system turn (0/8 forced calls at temperature 0, even when the client
   # itself put it there) but follows it in the user turn (6/6 incl. a
   # paperless-like classification tool, thinking on/off). Touches only
-  # create_chat_completion — NOT create_response, which has no `tools_disabled`
-  # in scope. Verified: required + named tool_choice emit tool_calls, while
-  # bare (no tool_choice) and `none` keep their previous behaviour.
+  # create_chat_completion — NOT create_response. Verified: required + named
+  # tool_choice emit tool_calls, while bare (no tool_choice) and `none` keep
+  # their previous behaviour.
+  # Rewritten 2026-10-24 for v0.7.x, which moved tool resolution into
+  # `_resolve_template_tools()`: the old hunk still passed `git apply --check`
+  # but landed in create_response (Responses API) — forced calls silently went
+  # 0/6. The new patch adds `_forced_tool_instruction()` and calls it right
+  # after `_resolve_template_tools(request, …)`; the awk check below makes a
+  # mis-placed hunk loud instead of silent.
   # Upstream fixed the identical gap for the Anthropic endpoint (jundot/omlx#1258,
   # closed completed 2026-07-07) but never for OpenAI chat — retire this patch
   # if that lands. oMLX is installed editable (`pip install -e`), so a source
@@ -1847,6 +1859,10 @@ ensure_omlx_project() {
       ok "applied oMLX tool_choice patch"
     else
       warn "failed to apply oMLX tool_choice patch; see $LOG_DIR/omlx-patch.log (continuing unpatched — clients that force a tool call, e.g. paperless-ngx AI suggestions, will fail)"
+    fi
+    if ! /usr/bin/awk '/^(async )?def /{inf=($0 ~ /^async def create_chat_completion\(/)}
+                       inf && /_forced_tool_instruction\(/{f=1} END{exit !f}' "$dir/omlx/server.py"; then
+      warn "oMLX tool_choice patch did NOT land in create_chat_completion — forced tool calls (paperless-ngx AI suggestions) will fail; the patch needs re-basing onto $ref"
     fi
     [ "$srv_before" != "$(hash_file "$dir/omlx/server.py")" ] && changed=1
   fi
@@ -1874,6 +1890,45 @@ ensure_omlx_project() {
       return 1
     fi
     /usr/bin/sudo -u "$TARGET_USER" -H /bin/sh -c "printf '%s' '$want_hash' > '$stamp'"
+    changed=1
+  fi
+
+  # Native Metal kernels. Since v0.7.1 `pip install -e` no longer builds them —
+  # only upstream's `make kernels` does (CMake + nanobind + the Metal compiler,
+  # i.e. full Xcode plus `xcodebuild -downloadComponent MetalToolchain`; the
+  # CommandLineTools alone have no `metal`). Without them oMLX falls back to
+  # generic MLX paths AND gives every loaded model its own Metal command queue,
+  # which upstream warns can hang the GPU when several models are busy (#4224)
+  # — exactly our main+embed+rerank-in-one-process setup. The built .so/.metallib
+  # files are untracked, so they survive the `git checkout -- .` above; the stamp
+  # (HEAD sha) rebuilds them only on a ref bump or when the status probe reports
+  # a kernel missing.
+  local kstamp="$vdir/.kernels.stamp"
+  local khead; khead=$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" rev-parse HEAD 2>/dev/null)
+  if [ "${OMLX_NATIVE_KERNELS:-1}" = 1 ]; then
+    local kprobe="from omlx.custom_kernels import native_kernel_status as s; import sys; sys.exit(0 if all(v['available'] for v in s().values()) else 1)"
+    if [ "$khead" = "$(/bin/cat "$kstamp" 2>/dev/null)" ] \
+       && /usr/bin/sudo -u "$TARGET_USER" -H "$vdir/bin/python" -c "$kprobe" >/dev/null 2>&1; then
+      ok "oMLX native kernels present"
+    elif ! /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/xcrun metal --version >/dev/null 2>&1; then
+      warn "oMLX native kernels skipped: no Metal compiler. Install Xcode (App Store), then 'sudo xcodebuild -license accept' and 'sudo xcodebuild -downloadComponent MetalToolchain', and re-run --apply"
+    elif [ ! -x /opt/homebrew/bin/cmake ]; then
+      warn "oMLX native kernels skipped: cmake missing (brew install cmake), then re-run --apply"
+    else
+      log "building oMLX native kernels (make kernels; a few minutes)"
+      if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+            /usr/bin/make -C "$dir" kernels PYTHON="$vdir/bin/python" >"$LOG_DIR/omlx-kernels.log" 2>&1; then
+        /usr/bin/sudo -u "$TARGET_USER" -H /bin/sh -c "printf '%s' '$khead' > '$kstamp'"
+        ok "oMLX native kernels built"
+        changed=1
+      else
+        warn "oMLX native kernel build failed; see $LOG_DIR/omlx-kernels.log (continuing on generic MLX paths)"
+      fi
+    fi
+  elif /bin/ls "$dir"/omlx/custom_kernels/*/*.so >/dev/null 2>&1; then
+    /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/make -C "$dir" clean-kernels >/dev/null 2>&1
+    /bin/rm -f "$kstamp"
+    ok "removed oMLX native kernels (OMLX_NATIVE_KERNELS=0)"
     changed=1
   fi
 
@@ -3717,7 +3772,7 @@ menu_models() {
 menu_updates() {
   load_config
   printf "\n${C_BOLD}── Check for updates (read-only) ──────────────${C_RST}\n"
-  printf "oMLX pin: OMLX_REPO_REF=%s   (engine — frozen unless you bump it)\n\n" "${OMLX_REPO_REF:-v0.7.0}"
+  printf "oMLX pin: OMLX_REPO_REF=%s   (engine — frozen unless you bump it)\n\n" "${OMLX_REPO_REF:-v0.7.3.dev1}"
   local odir="${OMLX_PROJECT_DIR:-/Users/mac/projects/omlx}"
   if [ -d "$odir/.git" ]; then
     local installed latest
