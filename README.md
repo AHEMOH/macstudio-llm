@@ -13,7 +13,7 @@ Designed for a 32 GB M1 Max but scales unchanged to bigger Apple Silicon — jus
 raise a couple of config keys.
 
 > **Text engine — oMLX.** The always-on backend is **oMLX**
-> (pinned `OMLX_REPO_REF=v0.7.0`), serving **one unified multimodal
+> (pinned `OMLX_REPO_REF=v0.7.3.dev1`), serving **one unified multimodal
 > model** that handles **text *and* images in the same chat** plus tool calling —
 > AND, in the SAME process, the BGE embed/rerank pair — with an SSD
 > paged-prefix-cache and continuous batching. The default main is `gemma4-26b-qat`
@@ -31,9 +31,11 @@ raise a couple of config keys.
   model's chat template. For Gemma 4, `setup.sh` overlays Google's canonical
   2026-07-09 chat template (better multi-turn tool calling) into the model-dir
   farm, because the mlx-community repos still ship the older June revision.
-  Version pinned via `OMLX_REPO_REF` (v0.7.0 stable, 2026-09-30 — rebuilt
-  memory guard, a native-decode fix for M1 Max, prefill-admission and sampling
-  fixes; stable tags only, no RC/dev builds).
+  Version pinned via `OMLX_REPO_REF` (v0.7.3.dev1, 2026-10-24 — a deliberate
+  dev-tag exception: measured +6–12% decode and prefill for gemma4 on the
+  M1 Max vs v0.7.0, incl. M1-specific attention routes; back to stable tags
+  from v0.7.3 on). oMLX's native Metal kernels are built with `make kernels`,
+  which needs full Xcode (see *Prerequisites*).
 - **LiteLLM gateway** on the public port (:11434): apps talk OpenAI `/v1` (and
   Anthropic `/v1/messages`) to the stable aliases — `main` (text + images, reasons by
   default), `main-fast` (same model, thinking-off), `embed` (BGE-M3 embeddings)
@@ -313,6 +315,21 @@ present):
 | **Homebrew** | official installer, `NONINTERACTIVE=1`, as `TARGET_USER` | if absent |
 | **python@3.12** | `brew install python@3.12` (MLX/docling wheels need ≥3.10) | if `INSTALL_MLX=1` or `INSTALL_DOCLING=1` |
 | **omlx project + venv** | `git clone` `OMLX_REPO`@`OMLX_REPO_REF` + `pip install -e .` (editable, alpha-stage, not on PyPI) in `$VENV_DIR/omlx` | if `INSTALL_MLX=1` |
+| **cmake** | `brew install cmake` (for oMLX's `make kernels`) | if `INSTALL_MLX=1` |
+| **oMLX native kernels** | `make kernels` in the omlx checkout (needs **full Xcode + Metal Toolchain — manual, see below**) | if `OMLX_NATIVE_KERNELS=1` and `xcrun metal` works |
+
+**One manual step: full Xcode + Metal Toolchain.** The Command Line Tools have no
+Metal compiler, and Xcode needs an Apple ID, so `setup.sh` can't install it. Without it,
+`--apply` only warns and oMLX runs on generic MLX paths, with a separate GPU queue per
+loaded model (upstream warns this can hang the GPU when several models are busy). Do this once:
+
+```bash
+# 1. Install Xcode from the App Store (sign in via Screen Sharing / noVNC).
+sudo xcodebuild -license accept                 # accept the Xcode license
+sudo xcodebuild -downloadComponent MetalToolchain   # ~840 MB Metal compiler download
+xcrun metal --version                           # should print "Apple metal version …"
+sudo bash ~/macstudio-llm/setup.sh --apply      # builds the kernels, restarts oMLX
+```
 | **litellm venv** | `pip install 'litellm[proxy]==1.102.4'` (pinned) in `$VENV_DIR/litellm` | if `INSTALL_MLX=1` |
 | **node_exporter** | `brew install node_exporter` | if `INSTALL_EXPORTERS=1` (off by default) |
 | **mactop + macmon** | `brew install mactop macmon` | if `INSTALL_TUI=1` |
@@ -399,13 +416,14 @@ use the menu) to change a live box.
 | `MAIN_BACKEND_PORT` | `18000` | Internal port `oMLX` binds (serves main + embed + rerank) |
 | `LLM_REQUEST_TIMEOUT` | `3600` | Per-request timeout (s) for the text engine **and** LiteLLM; long docs/OCR |
 | `TEXT_ENGINE` | `omlx` | The engine (`oMLX`) — one unified process for main (text+images+tools) + embed + rerank |
-| `OMLX_REPO` / `OMLX_REPO_REF` | `github.com/jundot/omlx` / `v0.7.0` | Git source + pinned tag for the `omlx` venv (alpha-stage, not on PyPI) |
+| `OMLX_REPO` / `OMLX_REPO_REF` | `github.com/jundot/omlx` / `v0.7.3.dev1` | Git source + pinned tag for the `omlx` venv (alpha-stage, not on PyPI) |
 | `OMLX_PROJECT_DIR` | `/Users/mac/projects/omlx` | Where the oMLX git checkout lives |
 | `OMLX_MODEL_DIR` | `/Users/mac/.cache/omlx-models` | `--model-dir` symlink farm making every downloaded model discoverable |
 | `OMLX_MEMORY_GUARD_GB` | `30` | Soft RAM ceiling for the one oMLX process (`--memory-guard-gb`) |
 | `OMLX_MAX_CONTEXT_WINDOW` | `65536` | Per-model context cap for `main`, pre-seeded into `~/.omlx/model_settings.json` (NOT a CLI flag) |
 | `OMLX_SSD_CACHE_DIR` / `_MAX_SIZE` | `~/.cache/omlx-ssd-cache` / `20GB` | SSD paged-prefix-cache — real speedup on repeated long prompts. Empty dir = disabled |
 | `OMLX_HOT_CACHE_MAX_SIZE` | _(empty)_ | In-memory hot-cache max size. Empty = oMLX default |
+| `OMLX_NATIVE_KERNELS` | `1` | Build oMLX's native Metal kernels (`make kernels`; needs full Xcode + Metal Toolchain). `0` = skip and delete them |
 | `OMLX_MAX_CONCURRENT_REQUESTS` | `8` | Max concurrent in-flight requests (continuous batching) |
 | `GEMMA_TOP_K` | `64` | Gemma reference top_k for `main`/`main-fast` (via `extra_body`; top_k is not a native OpenAI param). `0`/empty = off; inert at temperature 0 |
 | `PRESET_ALIASES` | `1` | Expose the `main-fast` preset alias (same loaded model as `main`, thinking-off) |
@@ -454,9 +472,11 @@ broke a loaded model).
   updates and any pending update/restart.
 - **Upgrade the engine on purpose:** set `OMLX_REPO_REF` (menu 4, or edit
   `macstudio.conf`) then `sudo bash setup.sh --apply`. The installer checks out
-  that exact tag, reinstalls the venv, and restarts `com.local.omlx.main`. It's
-  an isolated venv + pinned git checkout, so up/down-grades are clean and
-  reversible.
+  that exact tag, reinstalls the venv, rebuilds the native kernels, re-applies
+  the local `tool_choice` patch, and restarts `com.local.omlx.main`. It's an
+  isolated venv + pinned git checkout, so up/down-grades are clean and
+  reversible. If `--apply` warns *"tool_choice patch did NOT land"*, the patch
+  needs re-basing onto the new tag. Paperless AI suggestions break without it.
 - `litellm` stays at its built version; bump manually in the venv if ever needed
   (`<venv>/bin/pip install -U …`).
 
