@@ -2962,10 +2962,11 @@ verify_and_summary() {
   printf "Memory: %s MB free  |  wired limit %s MB  |  pressure %s  |  total %s GB\n" \
          "$free_mb" "$wired" "${pressure:-?}" "${TOTAL_RAM_GB:-?}"
 
-  # pmset
+  # pmset — match the key exactly: macOS 27 added `autorestartatconnect`, which a
+  # /autorestart/ regex also hit (printed its 0 before the real autorestart=1).
   local ar sl
-  ar=$(/usr/bin/pmset -g | awk '/autorestart/{print $2}')
-  sl=$(/usr/bin/pmset -g | awk '/ sleep /{print $2; exit}')
+  ar=$(/usr/bin/pmset -g | awk '$1=="autorestart"{print $2; exit}')
+  sl=$(/usr/bin/pmset -g | awk '$1=="sleep"{print $2; exit}')
   printf "pmset:  autorestart=%s  sleep=%s\n" "${ar:-?}" "${sl:-?}"
 
   echo
