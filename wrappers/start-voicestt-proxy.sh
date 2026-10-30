@@ -4,10 +4,9 @@
 # after idle. Same on-demand pattern as infinity/images/immich/docling
 # (reuses ondemand-proxy.py unmodified).
 #
-# HEALTH_URL points at "/" rather than a dedicated health route: this
-# backend (macos-speech-server) exposes only POST /v1/audio/* endpoints and
-# 404s on any GET — ondemand-proxy.py's health_ok() treats any HTTP
-# response, including 404, as "backend is up" (see its comment).
+# HEALTH_URL uses macos-speech-server's own GET /health (upstream #38, part of
+# the 211c5de pin). Before that it pointed at bare "/" and relied on
+# ondemand-proxy.py's health_ok() treating any HTTP response (incl. 404) as up.
 set -eu
 
 CONF=/usr/local/etc/macstudio.conf
@@ -19,7 +18,7 @@ export LISTEN_PORT="${VOICESTT_PUBLIC_PORT:-5006}"
 export BACKEND_HOST="127.0.0.1"
 export BACKEND_PORT="${VOICESTT_BACKEND_PORT:-15006}"
 export BACKEND_LABEL="com.local.voicestt.serve"
-export HEALTH_URL="http://127.0.0.1:${VOICESTT_BACKEND_PORT:-15006}/"
+export HEALTH_URL="http://127.0.0.1:${VOICESTT_BACKEND_PORT:-15006}/health"
 export IDLE_TIMEOUT_SEC="${IDLE_TIMEOUT_VOICESTT:-900}"
 export STARTUP_TIMEOUT_SEC="${STARTUP_TIMEOUT_VOICESTT:-60}"
 export SERVICE_NAME="voicestt"

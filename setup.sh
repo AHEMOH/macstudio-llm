@@ -129,6 +129,7 @@ CONFIG_KEYS=(
   ML_BACKEND_PORT
   IMMICH_COLIMA_CPU
   IMMICH_COLIMA_MEMORY
+  IMMICH_ML_MODEL_REVISION
   DOCLING_PUBLIC_PORT
   DOCLING_BACKEND_PORT
   IDLE_TIMEOUT_IMMICH
@@ -222,7 +223,7 @@ config_default() {
     LLM_REQUEST_TIMEOUT)         echo 3600 ;;
     TEXT_ENGINE)                 echo omlx ;;
     OMLX_REPO)                   echo https://github.com/jundot/omlx ;;
-    OMLX_REPO_REF)               echo v0.7.3.dev1 ;;
+    OMLX_REPO_REF)               echo v0.7.3rc1 ;;
     OMLX_PROJECT_DIR)            echo /Users/mac/projects/omlx ;;
     OMLX_MODEL_DIR)              echo /Users/mac/.cache/omlx-models ;;
     OMLX_MEMORY_GUARD_GB)        echo 30 ;;
@@ -250,7 +251,7 @@ config_default() {
     MFLUX_MODEL_DIR)             echo /Users/mac/.cache/mflux-models ;;
     INSTALL_VOICE)               echo 0 ;;
     VOICE_PROJECT_DIR)           echo /Users/mac/projects/macos-speech-server ;;
-    VOICE_REPO_REF)              echo efc40c1fb307ebdf124b6dd9680fa79fb11e2ed5 ;;
+    VOICE_REPO_REF)              echo 211c5dec4a24afa991c9b1c76ab9482eb979cda1 ;;
     VOICESTT_PUBLIC_PORT)        echo 5006 ;;
     VOICESTT_BACKEND_PORT)       echo 15006 ;;
     IDLE_TIMEOUT_VOICESTT)       echo -1 ;;
@@ -266,6 +267,7 @@ config_default() {
     ML_BACKEND_PORT)             echo 13003 ;;
     IMMICH_COLIMA_CPU)           echo 8 ;;
     IMMICH_COLIMA_MEMORY)        echo 6 ;;
+    IMMICH_ML_MODEL_REVISION)    echo v2 ;;
     DOCLING_PUBLIC_PORT)         echo 5001 ;;
     DOCLING_BACKEND_PORT)        echo 15001 ;;
     IDLE_TIMEOUT_IMMICH)         echo 900 ;;
@@ -353,7 +355,7 @@ config_hint() {
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
     TEXT_ENGINE)                 echo "Engine serving 'main'/'embed'/'rerank': omlx (UNIFIED text+images+embed+rerank in ONE process, SSD paged-prefix-cache, continuous batching). The only supported engine" ;;
     OMLX_REPO)                   echo "Git URL of oMLX (jundot/omlx), cloned+editable-installed into OMLX_PROJECT_DIR" ;;
-    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.7.3.dev1, alpha-stage — a deliberate DEV-tag exception 2026-10-24: +6-12% decode/prefill for gemma4 on M1 Max incl. M1-specific attention routes; return to stable tags at v0.7.3) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; v0.7.0 pinned 2026-10-10 — rebuilt memory guard (--memory-guard-gb unchanged), M1 Max native-decode threadgroup fix, mlx 0.32.2 + custom kernels built at pip install; expect one SSD-prefix-cache cold start per model after a bump). Mirrors MLXVLM_VERSION's old pin discipline" ;;
+    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.7.3rc1, alpha-stage — RC exception 2026-10-30 (after the v0.7.3.dev1 DEV-tag exception of 2026-10-24: +6-12% decode/prefill for gemma4 on M1 Max): Metal relaxed context-store timeout on pre-M5 Macs against 0000000e errors in long prefills, memory guard re-reads iogpu.wired_limit_mb, incomplete_tool_call error instead of raw text, optional per-model activation_fp16_enabled (M1/M2, NOT seeded — measure first); return to stable tags at v0.7.3) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; v0.7.0 pinned 2026-10-10 — rebuilt memory guard (--memory-guard-gb unchanged), M1 Max native-decode threadgroup fix, mlx 0.32.2 + custom kernels built at pip install; expect one SSD-prefix-cache cold start per model after a bump). Mirrors MLXVLM_VERSION's old pin discipline" ;;
     OMLX_PROJECT_DIR)            echo "Where ensure_omlx_project() clones+builds oMLX (git clone + pip install -e, one-time + on ref bump during --apply)" ;;
     OMLX_MODEL_DIR)              echo "--model-dir symlink farm (one <org>--<name> HF-repo entry per downloaded row) that makes every model — main AND embed/rerank — discoverable by the one resident oMLX process under its real HF repo name" ;;
     OMLX_MEMORY_GUARD_GB)        echo "oMLX's soft RAM ceiling (--memory-guard-gb) — matches the project's 30GB wired-memory hard rule. oMLX has no hard --max-kv-size-equivalent flag" ;;
@@ -381,7 +383,7 @@ config_hint() {
     MFLUX_MODEL_DIR)             echo "Where ensure_mflux_model() saves the pre-quantized checkpoint (mflux-save, one-time during --apply). Subdirectory name is <MFLUX_MODEL>-q<MFLUX_QUANTIZE>" ;;
     INSTALL_VOICE)               echo "1 = run two on-demand voice backends exposed via LiteLLM as 'stt'/'tts' aliases for OpenWebUI's native voice input/output: Speech-to-Text via FluidAudio's macos-speech-server (Parakeet, Apple Neural Engine — measured zero GPU contention with the resident main LLM) and Text-to-Speech via macOS's own 'say' (faster and bug-free vs. macos-speech-server's bundled TTS, see CLAUDE.md). Opt-in (default 0) — NOT part of the model catalog, same reasoning as INSTALL_IMAGES" ;;
     VOICE_PROJECT_DIR)           echo "Where ensure_voice_project() clones+builds FluidAudio's macos-speech-server (git clone + swift build -c release, one-time during --apply, several minutes)" ;;
-    VOICE_REPO_REF)              echo "Pinned macos-speech-server commit — full 40-char SHA so it stays fetchable (default = upstream HEAD as of 2026-09-14). Same pin discipline as OMLX_REPO_REF; bump deliberately + --apply. Before bumping, check the local patch (patches/macos-speech-server-wyoming-close-on-eof.patch, Wyoming fd-leak) still applies — if upstream ever merges an equivalent fix, retire the patch instead of fighting the conflict (done 2026-09-16 for the former Wyoming-languages patch, fixed upstream in 2a03e7d)" ;;
+    VOICE_REPO_REF)              echo "Pinned macos-speech-server commit — full 40-char SHA so it stays fetchable (default = upstream HEAD as of 2026-10-28, 211c5de: includes the upstream Wyoming close-on-EOF fix #42 and GET /health). Same pin discipline as OMLX_REPO_REF; bump deliberately + --apply. Any local patches/macos-speech-server-*.patch must still apply — if upstream merges an equivalent fix, retire the patch instead of fighting the conflict (done 2026-09-16 for Wyoming-languages, 2a03e7d, and 2026-10-30 for Wyoming close-on-EOF, #42)" ;;
     VOICESTT_PUBLIC_PORT)        echo "Public on-demand-proxy port for the Speech-to-Text backend (default 5006)" ;;
     VOICESTT_BACKEND_PORT)       echo "Internal port the speech-server binary binds (127.0.0.1 only, default 15006)" ;;
     IDLE_TIMEOUT_VOICESTT)       echo "Seconds before the STT backend sleeps; default -1 = never sleep. Deliberately kept warm — this backend is shared by TWO independent on-demand proxies (com.local.voicestt.proxy for LiteLLM's 'stt' HTTP alias, com.local.voicewyoming.proxy for Home Assistant), and letting either one auto-sleep it would fight the other's wake cycle. Small footprint either way (~200MB Parakeet model)" ;;
@@ -396,9 +398,10 @@ config_hint() {
     IDLE_TIMEOUT_IMMICH)         echo "Seconds before immich-ml backend is put to sleep" ;;
     IMMICH_COLIMA_CPU)           echo "vCPUs for the Colima VM that runs immich-ml (default 8 = every P-core on the M1 Max target hardware). Passed to 'colima start --cpu', and ALSO drives MACHINE_LEARNING_MODEL_INTRA_OP_THREADS on the container itself (ensure_immich_ml_container derives it from this same value — see CLAUDE.md for why a bare vCPU bump alone doesn't raise CPU utilization)" ;;
     IMMICH_COLIMA_MEMORY)        echo "RAM in GiB for the Colima VM that runs immich-ml (default 6, raised from colima's stock 2GB on 2026-07-29 — that default OOM-killed the ONNX worker mid-load once a larger CLIP model was selected; see CLAUDE.md). Passed to 'colima start --memory'" ;;
+    IMMICH_ML_MODEL_REVISION)    echo "MACHINE_LEARNING_MODEL_REVISION for the immich-ml container (default 'v2' = Immich v3.3's re-exported, optimized models: faster and less RAM, CPU included; numerically equivalent to the old ones, so switching needs NO re-index; upstream will make v2 the default later). Empty = image default. A change recreates the container on the next --apply (models re-download into the immich-model-cache volume once)" ;;
     IMMICH_SESSION_USER)         echo "Dedicated, non-admin macOS account that auto-logs-in so Colima's own LaunchAgent (registered via 'brew services start colima') has a GUI/Aqua session to bootstrap into after a cold boot. Created + auto-login configured manually (sysadminctl), not by --apply — see CLAUDE.md. com.local.immich.ml's plist runs as this user (UserName), so it talks to THIS user's colima docker socket, not TARGET_USER's" ;;
     IMMICH_ML_IMAGE)             echo "Official Immich machine-learning image (ghcr.io/immich-app/immich-machine-learning). Replaces the old immich-ml-metal MLX fork — CPU-only on Apple Silicon (no Metal/Vulkan hwaccel tag exists for this image; confirmed with Immich maintainers), but the fork couldn't load Immich's multilingual (NLLB-CLIP) search models at all, so this is required for non-English Smart Search regardless of performance" ;;
-    IMMICH_ML_IMAGE_TAG)         echo "Tag suffix for IMMICH_ML_IMAGE (default 'release' = latest stable, matching Immich's own compose convention). DELIBERATELY floating (the one unpinned tool): the ML image must track the Portainer-managed Immich SERVER version on the other host — a pin here would silently desync on the next server update. No -cuda/-rocm/-openvino/-armnn/-rknn variant applies on Apple Silicon — plain CPU" ;;
+    IMMICH_ML_IMAGE_TAG)         echo "Tag suffix for IMMICH_ML_IMAGE (default 'release' = latest stable, matching Immich's own compose convention). DELIBERATELY floating (the one unpinned tool): the ML image must track the Portainer-managed Immich SERVER version on the other host — a pin here would silently desync on the next server update. Re-pulled on every --apply AND by the weekly autoupdate (--update-immich-ml); the container is recreated only when the image ID actually changed. No -cuda/-rocm/-openvino/-armnn/-rknn variant applies on Apple Silicon — plain CPU" ;;
     IDLE_TIMEOUT_DOCLING)        echo "Seconds before docling-serve backend is put to sleep" ;;
     AUTOUPDATE_WEEKDAY)          echo "launchd weekday: 0=Sun 1=Mon … 6=Sat" ;;
     AUTO_ACCEPT)                 echo "1 = skip all 'press Enter to proceed' prompts in TUI" ;;
@@ -1147,35 +1150,59 @@ ensure_immich_ml_container() {
   # the VM's only workload is this one container, so using every vCPU here
   # is safe. See CLAUDE.md.
   local want_intra="$want_cpu"
+  # Immich v3.3.0 re-exported the SAME models in an optimized format (faster,
+  # less RAM, CPU included); numerically equivalent, so switching needs no
+  # re-index. Opt-in via this env until upstream makes it the default. Empty =
+  # leave the image's own default.
+  local want_rev="${IMMICH_ML_MODEL_REVISION-v2}"
+
+  local -a dk=(/usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker")
+
+  # IMMICH_ML_IMAGE_TAG is a FLOATING tag ('release'), so comparing the tag
+  # string never notices a new upstream image — confirmed live 2026-10-30: the
+  # container still ran v3.0.3 (pulled 2026-07) while upstream was at v3.3.5.
+  # Pull every run and compare image IDs instead. A failed pull (offline,
+  # registry hiccup) keeps whatever image is already local — --apply must not
+  # break on a network blip.
+  log "immich-ml: checking $ref for a newer image"
+  "${dk[@]}" pull "$ref" >"$LOG_DIR/immich-pull.log" 2>&1 \
+    || warn "docker pull $ref failed (keeping the local image); see $LOG_DIR/immich-pull.log"
+  local want_id
+  want_id=$("${dk[@]}" image inspect --format '{{.Id}}' "$ref" 2>/dev/null || true)
+  if [ -z "$want_id" ]; then
+    warn "immich-ml: image $ref not available locally; see $LOG_DIR/immich-pull.log"
+    return 1
+  fi
 
   local changed=0
-  local have_ref
-  have_ref=$(/usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" inspect --format '{{.Config.Image}}' immich_machine_learning 2>/dev/null || true)
-  local have_intra
-  have_intra=$(/usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" inspect --format '{{range .Config.Env}}{{println .}}{{end}}' immich_machine_learning 2>/dev/null | /usr/bin/sed -n 's/^MACHINE_LEARNING_MODEL_INTRA_OP_THREADS=//p')
+  local have_id have_env have_intra have_rev
+  have_id=$("${dk[@]}" inspect --format '{{.Image}}' immich_machine_learning 2>/dev/null || true)
+  have_env=$("${dk[@]}" inspect --format '{{range .Config.Env}}{{println .}}{{end}}' immich_machine_learning 2>/dev/null || true)
+  have_intra=$(echo "$have_env" | /usr/bin/sed -n 's/^MACHINE_LEARNING_MODEL_INTRA_OP_THREADS=//p')
+  have_rev=$(echo "$have_env" | /usr/bin/sed -n 's/^MACHINE_LEARNING_MODEL_REVISION=//p')
 
   local need_recreate=0
-  [ "$have_ref" != "$ref" ] && need_recreate=1
-  [ -n "$have_ref" ] && [ "$have_intra" != "$want_intra" ] && need_recreate=1
+  [ "$have_id" != "$want_id" ] && need_recreate=1
+  [ "$have_intra" != "$want_intra" ] && need_recreate=1
+  [ "$have_rev" != "$want_rev" ] && need_recreate=1
 
   if [ "$need_recreate" = 1 ]; then
-    if [ "$have_ref" != "$ref" ]; then
-      log "immich-ml: pulling $ref"
-      if ! /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" pull "$ref" >"$LOG_DIR/immich-pull.log" 2>&1; then
-        warn "docker pull $ref failed; see $LOG_DIR/immich-pull.log"
-        return 1
-      fi
-    fi
-    [ -n "$have_ref" ] && /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" rm -f immich_machine_learning >/dev/null 2>&1
-    log "immich-ml: creating container (127.0.0.1:${ML_BACKEND_PORT:-13003} -> 3003, intra-op-threads=$want_intra)"
-    if ! /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" create --name immich_machine_learning \
+    [ -n "$have_id" ] && "${dk[@]}" rm -f immich_machine_learning >/dev/null 2>&1
+    local -a rev_env=()
+    [ -n "$want_rev" ] && rev_env=(-e "MACHINE_LEARNING_MODEL_REVISION=$want_rev")
+    log "immich-ml: creating container (127.0.0.1:${ML_BACKEND_PORT:-13003} -> 3003, intra-op-threads=$want_intra, model-revision=${want_rev:-image default})"
+    if ! "${dk[@]}" create --name immich_machine_learning \
           -p "127.0.0.1:${ML_BACKEND_PORT:-13003}:3003" \
           -v immich-model-cache:/cache \
           -e "MACHINE_LEARNING_MODEL_INTRA_OP_THREADS=$want_intra" \
-          "$ref" >/dev/null 2>"$LOG_DIR/immich-pull.log"; then
+          ${rev_env[@]+"${rev_env[@]}"} \
+          "$ref" >/dev/null 2>>"$LOG_DIR/immich-pull.log"; then
       warn "docker create immich_machine_learning failed; see $LOG_DIR/immich-pull.log"
       return 1
     fi
+    # Old image layers are only dangling once no container references them —
+    # without this every upstream release would pile up in the VM's disk.
+    "${dk[@]}" image prune -f >/dev/null 2>&1 || true
     changed=1
   fi
 
@@ -1770,14 +1797,14 @@ ensure_omlx_project() {
   # $VENV_DIR/omlx (matches mlxvlm/litellm/infinity/mflux — every wrapper execs
   # "$VENV_DIR/<name>/bin/...", zero special-casing needed).
   #
-  # OMLX_REPO_REF is a PINNED TAG (v0.7.3.dev1), not a floating branch — mirrors
+  # OMLX_REPO_REF is a PINNED TAG (v0.7.3rc1), not a floating branch — mirrors
   # MLXVLM_VERSION's old pin discipline. Unlike ensure_voice_project's
   # `git pull --ff-only` (tracks a moving branch), we `fetch` + explicit
   # `checkout "$ref"` every run — a no-op when already on that tag.
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   local dir="${OMLX_PROJECT_DIR:-$TARGET_HOME/projects/omlx}"
   local repo="${OMLX_REPO:-https://github.com/jundot/omlx}"
-  local ref="${OMLX_REPO_REF:-v0.7.3.dev1}"
+  local ref="${OMLX_REPO_REF:-v0.7.3rc1}"
   local vdir="${VENV_DIR:-/Users/mac/.macstudio-venvs}/omlx"
   local changed=0
 
@@ -2066,10 +2093,16 @@ ensure_python_venvs() {
   # old names kept as aliases) and now refuses checkpoints whose weight names
   # don't match the model; 0.22.0's "re-save" note covers FLUX.1/FIBO/Qwen-Image
   # checkpoints, not FLUX.2 Klein; --low-ram now frees the Klein transformer
-  # before VAE decode. huggingface_hub 1.22.0
+  # before VAE decode. 0.22.0 -> 0.24.0 on 2026-10-30: Pillow>=13 (security
+  # fix), Python>=3.11 (we use 3.12), 0.23.0 loads built-in models from a pinned
+  # HF commit (moot: we load our local pre-quantized checkpoint), VAE decode now
+  # in bf16 row strips (~1.6GB instead of 7-14GB at 1024px). New flux2-klein
+  # flags --small-decoder/--small-text-encoder deliberately NOT used yet (A/B
+  # first). Our flags (--model/--prompt/--steps/--seed/--height/--width/
+  # --output/--low-ram) are unchanged. huggingface_hub 1.22.0
   # satisfies mflux's >=1.1.6,<2.0.
   if [ "${INSTALL_IMAGES:-0}" = 1 ]; then
-    _ensure_venv mflux bin:mflux-generate 'mflux==0.22.0' 'flask==3.1.3' 'huggingface_hub[cli]==1.22.0'
+    _ensure_venv mflux bin:mflux-generate 'mflux==0.24.0' 'flask==3.1.3' 'huggingface_hub[cli]==1.22.0'
   fi
 }
 
@@ -2185,16 +2218,14 @@ ensure_voice_project() {
   #   so Home Assistant's pipeline language picker only offered English.
   #   Fixed upstream in 2a03e7d (2026-09-11, part of the efc40c1 pin) — the
   #   local patch was deleted; the fix now comes straight from the checkout.
-  # - ...-wyoming-close-on-eof.patch: upstream enables NIO's
-  #   allowRemoteHalfClosure on Wyoming connections but never handles the
-  #   resulting inputClosed event, so a connection's channel (and fd) is NEVER
-  #   released — one leaked fd per HA connection. Confirmed live 2026-09-08:
-  #   2785 "connection opened" / 0 "connection closed" log lines, 237 CLOSED
-  #   sockets held; at macOS's 256-fd soft limit the process stayed alive but
-  #   reset EVERY new connection on BOTH ports (Wyoming AND the HTTP 'stt'
-  #   port), ~2h after each start under HA's ~30s describe cadence. Upstream
-  #   HEAD (= VOICE_REPO_REF efc40c1, re-verified 2026-09-16: still no
-  #   inputClosed handling) has no fix — retire the patch when one lands.
+  # - (RETIRED 2026-10-30) ...-wyoming-close-on-eof.patch: upstream enabled
+  #   NIO's allowRemoteHalfClosure on Wyoming connections but never handled
+  #   the resulting inputClosed event, so every HA connection leaked its fd
+  #   until the 256-fd limit reset EVERY connection on both ports (live
+  #   2026-09-08). Fixed upstream in #42 (438b0b0, 2026-10-21, part of the
+  #   211c5de pin) — the local patch was deleted. Anchor stays the same:
+  #   `llm-logs voicestt` must show a "connection closed" per connection.
+  # No local patches are currently needed; the loop stays for the next one.
   /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" checkout -- . >/dev/null 2>&1 || true
   : >"$LOG_DIR/voicestt-patch.log"
   local patch_file
@@ -2204,7 +2235,7 @@ ensure_voice_project() {
           >>"$LOG_DIR/voicestt-patch.log" 2>&1; then
       ok "applied $(basename "$patch_file")"
     else
-      warn "failed to apply $(basename "$patch_file"); see $LOG_DIR/voicestt-patch.log (continuing without it — the Wyoming fd-leak fix may be missing)"
+      warn "failed to apply $(basename "$patch_file"); see $LOG_DIR/voicestt-patch.log (continuing without it)"
     fi
   done
 
@@ -3293,6 +3324,15 @@ set_model_alias() {
   fi
 }
 
+cli_update_immich_ml() {
+  # Weekly-autoupdate hook: re-pull the floating IMMICH_ML_IMAGE_TAG and recreate
+  # the container only on a real image/env diff — ensure_immich_ml_container
+  # alone, without a full --apply. A no-op when INSTALL_IMMICH=0.
+  INTERACTIVE=0
+  load_config
+  ensure_immich_ml_container
+}
+
 cli_set_model() {
   # Non-interactive model switch — e.g. invoked by the MQTT bridge when Home
   # Assistant selects a model. Reuses set_model_alias and ALL its validation
@@ -3773,7 +3813,7 @@ menu_models() {
 menu_updates() {
   load_config
   printf "\n${C_BOLD}── Check for updates (read-only) ──────────────${C_RST}\n"
-  printf "oMLX pin: OMLX_REPO_REF=%s   (engine — frozen unless you bump it)\n\n" "${OMLX_REPO_REF:-v0.7.3.dev1}"
+  printf "oMLX pin: OMLX_REPO_REF=%s   (engine — frozen unless you bump it)\n\n" "${OMLX_REPO_REF:-v0.7.3rc1}"
   local odir="${OMLX_PROJECT_DIR:-/Users/mac/projects/omlx}"
   if [ -d "$odir/.git" ]; then
     local installed latest
@@ -4059,6 +4099,10 @@ MacStudio LLM Server — setup.sh v${SCRIPT_VERSION}
   sudo bash setup.sh --models    Open the model manager (download / pick main / embed / rerank)
   sudo bash setup.sh --check-updates
                                  Show available brew / venv / oMLX updates (no changes)
+  sudo bash setup.sh --update-immich-ml
+                                 Re-pull the floating immich-ml image tag and
+                                 recreate the container only if it changed
+                                 (used by the weekly autoupdate)
   sudo bash setup.sh --set-model <main|embed|rerank> <id>
                                  Switch a model slot non-interactively (same
                                  validation as the TUI; used by the MQTT bridge
@@ -4144,7 +4188,7 @@ FIRST_RUN=0
 case "${1:-}" in
   ""|--help|-h|--apply|--status|--models|--check-updates|--set-model|--set-config|\
   --set-service-power|--config-schema|--download-model|--delete-model|--add-model|\
-  --edit-model|--remove-model|--set-hf-token) : ;;
+  --edit-model|--remove-model|--set-hf-token|--update-immich-ml) : ;;
   -*) err "unknown flag: $1"; show_help; exit 2 ;;
 esac
 
@@ -4180,6 +4224,7 @@ case "${1:-}" in
   --remove-model) need_root "$@"; shift; cli_remove_model "$@" ;;
   --set-hf-token) need_root "$@"; cli_set_hf_token ;;
   --check-updates) need_root "$@"; menu_updates ;;
+  --update-immich-ml) need_root "$@"; cli_update_immich_ml ;;
   --help|-h) show_help ;;
   "") main_menu "$@" ;;
   *) err "unknown flag: $1"; show_help; exit 2 ;;

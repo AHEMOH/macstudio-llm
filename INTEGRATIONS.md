@@ -316,8 +316,8 @@ backend, not the HA configuration. Check in this order:
 2. `sudo llm-restart voicestt` — restarts `com.local.voicestt.serve`; HA recovers within
    seconds (reload the Wyoming integration entry if the entities stay unavailable).
 3. `llm-logs voicestt` — every connection must log both `Wyoming connection opened` and
-   `Wyoming connection closed`. Only "opened" lines mean the fd-leak fix
-   (`patches/macos-speech-server-wyoming-close-on-eof.patch`) isn't built in yet →
+   `Wyoming connection closed`. Only "opened" lines mean the fd-leak fix (upstream
+   since `VOICE_REPO_REF` 211c5de; a local patch before that) isn't built in yet →
    `sudo bash setup.sh --apply` (rebuilds the Swift binary, then restarts the backend).
 
 The same backend also serves Open WebUI's `stt` alias (:5006), so that fails at the same
@@ -642,18 +642,31 @@ paperless-gpt only if you also want LLM-generated titles/tags. The API token sit
 
 ---
 
-## Immich — Metal/ANE machine learning (`INSTALL_IMMICH`)
+## Immich — machine learning (`INSTALL_IMMICH`)
 
-Runs a **hardware-accelerated drop-in replacement** for Immich's own machine-learning
-container, so smart search (CLIP), face detection, and OCR use Apple Silicon instead of
-CPU. It is **not** a LiteLLM alias — your Immich server talks to it directly on **:3003**.
-Off by default; opt in with `INSTALL_IMMICH=1` (TUI menu 2, or the conf) and re-apply.
+Runs Immich's **official** machine-learning image
+(`ghcr.io/immich-app/immich-machine-learning`) on the Mac, so Smart Search (CLIP), face
+detection and OCR run here instead of on your Immich host. It is **not** a LiteLLM
+alias — your Immich server talks to it directly on **:3003**. Off by default; opt in
+with `INSTALL_IMMICH=1` (TUI menu 2, or the conf) and re-apply.
 
-**Requirements & what `--apply` does.** Needs **macOS 26+**. `setup.sh --apply`
-auto-installs `python@3.11`, clones `IMMICH_REPO` (default the maintained upstream
-`sebastianfredette/immich-ml-metal`) into `IMMICH_PROJECT_DIR`, and builds its venv —
-no manual step. Acceleration is hybrid: **CLIP → GPU (MLX)**, **face-detection + OCR →
-Apple Neural Engine (Apple Vision)**, **face-recognition → ONNX/CoreML**.
+**Requirements & what `--apply` does.** One-time manual host setup: a dedicated,
+non-admin auto-login account `IMMICH_SESSION_USER` (default `colima-svc`) — Colima's VM
+manager is a LaunchAgent and needs that GUI session after a reboot (see CLAUDE.md).
+`setup.sh --apply` then installs `colima`/`docker`, sizes the Colima VM
+(`IMMICH_COLIMA_CPU`/`_MEMORY`, default 8 vCPU / 6 GiB), **pulls the `release` tag**,
+and (re)creates the container only when the image or its env actually changed. It runs
+**CPU-only** — no Metal image exists for Apple Silicon.
+
+**Updates follow your Immich server.** The image tag floats on purpose: `--apply` and the
+**weekly autoupdate** (`setup.sh --update-immich-ml`) re-pull it, so after you update
+the Immich server in Portainer the ML side catches up within a week — or immediately
+with `sudo bash setup.sh --update-immich-ml`.
+
+**Optimized models (`IMMICH_ML_MODEL_REVISION=v2`, default).** Immich v3.3 re-exported
+the same models in a faster, lower-memory format. They are numerically equivalent, so
+**no re-index** is needed; the first load downloads them once into the
+`immich-model-cache` volume. Requires an Immich server ≥ v3.3.
 
 **Point your Immich server at the Mac.** In the Immich **machine-learning** container's
 environment (edit in your compose / Portainer stack, not host-side):
@@ -666,26 +679,25 @@ IMMICH_MACHINE_LEARNING_URL: http://mac.home.arpa:3003
 ```
 
 Then in the Immich web UI: **Administration → Settings → Machine Learning** — confirm it's
-enabled and the URL matches. Run *Smart Search* and *Face Detection* jobs to backfill.
+enabled and the URL matches. Recommended model picks:
+
+- **Smart Search:** a multilingual model (e.g. `nllb-clip-large-siglip__mrl`) for
+  German/Russian search — the default `ViT-B-32` is English-only.
+- **OCR:** `PP-OCRv6_small` (Immich ≥ v3.3, multilingual, clearly more accurate than
+  `PP-OCRv5_mobile`). Only new assets use it automatically; re-run the OCR job to
+  re-scan existing photos.
 
 **On-demand behaviour.** The public :3003 proxy always listens; the backend wakes on the
-first request and **idle-sleeps after `IDLE_TIMEOUT_IMMICH`** (900 s) to release the GPU —
-so GPU contention with the resident main LLM is limited to active import/backfill windows
-(CLIP is bursty). The **first CLIP request ever** does a one-time model download+convert to
-MLX (~1–2 GB into `~/.cache/immich-ml-metal`, a few minutes) — later requests are fast.
+first request and **idle-sleeps after `IDLE_TIMEOUT_IMMICH`** (900 s). The first request
+after a model switch downloads that model once (a few minutes) — later requests are fast.
 
 **Smoke test (on the Mac or any LAN host):**
 
 ```bash
 sudo llm-service-ctl wake immich          # force the backend up
 curl -s http://mac.home.arpa:3003/ping    # -> pong (through the proxy)
-llm-logs immich-ml                        # watch model load / MLX + Vision activity
+llm-logs immich-ml                        # watch model load / inference
 ```
-
-Notes: the backend self-describes as experimental/alpha — treat it as an optional
-companion. If face-detection/OCR (Apple Vision) misbehave from the system daemon context
-(the Mac runs headless with a dummy-plug and no auto-login), that's the known watch-item;
-CLIP (MLX) and face-recognition (ONNX/CoreML) don't need a GUI session.
 
 ---
 

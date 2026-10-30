@@ -7,10 +7,13 @@
 #   1. Homebrew: brew update, upgrade ALL formulas, cleanup. Safe for the
 #      venvs: they point at the stable /opt/homebrew/opt/python@3.12 path, and
 #      everything pip-side is pinned by setup.sh, not by brew.
-#   2. macOS: password-free items install (Safari etc.); OS updates notify-only.
+#   2. immich-ml (if INSTALL_IMMICH=1): the ONE deliberately floating tool —
+#      re-pulls IMMICH_ML_IMAGE_TAG ('release') so the ML container follows the
+#      Portainer-managed Immich server instead of freezing at its first pull.
+#   3. macOS: password-free items install (Safari etc.); OS updates notify-only.
 # NOT touched here: oMLX (pinned via OMLX_REPO_REF), litellm/mflux (exact ==
 # pins in setup.sh's ensure_python_venvs), the voice project (VOICE_REPO_REF),
-# docling/paperless/novnc venvs (pinned at build), immich-ml, and the models.
+# docling/paperless/novnc venvs (pinned at build), and the models.
 # Upgrade those deliberately: bump the pin in config/setup.sh, then --apply.
 # The run logs available-but-held versions so you can see when an update exists.
 #
@@ -65,8 +68,9 @@ run_as_user '/opt/homebrew/bin/brew cleanup -s --prune=7' || true
 # oMLX is pinned via OMLX_REPO_REF (a git tag, not a PyPI package — checked
 # against GitHub releases below); litellm/mflux carry exact == pins in
 # setup.sh (2026-08 review: LiteLLM had a real PyPI supply-chain incident),
-# and immich-ml/docling stay at their installed versions. Upgrade them on
-# purpose: bump the pin, then `sudo bash setup.sh --apply`.
+# and docling stays at its installed version. Upgrade them on purpose: bump
+# the pin, then `sudo bash setup.sh --apply`. (immich-ml is the exception —
+# see its own step below.)
 step "held versions (available but NOT auto-upgraded — bump deliberately)"
 for pair in "litellm:litellm" "mflux:mflux"; do
   vn=${pair%%:*}; pk=${pair##*:}
@@ -106,6 +110,16 @@ if [ "${INSTALL_VOICE:-0}" = "1" ] && [ -d "$voice_dir/.git" ]; then
     "$(printf '%s' "${VOICE_REPO_REF:-?}" | /usr/bin/cut -c1-7)" "${voice_head:-?}"
 fi
 echo "  -> to upgrade the LLM stack on purpose: bump the pin + 'sudo bash setup.sh --apply'"
+
+if [ "${INSTALL_IMMICH:-0}" = "1" ]; then
+  step "immich-ml image (floating '${IMMICH_ML_IMAGE_TAG:-release}' tag — follows the Immich server)"
+  setup_sh=$(/usr/bin/sed -n 's/^SETUP_SH=//p' /usr/local/etc/macstudio.repo 2>/dev/null)
+  if [ -n "$setup_sh" ] && [ -r "$setup_sh" ]; then
+    /bin/bash "$setup_sh" --update-immich-ml || echo "  immich-ml update failed (container left as it was)"
+  else
+    echo "  setup.sh not found via /usr/local/etc/macstudio.repo — run 'sudo bash setup.sh --apply' once"
+  fi
+fi
 
 step "restart long-running services"
 if [ "${INSTALL_MLX:-1}" = "1" ]; then
