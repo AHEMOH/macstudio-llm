@@ -280,7 +280,7 @@ async def handle_client(client_reader: asyncio.StreamReader, client_writer: asyn
 
 async def idle_watchdog() -> None:
     # IDLE_TIMEOUT_SEC <= 0 means "never sleep" — once woken, the backend stays
-    # resident (e.g. IDLE_TIMEOUT_INFINITY=-1 to keep embed/rerank permanently warm).
+    # resident (e.g. IDLE_TIMEOUT_VOICESTT=-1 to keep the shared STT backend permanently warm).
     if IDLE_TIMEOUT_SEC <= 0:
         log("idle timeout <= 0 — never auto-sleeping this backend")
         return

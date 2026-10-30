@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Launched by com.local.voicestt.proxy — asyncio TCP proxy that wakes the
 # Speech-to-Text backend (com.local.voicestt.serve) on demand and stops it
-# after idle. Same on-demand pattern as infinity/images/immich/docling
+# after idle. Same on-demand pattern as images/immich/docling
 # (reuses ondemand-proxy.py unmodified).
 #
 # HEALTH_URL uses macos-speech-server's own GET /health (upstream #38, part of

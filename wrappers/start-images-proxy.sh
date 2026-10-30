@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Launched by com.local.images.proxy — asyncio TCP proxy that wakes the
 # FLUX image-generation backend (com.local.images.serve) on demand and stops
-# it after idle. Same on-demand pattern as infinity/docling/immich (reuses
+# it after idle. Same on-demand pattern as docling/immich (reuses
 # ondemand-proxy.py).
 set -eu
 
