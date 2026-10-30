@@ -95,6 +95,7 @@ CONFIG_KEYS=(
   OMLX_NATIVE_KERNELS
   OMLX_MAX_CONCURRENT_REQUESTS
   OMLX_MAX_CONTEXT_WINDOW
+  OMLX_ACTIVATION_FP16
   OMLX_BIND_HOST
   OMLX_API_KEY
   GEMMA_TOP_K
@@ -233,6 +234,7 @@ config_default() {
     OMLX_NATIVE_KERNELS)         echo 1 ;;
     OMLX_MAX_CONCURRENT_REQUESTS) echo 8 ;;
     OMLX_MAX_CONTEXT_WINDOW)     echo 65536 ;;
+    OMLX_ACTIVATION_FP16)        echo 1 ;;
     OMLX_BIND_HOST)              echo 127.0.0.1 ;;
     OMLX_API_KEY)                echo "" ;;
     GEMMA_TOP_K)                 echo 64 ;;
@@ -355,7 +357,7 @@ config_hint() {
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
     TEXT_ENGINE)                 echo "Engine serving 'main'/'embed'/'rerank': omlx (UNIFIED text+images+embed+rerank in ONE process, SSD paged-prefix-cache, continuous batching). The only supported engine" ;;
     OMLX_REPO)                   echo "Git URL of oMLX (jundot/omlx), cloned+editable-installed into OMLX_PROJECT_DIR" ;;
-    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.7.3rc1, alpha-stage — RC exception 2026-10-30 (after the v0.7.3.dev1 DEV-tag exception of 2026-10-24: +6-12% decode/prefill for gemma4 on M1 Max): Metal relaxed context-store timeout on pre-M5 Macs against 0000000e errors in long prefills, memory guard re-reads iogpu.wired_limit_mb, incomplete_tool_call error instead of raw text, optional per-model activation_fp16_enabled (M1/M2, NOT seeded — measure first); return to stable tags at v0.7.3) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; v0.7.0 pinned 2026-10-10 — rebuilt memory guard (--memory-guard-gb unchanged), M1 Max native-decode threadgroup fix, mlx 0.32.2 + custom kernels built at pip install; expect one SSD-prefix-cache cold start per model after a bump)" ;;
+    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.7.3rc1, alpha-stage — RC exception 2026-10-30 (after the v0.7.3.dev1 DEV-tag exception of 2026-10-24: +6-12% decode/prefill for gemma4 on M1 Max): Metal relaxed context-store timeout on pre-M5 Macs against 0000000e errors in long prefills, memory guard re-reads iogpu.wired_limit_mb, incomplete_tool_call error instead of raw text, per-model activation_fp16_enabled (M1/M2 "Float16 Activations", seeded via OMLX_ACTIVATION_FP16=1 after the 2026-10-30 A/B); return to stable tags at v0.7.3) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; v0.7.0 pinned 2026-10-10 — rebuilt memory guard (--memory-guard-gb unchanged), M1 Max native-decode threadgroup fix, mlx 0.32.2 + custom kernels built at pip install; expect one SSD-prefix-cache cold start per model after a bump)" ;;
     OMLX_PROJECT_DIR)            echo "Where ensure_omlx_project() clones+builds oMLX (git clone + pip install -e, one-time + on ref bump during --apply)" ;;
     OMLX_MODEL_DIR)              echo "--model-dir symlink farm (one <org>--<name> HF-repo entry per downloaded row) that makes every model — main AND embed/rerank — discoverable by the one resident oMLX process under its real HF repo name" ;;
     OMLX_MEMORY_GUARD_GB)        echo "oMLX's soft RAM ceiling (--memory-guard-gb) — matches the project's 30GB wired-memory hard rule. oMLX has no hard --max-kv-size-equivalent flag" ;;
@@ -365,6 +367,7 @@ config_hint() {
     OMLX_NATIVE_KERNELS)         echo "1 = build oMLX's native Metal kernels (make kernels; needs full Xcode + 'xcodebuild -downloadComponent MetalToolchain' + cmake). Gives one shared Metal command queue for main+embed+rerank (no multi-model GPU hang, #4224). 0 = skip, delete built kernels → generic MLX paths" ;;
     OMLX_MAX_CONCURRENT_REQUESTS) echo "oMLX max concurrent in-flight requests (--max-concurrent-requests, continuous batching). Default 8" ;;
     OMLX_MAX_CONTEXT_WINDOW)     echo "Per-model context cap for the active main, pre-seeded into ~/.omlx/model_settings.json (NOT a CLI flag — oMLX has no --max-kv-size equivalent). Default 65536 (64K), preserving today's documented ceiling" ;;
+    OMLX_ACTIVATION_FP16)        echo "1 = set activation_fp16_enabled for the active main in ~/.omlx/model_settings.json: oMLX (>= v0.7.3rc1) recasts the checkpoint's bf16 scales/norms/embeddings to fp16 at load, because M1/M2 GPUs have no native bf16 (MLX emulates it). Measured on the M1 Max with gemma4-26b-qat 2026-10-30: prefill +27-32%, long-doc extraction ~23% faster, decode +5%, no quality loss seen. 0 = off (bf16). A change restarts oMLX on the next --apply. Not useful on M3+ (native bf16); cannot be combined with oMLX's MoE expert offload" ;;
     OMLX_BIND_HOST)              echo "--host oMLX binds. Default 127.0.0.1 (LiteLLM-only, matches every other backend in this repo). Set to 0.0.0.0 to also expose oMLX's own OpenAI/Anthropic/audio API + admin panel directly on the LAN (e.g. for a client that wants oMLX's native /v1/messages, not LiteLLM's translation) — do this ONLY after OMLX_API_KEY is set, since oMLX's inference routes have no auth at all otherwise" ;;
     OMLX_API_KEY)                echo "oMLX --api-key: required by every caller once set, INCLUDING LiteLLM's own local calls (render_litellm_config wires this same key into main/main-fast/embed/rerank's litellm_params automatically). Plaintext in this 644 conf — LAN-only, like VNC_PASSWORD/DASHBOARD_TOKEN. Empty = auto-generated on the next --apply; clear it + --apply to rotate" ;;
     GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off" ;;
@@ -1679,6 +1682,13 @@ _omlx_symlink_one() {
 # the pre-2026-08-16 naming scheme is dropped on write. oMLX has no
 # --max-kv-size CLI equivalent, only --memory-guard-gb (soft RAM ceiling) +
 # this per-model cap.
+# Also seeds activation_fp16_enabled from OMLX_ACTIVATION_FP16 (1 = set true,
+# 0 = remove the key → oMLX default off). M1/M2 have no native bf16, so MLX
+# emulates it; oMLX >= v0.7.3rc1 can recast a checkpoint's bf16 leaves
+# (scales/norms/embeddings — 1370 tensors on gemma4-26b-qat) to fp16 at load.
+# A/B on the M1 Max 2026-10-30 (gemma4-26b-qat): prefill +27-32%, paperless-
+# like extraction 23-24% faster at 5K/15K/30K tokens, decode +5%, tool calls
+# 18/18 both ways, no fp16-overflow symptoms in 22 RU/DE prose prompts.
 ensure_omlx_settings() {
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   [ -n "${OMLX_MAX_CONTEXT_WINDOW:-}" ] || return 0
@@ -1694,7 +1704,7 @@ ensure_omlx_settings() {
   local tmp; tmp=$(/usr/bin/mktemp)
   /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env \
     OMLX_SETTINGS_FILE="$file" OMLX_MODEL_KEY="$served" OMLX_CTX="$OMLX_MAX_CONTEXT_WINDOW" \
-    OMLX_LEGACY_KEY="mlx-$id" \
+    OMLX_LEGACY_KEY="mlx-$id" OMLX_FP16="${OMLX_ACTIVATION_FP16:-1}" \
     /usr/bin/python3 - >"$tmp" <<'PY'
 import json, os
 path, key, ctx = os.environ["OMLX_SETTINGS_FILE"], os.environ["OMLX_MODEL_KEY"], int(os.environ["OMLX_CTX"])
@@ -1709,6 +1719,10 @@ if legacy and legacy != key:
     data["models"].pop(legacy, None)
 data["models"].setdefault(key, {})
 data["models"][key]["max_context_window"] = ctx
+if os.environ.get("OMLX_FP16", "1") == "1":
+    data["models"][key]["activation_fp16_enabled"] = True
+else:
+    data["models"][key].pop("activation_fp16_enabled", None)
 print(json.dumps(data, indent=2))
 PY
   local rc=$?
@@ -1725,10 +1739,10 @@ PY
     /bin/mv -f "$tmp" "$file"
     /bin/chmod 644 "$file"
     /usr/sbin/chown "$TARGET_USER" "$file" 2>/dev/null || true
-    ok "omlx per-model settings: $served max_context_window=$OMLX_MAX_CONTEXT_WINDOW -> $file"
+    ok "omlx per-model settings: $served max_context_window=$OMLX_MAX_CONTEXT_WINDOW activation_fp16=${OMLX_ACTIVATION_FP16:-1} -> $file"
     if daemon_running com.local.omlx.main; then
       /bin/launchctl kickstart -k system/com.local.omlx.main >/dev/null 2>&1 \
-        && ok "restarted com.local.omlx.main to apply the new context window"
+        && ok "restarted com.local.omlx.main to apply the new per-model settings"
     fi
   else
     /bin/rm -f "$tmp"

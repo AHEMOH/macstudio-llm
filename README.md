@@ -423,6 +423,7 @@ use the menu) to change a live box.
 | `OMLX_MODEL_DIR` | `/Users/mac/.cache/omlx-models` | `--model-dir` symlink farm making every downloaded model discoverable |
 | `OMLX_MEMORY_GUARD_GB` | `30` | Soft RAM ceiling for the one oMLX process (`--memory-guard-gb`) |
 | `OMLX_MAX_CONTEXT_WINDOW` | `65536` | Per-model context cap for `main`, pre-seeded into `~/.omlx/model_settings.json` (NOT a CLI flag) |
+| `OMLX_ACTIVATION_FP16` | `1` | Run `main`'s bf16 parts as fp16 (M1/M2 have no native bf16). Measured on the M1 Max: ~23% faster long-document extraction, +27–32% prefill, same accuracy. `0` = off |
 | `OMLX_SSD_CACHE_DIR` / `_MAX_SIZE` | `~/.cache/omlx-ssd-cache` / `20GB` | SSD paged-prefix-cache — real speedup on repeated long prompts. Empty dir = disabled |
 | `OMLX_HOT_CACHE_MAX_SIZE` | _(empty)_ | In-memory hot-cache max size. Empty = oMLX default |
 | `OMLX_NATIVE_KERNELS` | `1` | Build oMLX's native Metal kernels (`make kernels`; needs full Xcode + Metal Toolchain). `0` = skip and delete them |
