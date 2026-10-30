@@ -13,7 +13,7 @@ Designed for a 32 GB M1 Max but scales unchanged to bigger Apple Silicon — jus
 raise a couple of config keys.
 
 > **Text engine — oMLX.** The always-on backend is **oMLX**
-> (pinned `OMLX_REPO_REF=v0.7.3.dev1`), serving **one unified multimodal
+> (pinned `OMLX_REPO_REF=v0.7.3rc1`), serving **one unified multimodal
 > model** that handles **text *and* images in the same chat** plus tool calling —
 > AND, in the SAME process, the BGE embed/rerank pair — with an SSD
 > paged-prefix-cache and continuous batching. The default main is `gemma4-26b-qat`
@@ -31,10 +31,10 @@ raise a couple of config keys.
   model's chat template. For Gemma 4, `setup.sh` overlays Google's canonical
   2026-07-09 chat template (better multi-turn tool calling) into the model-dir
   farm, because the mlx-community repos still ship the older June revision.
-  Version pinned via `OMLX_REPO_REF` (v0.7.3.dev1, 2026-10-24 — a deliberate
-  dev-tag exception: measured +6–12% decode and prefill for gemma4 on the
-  M1 Max vs v0.7.0, incl. M1-specific attention routes; back to stable tags
-  from v0.7.3 on). oMLX's native Metal kernels are built with `make kernels`,
+  Version pinned via `OMLX_REPO_REF` (v0.7.3rc1, 2026-10-30 — a deliberate
+  pre-release exception, following v0.7.3.dev1, which measured +6–12% decode and prefill
+  for gemma4 on the M1 Max vs v0.7.0; rc1 adds a Metal-timeout fix for long
+  prefills on pre-M5 Macs. Back to stable tags from v0.7.3 on). oMLX's native Metal kernels are built with `make kernels`,
   which needs full Xcode (see *Prerequisites*).
 - **LiteLLM gateway** on the public port (:11434): apps talk OpenAI `/v1` (and
   Anthropic `/v1/messages`) to the stable aliases — `main` (text + images, reasons by
@@ -334,17 +334,19 @@ sudo bash ~/macstudio-llm/setup.sh --apply      # builds the kernels, restarts o
 | **node_exporter** | `brew install node_exporter` | if `INSTALL_EXPORTERS=1` (off by default) |
 | **mactop + macmon** | `brew install mactop macmon` | if `INSTALL_TUI=1` |
 | **docling-serve venv** | `pip install 'docling[…]' 'docling-serve[ui]'` | if `INSTALL_DOCLING=1` |
-| **python@3.11** | `brew install python@3.11` (immich-ml's venv needs 3.11; 3.13 lacks wheels) | if `INSTALL_IMMICH=1` |
-| **immich-ml project** | `git clone` `IMMICH_REPO` + `python3.11 -m venv .venv && pip install -r requirements.txt` | if `INSTALL_IMMICH=1` |
+| **colima + docker** | `brew install colima docker docker-compose` (runs as `IMMICH_SESSION_USER`) | if `INSTALL_IMMICH=1` |
+| **immich-ml image** | `docker pull ghcr.io/immich-app/immich-machine-learning:release`, re-pulled on every `--apply` and by the weekly autoupdate | if `INSTALL_IMMICH=1` |
 
-The **immich-ml backend** (`IMMICH_PROJECT_DIR`) is now auto-cloned from `IMMICH_REPO`
-(default the maintained upstream **`sebastianfredette/immich-ml-metal`**) and its venv
-built with **Python 3.11** — no manual fork step anymore. It's a Metal/ANE drop-in for
-Immich's own ML service: CLIP embeddings run on the GPU (MLX — brief bursts during photo
-imports/backfill), face-detection + OCR on the **Apple Neural Engine** (Apple Vision),
-face-recognition via ONNX/CoreML. **Needs macOS 26+**, and the on-demand backend sleeps
-when idle, so it only touches the GPU during active jobs. Point your Immich server at
-`http://<mac>:3003` — see INTEGRATIONS.md.
+The **immich-ml backend** is Immich's **official** machine-learning image
+(`IMMICH_ML_IMAGE:IMMICH_ML_IMAGE_TAG`), running under **Colima** as the dedicated
+auto-login account `IMMICH_SESSION_USER` (default `colima-svc`). It is CPU-only on Apple
+Silicon because no Metal image exists, but it loads Immich's multilingual Smart Search models
+(e.g. `nllb-clip-large-siglip__mrl` for German/Russian). The tag floats on purpose so it
+follows your Immich server's version: `--apply` and the weekly autoupdate re-pull it
+and recreate the container only when the image actually changed.
+`IMMICH_ML_MODEL_REVISION=v2` (the default) uses the optimized model exports from Immich v3.3
+onwards: faster, less RAM, and no re-index needed. The on-demand backend sleeps when idle. Point your
+Immich server at `http://<mac>:3003` — see INTEGRATIONS.md.
 
 ## Hardware assumptions
 
@@ -416,7 +418,7 @@ use the menu) to change a live box.
 | `MAIN_BACKEND_PORT` | `18000` | Internal port `oMLX` binds (serves main + embed + rerank) |
 | `LLM_REQUEST_TIMEOUT` | `3600` | Per-request timeout (s) for the text engine **and** LiteLLM; long docs/OCR |
 | `TEXT_ENGINE` | `omlx` | The engine (`oMLX`) — one unified process for main (text+images+tools) + embed + rerank |
-| `OMLX_REPO` / `OMLX_REPO_REF` | `github.com/jundot/omlx` / `v0.7.3.dev1` | Git source + pinned tag for the `omlx` venv (alpha-stage, not on PyPI) |
+| `OMLX_REPO` / `OMLX_REPO_REF` | `github.com/jundot/omlx` / `v0.7.3rc1` | Git source + pinned tag for the `omlx` venv (alpha-stage, not on PyPI) |
 | `OMLX_PROJECT_DIR` | `/Users/mac/projects/omlx` | Where the oMLX git checkout lives |
 | `OMLX_MODEL_DIR` | `/Users/mac/.cache/omlx-models` | `--model-dir` symlink farm making every downloaded model discoverable |
 | `OMLX_MEMORY_GUARD_GB` | `30` | Soft RAM ceiling for the one oMLX process (`--memory-guard-gb`) |
@@ -428,7 +430,9 @@ use the menu) to change a live box.
 | `GEMMA_TOP_K` | `64` | Gemma reference top_k for `main`/`main-fast` (via `extra_body`; top_k is not a native OpenAI param). `0`/empty = off; inert at temperature 0 |
 | `PRESET_ALIASES` | `1` | Expose the `main-fast` preset alias (same loaded model as `main`, thinking-off) |
 | `ML_PUBLIC_PORT` / `ML_BACKEND_PORT` | `3003` / `13003` | immich-ml (optional) |
-| `IMMICH_REPO` / `IMMICH_REPO_REF` | `sebastianfredette/immich-ml-metal` / `main` | immich-ml source repo + branch (override to use a fork) |
+| `IMMICH_ML_IMAGE` / `IMMICH_ML_IMAGE_TAG` | `ghcr.io/immich-app/immich-machine-learning` / `release` | immich-ml image — the ONE floating tag (follows the Immich server); re-pulled by `--apply` + weekly autoupdate |
+| `IMMICH_ML_MODEL_REVISION` | `v2` | Immich ≥ v3.3 optimized model exports (faster, less RAM, no re-index); empty = image default |
+| `IMMICH_COLIMA_CPU` / `IMMICH_COLIMA_MEMORY` | `8` / `6` | Colima VM size for immich-ml (vCPU also sets the ONNX intra-op thread count) |
 | `DOCLING_PUBLIC_PORT` / `DOCLING_BACKEND_PORT` | `5001` / `15001` | docling-serve (optional) |
 | `IDLE_TIMEOUT_IMMICH` / `IDLE_TIMEOUT_DOCLING` | `900` | Idle-to-sleep seconds (`-1` = never) |
 | `AUTOUPDATE_WEEKDAY` / `_HOUR` / `_MINUTE` | `6` / `6` / `0` | Weekly schedule (Sat 06:00) |
@@ -439,9 +443,9 @@ use the menu) to change a live box.
 | `IMAGES_PUBLIC_PORT` / `IMAGES_BACKEND_PORT` | `5005` / `15005` | Image-generation ports (proxy / backend) |
 | `MFLUX_MODEL` / `MFLUX_QUANTIZE` / `MFLUX_STEPS` | `flux2-klein-4b` / `4` / *(empty)* | Image model (FLUX.2 Klein 4B default; `dev`/`schnell` = FLUX.1), quantization bits, sampling steps (empty = model default) |
 | `INSTALL_VOICE` | `0` | Speech-to-Text (`stt`) + Text-to-Speech (`tts`) — **off by default** |
-| `INSTALL_IMMICH` | `0` | Metal/ANE Immich-ML backend (:3003) — **off by default** (needs macOS 26 + a running Immich server) |
+| `INSTALL_IMMICH` | `0` | Immich-ML backend (official image under Colima, :3003) — **off by default** (needs a running Immich server) |
 | `VOICE_PROJECT_DIR` | `/Users/mac/projects/macos-speech-server` | Where FluidAudio's `macos-speech-server` is cloned+built |
-| `VOICE_REPO_REF` | `efc40c1…` (full SHA) | Pinned `macos-speech-server` commit — bump deliberately, then `--apply` (same discipline as `OMLX_REPO_REF`) |
+| `VOICE_REPO_REF` | `211c5de…` (full SHA) | Pinned `macos-speech-server` commit — bump deliberately, then `--apply` (same discipline as `OMLX_REPO_REF`) |
 | `VOICESTT_PUBLIC_PORT` / `VOICESTT_BACKEND_PORT` | `5006` / `15006` | Speech-to-Text ports (proxy / backend) |
 | `IDLE_TIMEOUT_VOICESTT` / `STARTUP_TIMEOUT_VOICESTT` | `900` / `60` | STT idle-to-sleep / wake-deadline seconds |
 | `VOICETTS_PUBLIC_PORT` / `VOICETTS_BACKEND_PORT` | `5007` / `15007` | Text-to-Speech ports (proxy / backend) |
@@ -461,7 +465,7 @@ use the menu) to change a live box.
 The weekly job updates **only macOS and Homebrew** (`brew upgrade` of every
 formula; macOS OS updates are downloaded and announced in the login banner,
 because installing them needs your password); everything that
-serves a model (`oMLX`, `litellm`, `immich-ml`, `docling`, and the model
+serves a model (`oMLX`, `litellm`, `docling`, and the model
 weights) stays put until you change it on purpose (a floating auto-upgrade once
 broke a loaded model).
 
