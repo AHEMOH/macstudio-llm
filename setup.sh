@@ -355,7 +355,7 @@ config_hint() {
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
     TEXT_ENGINE)                 echo "Engine serving 'main'/'embed'/'rerank': omlx (UNIFIED text+images+embed+rerank in ONE process, SSD paged-prefix-cache, continuous batching). The only supported engine" ;;
     OMLX_REPO)                   echo "Git URL of oMLX (jundot/omlx), cloned+editable-installed into OMLX_PROJECT_DIR" ;;
-    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.7.3rc1, alpha-stage — RC exception 2026-10-30 (after the v0.7.3.dev1 DEV-tag exception of 2026-10-24: +6-12% decode/prefill for gemma4 on M1 Max): Metal relaxed context-store timeout on pre-M5 Macs against 0000000e errors in long prefills, memory guard re-reads iogpu.wired_limit_mb, incomplete_tool_call error instead of raw text, optional per-model activation_fp16_enabled (M1/M2, NOT seeded — measure first); return to stable tags at v0.7.3) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; v0.7.0 pinned 2026-10-10 — rebuilt memory guard (--memory-guard-gb unchanged), M1 Max native-decode threadgroup fix, mlx 0.32.2 + custom kernels built at pip install; expect one SSD-prefix-cache cold start per model after a bump). Mirrors MLXVLM_VERSION's old pin discipline" ;;
+    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.7.3rc1, alpha-stage — RC exception 2026-10-30 (after the v0.7.3.dev1 DEV-tag exception of 2026-10-24: +6-12% decode/prefill for gemma4 on M1 Max): Metal relaxed context-store timeout on pre-M5 Macs against 0000000e errors in long prefills, memory guard re-reads iogpu.wired_limit_mb, incomplete_tool_call error instead of raw text, optional per-model activation_fp16_enabled (M1/M2, NOT seeded — measure first); return to stable tags at v0.7.3) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; v0.7.0 pinned 2026-10-10 — rebuilt memory guard (--memory-guard-gb unchanged), M1 Max native-decode threadgroup fix, mlx 0.32.2 + custom kernels built at pip install; expect one SSD-prefix-cache cold start per model after a bump)" ;;
     OMLX_PROJECT_DIR)            echo "Where ensure_omlx_project() clones+builds oMLX (git clone + pip install -e, one-time + on ref bump during --apply)" ;;
     OMLX_MODEL_DIR)              echo "--model-dir symlink farm (one <org>--<name> HF-repo entry per downloaded row) that makes every model — main AND embed/rerank — discoverable by the one resident oMLX process under its real HF repo name" ;;
     OMLX_MEMORY_GUARD_GB)        echo "oMLX's soft RAM ceiling (--memory-guard-gb) — matches the project's 30GB wired-memory hard rule. oMLX has no hard --max-kv-size-equivalent flag" ;;
@@ -1789,18 +1789,17 @@ model_status() {
 }
 
 ensure_omlx_project() {
-  # Clones + builds oMLX (github.com/jundot/omlx) — replaces mlx-vlm (main) AND
-  # Infinity (embed/rerank) with ONE process. Alpha-stage, not on PyPI:
+  # Clones + builds oMLX (github.com/jundot/omlx) — main AND embed/rerank in
+  # ONE process. Alpha-stage, not on PyPI:
   # installed from source via `pip install -e .`. Git checkout lives at
   # OMLX_PROJECT_DIR (~/projects/omlx — same convention as
   # ensure_voice_project); the venv it installs INTO is the SHARED
-  # $VENV_DIR/omlx (matches mlxvlm/litellm/infinity/mflux — every wrapper execs
+  # $VENV_DIR/omlx (matches litellm/mflux — every wrapper execs
   # "$VENV_DIR/<name>/bin/...", zero special-casing needed).
   #
-  # OMLX_REPO_REF is a PINNED TAG (v0.7.3rc1), not a floating branch — mirrors
-  # MLXVLM_VERSION's old pin discipline. Unlike ensure_voice_project's
-  # `git pull --ff-only` (tracks a moving branch), we `fetch` + explicit
-  # `checkout "$ref"` every run — a no-op when already on that tag.
+  # OMLX_REPO_REF is a PINNED TAG (v0.7.3rc1), not a floating branch: we
+  # `fetch` + explicit `checkout "$ref"` every run — a no-op when already on
+  # that tag.
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   local dir="${OMLX_PROJECT_DIR:-$TARGET_HOME/projects/omlx}"
   local repo="${OMLX_REPO:-https://github.com/jundot/omlx}"
@@ -2852,33 +2851,6 @@ apply_ondemand_sudoers() {
   ok "wrote $f"
 }
 
-retire_old_engine_daemons() {
-  # ONE-TIME migration cleanup (oMLX cutover). com.local.mlxvlm.main /
-  # infinity.serve / infinity.proxy were FULLY RETIRED — removed from
-  # ALL_LABELS/ALWAYS_ON_LABELS/ONDEMAND_LABELS entirely, not just gated off —
-  # so render_all_plists()'s normal "walk ALL_LABELS, remove if config says
-  # off" loop never visits them again. Without this, they'd be orphaned:
-  # still bootstrapped, still running, invisible to every menu/dashboard/
-  # status view that only iterates the current label registry.
-  local old_label old_wrapper
-  for old_label in com.local.mlxvlm.main com.local.infinity.serve com.local.infinity.proxy; do
-    if [ -f "$PLIST_DIR/$old_label.plist" ] || daemon_loaded "$old_label"; then
-      bootout_plist "$old_label"
-      /bin/rm -f "$PLIST_DIR/$old_label.plist"
-      ok "retired old daemon: $old_label"
-    fi
-  done
-  for old_wrapper in start-mlxvlm-main.sh start-infinity.sh start-infinity-proxy.sh; do
-    if [ -f "$LIBEXEC_DIR/$old_wrapper" ]; then
-      /bin/rm -f "$LIBEXEC_DIR/$old_wrapper"
-      ok "removed retired wrapper: $LIBEXEC_DIR/$old_wrapper"
-    fi
-  done
-  # Deliberately DO NOT touch $VENV_DIR/mlxvlm or $VENV_DIR/infinity, or any
-  # HF-cached weights — matches menu_uninstall()'s existing precedent, and
-  # keeps the git-revert rollback path cheap (no re-download/re-build needed).
-}
-
 # ===========================================================================
 # Orchestration
 # ===========================================================================
@@ -2938,7 +2910,6 @@ apply_everything() {
   dbg "step: ensure_formulas";         ensure_formulas
   dbg "step: apply_tui_sudoers";       apply_tui_sudoers || true
   dbg "step: apply_ondemand_sudoers";  apply_ondemand_sudoers || true
-  dbg "step: retire_old_engine_daemons"; retire_old_engine_daemons || true
   dbg "step: ensure_modern_python";    ensure_modern_python || true
   dbg "step: ensure_immich_ml_container"; ensure_immich_ml_container
   dbg "step: ensure_docling_venv";     ensure_docling_venv
@@ -3954,8 +3925,8 @@ follow_log() {
   trap 'true' INT
   case "$f" in
     *omlx-main.log)
-      # Conservative superset of mlx_vlm.server's old log vocabulary — refine
-      # against real oMLX log lines once verified in production.
+      # Request/throughput/error lines of oMLX's own log — refine
+      # if oMLX changes its log vocabulary.
       /usr/bin/tail -n 20 -F "$f" 2>/dev/null \
         | /usr/bin/grep --line-buffered -E 'REQUEST|Chat completion|tok/s|running=|ABORTED|schedule|Error|Traceback|mllm=' || true ;;
     *)

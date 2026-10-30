@@ -3,7 +3,7 @@
     {
       "name": "DS_PROMETHEUS",
       "label": "Prometheus",
-      "description": "Prometheus instance scraping mac-system (9100), mac-silicon (9101), mac-ollama (9102), mac-ondemand (9103).",
+      "description": "Prometheus instance scraping mac-system (9100), mac-silicon (9101), mac-ondemand (9103).",
       "type": "datasource",
       "pluginId": "prometheus",
       "pluginName": "Prometheus"
@@ -19,7 +19,7 @@
     { "type": "panel", "id": "state-timeline", "name": "State timeline", "version": "" }
   ],
   "annotations": { "list": [] },
-  "description": "MacStudio headless LLM server — Ollama state, Apple Silicon power/thermal, system metrics, and on-demand service health. Works with scrape jobs: mac-system / mac-silicon / mac-ollama / mac-ondemand.",
+  "description": "MacStudio headless LLM server — Apple Silicon power/thermal, system metrics, and on-demand service health. Works with scrape jobs: mac-system / mac-silicon / mac-ondemand.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -29,71 +29,9 @@
   "panels": [
     {
       "type": "stat",
-      "id": 1,
-      "title": "Ollama",
-      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [
-        { "refId": "A", "expr": "ollama_up", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
-          ],
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] },
-          "color": { "mode": "thresholds" }
-        },
-        "overrides": []
-      },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" }
-    },
-    {
-      "type": "stat",
-      "id": 2,
-      "title": "Loaded model",
-      "gridPos": { "h": 4, "w": 6, "x": 4, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [
-        { "refId": "A", "instant": true, "format": "time_series", "expr": "ollama_loaded_model_info", "legendFormat": "{{name}} ({{quantization}})", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "noValue": "none resident",
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] },
-          "color": { "mode": "fixed", "fixedColor": "blue" }
-        },
-        "overrides": []
-      },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "textMode": "name" }
-    },
-    {
-      "type": "gauge",
-      "id": 3,
-      "title": "VRAM usage vs wired limit",
-      "gridPos": { "h": 4, "w": 5, "x": 10, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [
-        { "refId": "A", "expr": "sum(ollama_loaded_model_size_bytes) / on(instance) group_left() ollama_iogpu_wired_limit_bytes", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1,
-          "noValue": "0",
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0.8 }, { "color": "red", "value": 0.95 } ] },
-          "color": { "mode": "thresholds" }
-        },
-        "overrides": []
-      },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showThresholdLabels": false, "showThresholdMarkers": true }
-    },
-    {
-      "type": "stat",
       "id": 4,
       "title": "Thermal pressure",
-      "gridPos": { "h": 4, "w": 5, "x": 15, "y": 0 },
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         { "refId": "A", "expr": "apple_silicon_thermal_pressure_level", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
@@ -120,7 +58,7 @@
       "type": "stat",
       "id": 5,
       "title": "Package power",
-      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         { "refId": "A", "expr": "apple_silicon_package_power_watts", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
@@ -136,75 +74,15 @@
       },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "textMode": "value" }
     },
-
-    {
-      "type": "timeseries",
-      "id": 10,
-      "title": "Loaded model VRAM over time",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [
-        { "refId": "A", "expr": "ollama_loaded_model_size_bytes", "legendFormat": "{{name}}", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
-        { "refId": "B", "expr": "ollama_iogpu_wired_limit_bytes", "legendFormat": "iogpu wired limit", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 25, "showPoints": "never", "stacking": { "mode": "none" } }
-        },
-        "overrides": [
-          { "matcher": { "id": "byName", "options": "iogpu wired limit" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash" } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 0 } ] }
-        ]
-      },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
-    },
-    {
-      "type": "table",
-      "id": 11,
-      "title": "Ollama config (from macstudio.conf)",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [
-        { "refId": "A", "instant": true, "format": "table", "expr": "ollama_config_info", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
-      ],
-      "transformations": [
-        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "Value": true, "job": true, "instance": true }, "indexByName": {}, "renameByName": {} } }
-      ],
-      "fieldConfig": { "defaults": { "custom": { "align": "left" } }, "overrides": [] },
-      "options": { "showHeader": true }
-    },
-
-    {
-      "type": "table",
-      "id": 12,
-      "title": "Installed models (on disk)",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "targets": [
-        { "refId": "A", "instant": true, "format": "table", "expr": "ollama_installed_model_size_bytes", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
-      ],
-      "transformations": [
-        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true }, "indexByName": { "name": 0, "Value": 1 }, "renameByName": { "name": "Model", "Value": "Size" } } }
-      ],
-      "fieldConfig": {
-        "defaults": { "custom": { "align": "left" } },
-        "overrides": [
-          { "matcher": { "id": "byName", "options": "Size" }, "properties": [ { "id": "unit", "value": "bytes" }, { "id": "custom.align", "value": "right" } ] }
-        ]
-      },
-      "options": { "showHeader": true }
-    },
     {
       "type": "timeseries",
       "id": 13,
       "title": "Exporter scrape health",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
-        { "refId": "A", "expr": "ollama_exporter_scrape_duration_seconds", "legendFormat": "ollama", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
         { "refId": "B", "expr": "apple_silicon_exporter_scrape_duration_seconds", "legendFormat": "silicon", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
         { "refId": "C", "expr": "ondemand_exporter_scrape_duration_seconds", "legendFormat": "ondemand", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
-        { "refId": "D", "expr": "sum(rate(ollama_exporter_scrape_errors_total[5m]))", "legendFormat": "ollama err/s", "datasource": { "type": "prometheus", "uid": "${datasource}" } },
         { "refId": "E", "expr": "sum(rate(ondemand_exporter_scrape_errors_total[5m]))", "legendFormat": "ondemand err/s", "datasource": { "type": "prometheus", "uid": "${datasource}" } }
       ],
       "fieldConfig": {
@@ -532,7 +410,7 @@
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["macstudio", "llm", "ollama"],
+  "tags": ["macstudio", "llm"],
   "templating": {
     "list": [
       {

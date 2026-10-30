@@ -2,7 +2,7 @@
 # Launched by com.local.omlx.main — the UNIFIED LLM engine (oMLX). Serves the
 # chat/vision main model AND, in the SAME resident process, the embed+rerank
 # BGE pair — all discoverable via --model-dir (ensure_omlx_model_dir()'s
-# mlx-<id> symlink farm). Replaces mlx-vlm (main) AND Infinity (embed/rerank)
+# <org>--<name> symlink farm). Replaces the former mlx-vlm + Infinity pair
 # in one clean cutover. Context-window cap is NOT a flag here — it's pre-
 # seeded into ~/.omlx/model_settings.json by ensure_omlx_settings() during --apply.
 set -eu

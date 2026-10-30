@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Launched by com.local.voicetts.proxy — asyncio TCP proxy that wakes the
 # Text-to-Speech backend (com.local.voicetts.serve) on demand and stops it
-# after idle. Same on-demand pattern as infinity/images/immich/docling
+# after idle. Same on-demand pattern as images/immich/docling
 # (reuses ondemand-proxy.py unmodified).
 set -eu
 
