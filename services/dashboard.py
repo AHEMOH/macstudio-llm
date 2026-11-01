@@ -1020,9 +1020,16 @@ def api_paperless_ws(wsid):
             m = json.load(f)
     except (OSError, ValueError):
         return None
+    analysis = None
+    try:
+        with open(os.path.join(d, "analysis.json"), "r", encoding="utf-8") as f:
+            analysis = json.load(f)
+    except (OSError, ValueError):
+        pass
     status = _po_read_status() or {}
     c = conf()
-    return {"ws": m, "processing": status.get("processing"), "last_command": status.get("last_command"),
+    return {"ws": m, "analysis": analysis, "processing": status.get("processing"),
+            "last_command": status.get("last_command"),
             "paperless_url": c.get("PAPERLESS_OCR_URL", ""), "check_tag": c.get("PAPERLESS_OCR_CHECK_TAG", "scan:check")}
 
 
@@ -1055,7 +1062,7 @@ def po_ws_command(body):
         roles = body.get("roles")
         if isinstance(roles, dict) and all(isinstance(k, str) and v in ("front", "back") for k, v in roles.items()):
             cmd["roles"] = roles
-    elif action in ("ws_commit", "ws_discard"):
+    elif action in ("ws_commit", "ws_discard", "ws_analyze"):
         wsid = str(body.get("id", ""))
         if not PO_WS_ID_RE.match(wsid):
             return (False, "ungültige Arbeitsmappe")

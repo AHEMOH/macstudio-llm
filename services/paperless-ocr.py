@@ -138,6 +138,19 @@ EDIT_DIR = WORK / "edit"
 WS_ID_RE = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{4}$")
 THUMB_W = int(os.environ.get("PAPERLESS_OCR_THUMB_WIDTH", "240"))
 PREVIEW_W = int(os.environ.get("PAPERLESS_OCR_PREVIEW_WIDTH", "1000"))
+# Per-page AI suggestion ("KI-Vorschlag") for an editor workspace: ONE Apple Vision pass per
+# page — its box ORDER gives the orientation (the text itself is orientation-independent at
+# 'accurate', measured 2026-11-01), the printed page numbers
+# (same regexes as _page_check) order the numbered pages deterministically; ONE text call to
+# the LLM only contributes document boundaries and positions for pages WITHOUT a number.
+# Measured 2026-11-01 (main-fast, synthetic DE pages): asking gemma for the whole
+# permutation returned INCOMPLETE lists in 2 of 3 runs — hence the split of responsibilities.
+ANALYZE_MODEL = os.environ.get("PAPERLESS_OCR_ANALYZE_MODEL", "main-fast")
+# "accurate" by default: Vision's "fast" level only knows en/fr/it/de/es/pt — with ru-RU in LANGS
+# it raises, and Cyrillic pages would score garbage in both orientations anyway.
+ANALYZE_RECMODE = os.environ.get("PAPERLESS_OCR_ANALYZE_RECMODE", "accurate")
+ANALYZE_DPI = int(os.environ.get("PAPERLESS_OCR_ANALYZE_DPI", "150"))
+ANALYZE_LLM = os.environ.get("PAPERLESS_OCR_ANALYZE_LLM", "1") == "1"
 # MOTD: a short status block at SSH login (held jobs, errors, last result) with a link into
 # the dashboard. Written as a flag file for motd-compose.sh, same mechanism the weekly
 # autoupdate uses for its "ACTION NEEDED" block.
@@ -614,7 +627,9 @@ def _cached_pages(path, st):
 # "Seite/Page X [von N]") can raise a warning, bare footer numbers merely support the chain.
 _STRONG_OF_RE = re.compile(
     r"(?:Seite|Page|Blatt|Стр(?:аница)?\.?)\s*(\d{1,3})\s*(?:von|of|из|/)\s*(\d{1,3})\b", re.I)
-_STRONG_RE = re.compile(r"(?:Seite|Page|Стр(?:аница)?\.?)\s*(\d{1,3})\b", re.I)
+# "Seite 7" without a total must BE the line (header/footer), not sit inside a sentence —
+# "dies ist Seite 2 des Schreibens" split into a short Vision box must not count.
+_STRONG_RE = re.compile(r"^\W*(?:Seite|Page|Стр(?:аница)?\.?)\s*(\d{1,3})\W*$", re.I)
 _WEAK_RES = (re.compile(r"^\s*-?\s*(\d{1,3})\s*-?\s*$"),
              re.compile(r"^\s*(\d{1,3})\s*/\s*(\d{1,3})\s*$"))
 
@@ -630,10 +645,9 @@ def _page_number_of(text):
     # "Seite 7" without a total only counts when it sits on a short header/footer line —
     # "siehe Seite 7" inside a paragraph is a cross-reference, not a page number.
     for ln in lines:
-        if len(ln) <= 40:
-            m = _STRONG_RE.search(ln)
-            if m and 1 <= int(m.group(1)) <= 500:
-                return {"number": int(m.group(1)), "of": None, "strong": True}
+        m = _STRONG_RE.match(ln)
+        if m and 1 <= int(m.group(1)) <= 500:
+            return {"number": int(m.group(1)), "of": None, "strong": True}
     for ln in lines[:2] + lines[-2:]:
         for rx in _WEAK_RES:
             m = rx.match(ln)
@@ -1419,6 +1433,244 @@ def _ws_commit(wsdir, m, docs):
         _set_processing(None)
 
 
+_analyze_level = ANALYZE_RECMODE
+
+
+def _vision_read(pix):
+    """Apple Vision over a rendered pixmap: (text, chars, boxes). boxes = normalized
+    (x, y, w, h) per observation IN READING ORDER (origin bottom-left) — Vision 'accurate'
+    reads rotated text just as well as upright text, so the TEXT carries no orientation
+    signal, but the box order does (see _orientation_from_boxes)."""
+    global _analyze_level
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False, dir=str(WORK)) as tf:
+        tmp = tf.name
+        tf.write(pix.tobytes("png"))
+    try:
+        try:
+            ann = ocrmac.OCR(tmp, recognition_level=_analyze_level, language_preference=LANGS).recognize()
+        except ValueError as e:
+            if _analyze_level == "accurate":
+                raise
+            log(f"analyze: Vision '{_analyze_level}' rejected the language list ({e}); using 'accurate'")
+            _analyze_level = "accurate"
+            ann = ocrmac.OCR(tmp, recognition_level=_analyze_level, language_preference=LANGS).recognize()
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    text = "\n".join(t.strip() for t, _c, _b in ann if t.strip())
+    boxes = [tuple(b) for t, _c, b in ann if t.strip()]
+    return text, len(text), boxes
+
+
+def _orientation_from_boxes(boxes):
+    """(rotation to ADD so the page reads upright, confidence 0..1) from the reading-order
+    geometry of Vision's boxes. Measured 2026-11-01 (synthetic DE letter, 150 dpi):
+      upright            -> later boxes sit LOWER  (y decreasing along reading order)
+      upside down (180)  -> later boxes sit HIGHER (y increasing)
+      rotated 90 cw      -> boxes progress along x, DEcreasing (header at the right) -> add 270
+      rotated 270 cw     -> x INcreasing -> add 90
+    Compared over ALL box pairs (rank correlation), so a few boxes sharing one line don't
+    dilute the vote. Mixed layouts (columns/tables) give low confidence and are left alone."""
+    n = len(boxes)
+    if n < 3:
+        return 0, 0.0
+    ys = [b[1] for b in boxes]
+    xs = [b[0] for b in boxes]
+    ydown = yup = xdown = xup = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            dy, dx = ys[j] - ys[i], xs[j] - xs[i]
+            if dy < -0.005:
+                ydown += 1
+            elif dy > 0.005:
+                yup += 1
+            if dx < -0.005:
+                xdown += 1
+            elif dx > 0.005:
+                xup += 1
+    yt, xt = ydown + yup, xdown + xup
+    if yt == 0 and xt == 0:
+        return 0, 0.0
+    # Lines stacked along y (portrait reading) vs along x (page lying on its side).
+    if max(ydown, yup) / max(1, yt) >= max(xdown, xup) / max(1, xt) and yt:
+        return (180, yup / yt) if yup > ydown else (0, ydown / yt)
+    return (270, xdown / xt) if xdown > xup else (90, xup / xt)
+
+
+def _analyze_page(page):
+    """Orientation + text + page number for one source page (as currently displayed).
+    ONE Vision pass: the text is orientation-independent, the box geometry gives the rotation."""
+    s = ANALYZE_DPI / 72.0
+    pix = page.get_pixmap(matrix=fitz.Matrix(s, s), colorspace=fitz.csGRAY, alpha=False)
+    text, chars, boxes = _vision_read(pix)
+    rot, conf = _orientation_from_boxes(boxes)
+    if conf < 0.7 or chars < 20:
+        rot = 0
+    if rot:
+        # Re-read upright: small rotated footers ("Seite 2 von 3") are the one thing Vision
+        # does NOT read reliably on a rotated page, and that's exactly what orders the pages.
+        pix = page.get_pixmap(matrix=fitz.Matrix(s, s).prerotate(rot), colorspace=fitz.csGRAY, alpha=False)
+        text, chars, _ = _vision_read(pix)
+    num = _page_number_of(text) or {}
+    blank, dark = _is_blank_page(page)
+    return {"rotate": rot, "rot_confidence": round(conf, 3), "chars": chars,
+            "number": num.get("number"), "of": num.get("of"), "strong": bool(num.get("strong")),
+            "blank": blank and chars < 20, "dark": round(dark, 5),
+            "first": text[:300], "last": text[-200:] if len(text) > 300 else ""}
+
+
+def _analyze_llm(entries):
+    """ONE text call: document boundaries + positions for pages without a page number.
+    Returns (splits:set, place:dict img->pos, notes:dict, info)."""
+    info = {"ok": False, "ms": 0, "error": None}
+    if not ANALYZE_LLM or not VLM_URL:
+        info["error"] = "aus"
+        return set(), {}, {}, info
+    unnumbered = [e["img"] for e in entries if e["number"] is None and not e["blank"]]
+    lines = []
+    for e in entries:
+        if e["blank"]:
+            continue
+        nr = f"Seitenzahl {e['number']}" + (f" von {e['of']}" if e["of"] else "") if e["number"] is not None else "keine Seitenzahl"
+        snippet = re.sub(r"\s+", " ", e["first"])[:220]
+        tail = re.sub(r"\s+", " ", e["last"])[:120]
+        lines.append(f"[{e['img']}] Position {e['pos']}, {nr}. Anfang: \"{snippet}\"" + (f" Ende: \"{tail}\"" if tail else ""))
+    prompt = (
+        "Du prüfst die Seiten eines Scan-Stapels. Jede Zeile ist eine Seite mit ihrer aktuellen Position, "
+        "der aufgedruckten Seitenzahl (falls erkannt) und dem Textanfang.\n\n"
+        "Aufgabe 1 – Dokumentgrenzen: Nenne die Seiten, mit denen ein NEUES Dokument beginnt. Eine Grenze gibt es NUR "
+        "bei einem anderen Absender, Betreff, Briefkopf oder Empfänger oder wenn eine Seite erkennbar 'Seite 1' ist. "
+        "KEINE Grenze bei bloßem Themenwechsel, Kapitelwechsel oder ähnlichem Text. Die erste Seite zählt nicht als Grenze.\n"
+        f"Aufgabe 2 – Nur für Seiten OHNE Seitenzahl ({', '.join(unnumbered) or 'keine'}): an welche Position (1-basiert, "
+        f"bezogen auf alle {len(entries)} Seiten) gehört die Seite inhaltlich? Lass sie weg, wenn unklar.\n\n"
+        "Antworte NUR mit JSON: {\"splits\": [\"p7\"], \"place\": {\"p3\": 5}, \"notes\": {\"p7\": \"kurze Begründung\"}}. "
+        "notes maximal 12 Wörter je Eintrag, auf Deutsch.\n\nSeiten:\n" + "\n".join(lines))
+    payload = {"model": ANALYZE_MODEL, "temperature": 0, "max_tokens": 600,
+               "response_format": {"type": "json_object"},
+               "messages": [{"role": "user", "content": prompt}]}
+    t0 = time.time()
+    try:
+        r = requests.post(VLM_URL, data=json.dumps(payload), headers={"Content-Type": "application/json"},
+                          timeout=VLM_TIMEOUT)
+        r.raise_for_status()
+        content = r.json()["choices"][0]["message"]["content"]
+        try:
+            data = json.loads(content)
+        except ValueError:
+            mm = re.search(r"\{.*\}", content, re.S)
+            data = json.loads(mm.group(0)) if mm else {}
+        imgs = {e["img"] for e in entries}
+        splits = {s for s in (data.get("splits") or []) if isinstance(s, str) and s in imgs}
+        place = {}
+        for k, v in (data.get("place") or {}).items():
+            if k in unnumbered and isinstance(v, (int, float)) and 1 <= int(v) <= len(entries):
+                place[k] = int(v)
+        notes = {k: str(v)[:120] for k, v in (data.get("notes") or {}).items() if k in imgs and isinstance(v, str)}
+        info.update(ok=True, ms=int((time.time() - t0) * 1000))
+        return splits, place, notes, info
+    except Exception as e:
+        info.update(ms=int((time.time() - t0) * 1000), error=str(e)[:200])
+        log(f"analyze: LLM step failed ({e}) — page numbers + orientation only")
+        return set(), {}, {}, info
+
+
+def _ws_analyze(wsdir, m):
+    """Per-page suggestion for a workspace -> analysis.json (orientation, number, blank,
+    suggested position, document boundary, reason)."""
+    wsid = m["id"]
+    _set_processing({"kind": "ws_analyze", "id": wsid, "since": time.time(),
+                     "files": [s["name"] for s in m["sources"]], "progress": "Seite 1/%d" % len(m["pages"])})
+    opened = {}
+    try:
+        for s in m["sources"]:
+            opened[s["name"]] = _open_as_pdf(wsdir / "source" / s["name"])
+        entries = []
+        for i, e in enumerate(m["pages"], start=1):
+            _set_processing(_processing, progress=f"Seite {i}/{len(m['pages'])} (Vision)")
+            a = _analyze_page(opened[e["src"]][e["page"]])
+            a.update(img=e["img"], pos=i)
+            entries.append(a)
+        _set_processing(_processing, progress="Reihenfolge + Dokumentgrenzen (LLM)")
+        splits, place, notes, llm = _analyze_llm(entries)
+        # Deterministic order. Page numbering restarts per document, so numbered pages are
+        # first GROUPED into documents — by their printed total ("von N") when they have one,
+        # otherwise by the segment they sit in (segments = scan order cut at LLM boundaries and
+        # at every explicit "Seite 1" restart) — then sorted by number inside each group; groups
+        # keep their order of first appearance. Blanks go last; unnumbered pages land at the LLM
+        # position or stay where they are.
+        seg = 0
+        for e in entries:
+            if e["img"] in splits or (e["strong"] and e["number"] == 1 and e["pos"] > 1):
+                seg += 1
+            e["seg"] = seg
+        numbered = [e for e in entries if e["number"] is not None and not e["blank"]]
+        groups = {}
+        for e in numbered:
+            key = ("of", e["of"]) if e["of"] else ("seg", e["seg"])
+            e["group"] = key
+            groups.setdefault(key, []).append(e)
+        ordered_groups = sorted(groups.values(), key=lambda g: min(x["pos"] for x in g))
+        order, group_first = [], set()
+        for gi, g in enumerate(ordered_groups):
+            g_sorted = sorted(g, key=lambda x: (x["number"], x["pos"]))
+            if gi > 0:
+                group_first.add(g_sorted[0]["img"])
+            order.extend(g_sorted)
+        rest = [e for e in entries if e not in numbered]
+        for e in sorted(rest, key=lambda e: (e["blank"], place.get(e["img"], e["pos"]))):
+            if e["blank"]:
+                order.append(e)
+            else:
+                idx = place.get(e["img"], e["pos"]) - 1
+                order.insert(max(0, min(idx, len(order))), e)
+        result = {"ts": int(time.time()), "model": ANALYZE_MODEL if llm["ok"] else None, "llm": llm,
+                  "order": [e["img"] for e in order], "pages": {}}
+        for k, e in enumerate(order, start=1):
+            strong_first = e["strong"] and e["number"] == 1 and k > 1
+            # Numbered pages take their boundary from the number grouping only — the LLM's
+            # "new sender" verdict on page 2 of a letter must not cut that letter in two.
+            if e["number"] is not None:
+                split = (strong_first or e["img"] in group_first) and k > 1
+            else:
+                split = e["img"] in splits and k > 1
+            reasons = []
+            if e["blank"]:
+                reasons.append("leere Seite")
+            if e["rotate"]:
+                reasons.append(f"Text steht auf dem Kopf/quer ({e['rotate']}°, Sicherheit {int(e['rot_confidence'] * 100)} %)")
+            if e["number"] is not None:
+                reasons.append(f"Seitenzahl {e['number']}" + (f" von {e['of']}" if e["of"] else ""))
+            elif not e["blank"]:
+                reasons.append("keine Seitenzahl erkannt" + (f", LLM-Position {place[e['img']]}" if e["img"] in place else ""))
+            if split:
+                reasons.append("neues Dokument" + (" (Seite 1)" if strong_first else ""))
+            if notes.get(e["img"]):
+                reasons.append(notes[e["img"]])
+            result["pages"][e["img"]] = {
+                "rotate": e["rotate"], "rot_confidence": e["rot_confidence"], "number": e["number"], "of": e["of"],
+                "strong": e["strong"], "chars": e["chars"], "blank": e["blank"],
+                "suggested_pos": k, "in_place": k == e["pos"], "split_before": split,
+                "reason": "; ".join(reasons)}
+        moved = sum(1 for v in result["pages"].values() if not v["in_place"])
+        rotated = sum(1 for v in result["pages"].values() if v["rotate"])
+        blanks = sum(1 for v in result["pages"].values() if v["blank"])
+        nsplit = sum(1 for v in result["pages"].values() if v["split_before"])
+        result["summary"] = (f"{len(entries) - moved} von {len(entries)} Seiten am Platz, {moved} umsortieren, "
+                             f"{rotated} drehen, {blanks} leer, {nsplit} Dokumentgrenze(n)"
+                             + (f" · LLM {llm['ms'] / 1000:.1f} s" if llm["ok"] else " · ohne LLM"))
+        tmp = wsdir / "analysis.json.tmp"
+        tmp.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, wsdir / "analysis.json")
+        log(f"workspace {wsid}: analyzed — {result['summary']}")
+        return result
+    finally:
+        for d in opened.values():
+            d.close()
+        _set_processing(None)
+
+
 def _ws_discard(wsdir, m):
     """Delete a workspace. Sources that were MOVED in and never sent go back where they
     came from (nothing is lost); copied or already-sent ones are simply dropped."""
@@ -1488,6 +1740,16 @@ def _apply_ws_command(cmd):
     if action == "ws_discard":
         _ws_discard(wsdir, m)
         return done(True, "Arbeitsmappe verworfen" + (" – Dateien zurück im Ordner" if m.get("moved") and m["state"] != "committed" else ""))
+    if action == "ws_analyze":
+        if m["state"] == "committing":
+            return done(False, "wird gerade gesendet")
+        _last_command = {"ts": time.time(), "action": action, "job": "editor", "ok": True,
+                         "msg": f"Analyse gestartet ({len(m['pages'])} Seiten)"}
+        try:
+            res = _ws_analyze(wsdir, m)
+        except Exception as e:
+            return done(False, f"Analyse fehlgeschlagen: {e}")
+        return done(True, "Analyse fertig: " + res["summary"])
     if action != "ws_commit":
         return done(False, f"unbekannte Aktion '{action}'")
     if m["state"] == "committing":

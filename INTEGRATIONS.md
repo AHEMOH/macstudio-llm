@@ -692,6 +692,18 @@ the page grid (`#editor/<id>`):
   the usual "all backs upside down" fix), ✕ to drop a page, **✂** to start a new document at
   that page (each document gets its own title; empty = LLM name as usual), **Rückgängig**.
   Click a thumbnail for the large preview with its own rotate / next / previous.
+- **🤖 KI-Vorschlag** analyses every page (≈1 s per page) and shows a badge per page:
+  *✓ richtig*, *→ Seite 7* (belongs elsewhere), *↻ 180°* (text upside down / sideways),
+  *✂ neues Dokument?* (a second letter in the stack), *leer*. Hover for the reason.
+  **Vorschlag übernehmen** applies all of it (order, rotation, split, blank pages removed) —
+  then check and send. How it works, so you know what to trust: Apple Vision reads each
+  page once; the *order* in which it returns the text boxes tells the orientation (text
+  itself reads fine upside down, the geometry doesn't); the printed page numbers
+  (`Seite 3 von 18`, footer numbers) order the pages deterministically, grouped per
+  document by their total; one short text call to `main-fast`
+  (`PAPERLESS_OCR_ANALYZE_MODEL`) only adds document boundaries (different sender /
+  subject / letterhead) and a place for pages *without* a number. Pages with a number are
+  never moved by the LLM. `PAPERLESS_OCR_ANALYZE_LLM=0` keeps it Vision-only.
 - **An Paperless senden** builds one PDF per document from the plan (rotation becomes real
   page rotation, so OCR sees upright pages), OCRs, runs the page-number check and uploads;
   the moved originals are archived to `originals/` as usual. **Verwerfen** deletes the
