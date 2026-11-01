@@ -670,7 +670,9 @@ checked against the page numbers printed on the pages (`Seite 3 von 18`, `Page 3
 `Стр. 3`, bare footer numbers). A broken sequence (a mis-assembled duplex reads 1, 18, 2, 17,
 …) or a `von 18` in a 7-page file uploads **tagged `scan:check`** (`PAPERLESS_OCR_CHECK_TAG`)
 — open the document in paperless, fix or re-scan, remove the tag. Deliberately conservative:
-only explicit `Seite/Page X` matches can raise it, and only with ≥3 numbered pages.
+only explicit `Seite/Page X` matches can raise it, and only with ≥3 numbered pages. Documents
+you split in the page editor are only checked for order, not for the `von N` total (every part
+still carries the bundle's total).
 
 **Recovery:** a failed job moves *all* its fragments to `errors/`; the dashboard's *Fehler*
 and *Originale* cards have **In Duplex** / **In Stapel** buttons that move a file back into a
