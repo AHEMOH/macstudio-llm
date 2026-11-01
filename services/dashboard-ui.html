@@ -1735,10 +1735,17 @@ function viewEditor() {
     bind();
     if (compact) {
       applyZoom();
+      // Die Leiste bleibt, wo sie war (ein Klick auf eine Seite darf sie nicht verschieben);
+      // nur wenn die aktuelle Seite außerhalb des sichtbaren Bereichs liegt (Blättern mit
+      // ◀ ▶ / Pfeiltasten, erster Aufbau), wird sie in die MITTE geholt – nie an den Rand.
       const sc = ed.keepScroll; ed.keepScroll = null;
-      const side = $("#edSide");
+      const side = $("#edSide"), c = $("#edSide .pg.cur");
       if (sc && side) side.scrollTop = sc.side;
-      else { const c = $("#edSide .pg.cur"); if (c) c.scrollIntoView({ block: "nearest" }); }
+      if (c && side && (ed.reveal || !sc)) {
+        const r = c.getBoundingClientRect(), s = side.getBoundingClientRect();
+        if (r.top < s.top || r.bottom > s.bottom) side.scrollTop += (r.top + r.height / 2) - (s.top + s.height / 2);
+      }
+      ed.reveal = false;
     }
   }
 
@@ -1797,9 +1804,13 @@ function viewEditor() {
   }
   function setZoom(z) { ed.zoom = z; applyZoom(); }
   function stepZoom(delta) { setZoom(Math.max(25, Math.min(400, Math.round((ed.zoomEff + delta) / 5) * 5))); }
-  function showPage(img) {
+  // reveal = true (Blättern): die neue Seite notfalls in der Leiste sichtbar machen; ein Klick
+  // auf eine Karte (reveal = false) lässt die Leiste exakt stehen. Der Viewer startet oben.
+  function showPage(img, reveal) {
     if (!pageOf(img)) return;
-    ed.cur = img; ed.keepScroll = null;
+    const side = $("#edSide");
+    ed.cur = img; ed.reveal = !!reveal;
+    ed.keepScroll = side ? { left: 0, top: 0, side: side.scrollTop } : null;
     if (ed.view !== "split") { ed.view = "split"; try { localStorage.setItem("po.editor.view", "split"); } catch (e) { /* egal */ } }
     render();
   }
@@ -1881,7 +1892,7 @@ function viewEditor() {
       case "undo": if (ed.undo.length) { ed.docs = JSON.parse(ed.undo.pop()); ed.sel.clear(); rerender(); } return;
       case "prev": case "next": {
         const l = allPages(), i = l.findIndex(x => x.img === ed.cur), j = act === "prev" ? i - 1 : i + 1;
-        if (i >= 0 && j >= 0 && j < l.length) showPage(l[j].img);
+        if (i >= 0 && j >= 0 && j < l.length) showPage(l[j].img, true);
         return;
       }
       case "view-grid": case "view-split": {
