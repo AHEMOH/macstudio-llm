@@ -201,6 +201,10 @@ CONFIG_KEYS=(
   PAPERLESS_OCR_BATCH_SUBDIR
   PAPERLESS_OCR_PAGE_CHECK
   PAPERLESS_OCR_CHECK_TAG
+  PAPERLESS_OCR_ANALYZE_MODEL
+  PAPERLESS_OCR_ANALYZE_RECMODE
+  PAPERLESS_OCR_ANALYZE_DPI
+  PAPERLESS_OCR_ANALYZE_LLM
   PAPERLESS_OCR_VLM_AUTO
   PAPERLESS_OCR_VLM_MODEL
   PAPERLESS_OCR_VLM_URL
@@ -347,6 +351,10 @@ config_default() {
     PAPERLESS_OCR_BATCH_SUBDIR)  echo stapel ;;
     PAPERLESS_OCR_PAGE_CHECK)    echo 1 ;;
     PAPERLESS_OCR_CHECK_TAG)     echo scan:check ;;
+    PAPERLESS_OCR_ANALYZE_MODEL) echo main-fast ;;
+    PAPERLESS_OCR_ANALYZE_RECMODE) echo accurate ;;
+    PAPERLESS_OCR_ANALYZE_DPI)   echo 150 ;;
+    PAPERLESS_OCR_ANALYZE_LLM)   echo 1 ;;
     PAPERLESS_OCR_VLM_AUTO)      echo 1 ;;
     PAPERLESS_OCR_VLM_MODEL)     echo main-fast ;;
     PAPERLESS_OCR_VLM_URL)       echo "http://127.0.0.1:11434/v1/chat/completions" ;;
@@ -475,6 +483,10 @@ config_hint() {
     PAPERLESS_OCR_BATCH_SUBDIR)  echo "Inbox subfolder for single-sided multi-file jobs (e.g. a jam-split scan): every file here is concatenated into ONE document after the quiet time. Default 'stapel'" ;;
     PAPERLESS_OCR_PAGE_CHECK)    echo "1 = after OCR compare the page numbers printed on the pages ('Seite 3 von 18', 'Page 3 of 18', footer numbers) with the physical order; a mis-assembled or truncated scan is uploaded TAGGED (see _CHECK_TAG), never blocked" ;;
     PAPERLESS_OCR_CHECK_TAG)     echo "Paperless tag put on documents the page-number check flagged (open the doc, check order/completeness, remove the tag). Default scan:check" ;;
+    PAPERLESS_OCR_ANALYZE_MODEL) echo "Gateway alias for the page editor's KI-Vorschlag text call (document boundaries + positions of pages without a printed number). Default main-fast" ;;
+    PAPERLESS_OCR_ANALYZE_RECMODE) echo "Apple Vision level for the KI-Vorschlag orientation/number pass: accurate (default, all languages, ~1 s per orientation and page) or fast (en/fr/it/de/es/pt ONLY — falls back to accurate when LANGS has e.g. ru-RU)" ;;
+    PAPERLESS_OCR_ANALYZE_DPI)   echo "Render DPI for the KI-Vorschlag pass (default 150 — enough for page numbers and orientation, 4x cheaper than the 300-dpi OCR)" ;;
+    PAPERLESS_OCR_ANALYZE_LLM)   echo "1 = the KI-Vorschlag also asks the LLM for document boundaries and the place of unnumbered pages (one call, ~7 s for 28 pages); 0 = Vision only (orientation + printed page numbers)" ;;
     PAPERLESS_OCR_VLM_AUTO)      echo "1 = auto-fallback to the vision LLM when Apple Vision reads suspiciously little (handwriting/forms). 0 = only the '$(config_default PAPERLESS_OCR_VLM_TAG)' tag / '_vlm' filename force it. Benchmark: Vision wins on print, VLM on handwriting/math, VLMs loop on dense tables (docs/ocr-benchmark.md)" ;;
     PAPERLESS_OCR_VLM_MODEL)     echo "Gateway model alias for the VLM fallback route (default main-fast = Gemma-4, thinking-off). Reads handwriting/math; no per-word boxes (full-page invisible layer)" ;;
     PAPERLESS_OCR_VLM_URL)       echo "LiteLLM gateway chat-completions URL for the VLM route (default http://127.0.0.1:11434/v1/chat/completions). Empty = VLM route off" ;;

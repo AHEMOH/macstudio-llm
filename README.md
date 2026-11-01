@@ -528,7 +528,9 @@ shows it any time). Six views:
   page-number check. **Im Editor öffnen** opens a job or any file in the
   **page editor** (`#editor/<id>`): thumbnails of every page, drag & drop
   reorder, rotate, delete, split into several documents with their own titles,
-  then send to paperless; workspaces stay editable for 30 days. See
+  a per-page **KI-Vorschlag** (orientation via Apple Vision, order via printed
+  page numbers, document boundaries via `main-fast`) that can be applied in one
+  click, then send to paperless; workspaces stay editable for 30 days. See
   [INTEGRATIONS.md](INTEGRATIONS.md#paperless-ngx--apple-vision-searchable-pdf-ocr-install_paperless_ocr).
 - **Einstellungen** — every `macstudio.conf` key, grouped, with the same hints
   as the TUI; **Speichern** writes the conf, **Speichern & Anwenden** runs
