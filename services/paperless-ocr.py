@@ -646,8 +646,10 @@ def _page_number_of(text):
     return None
 
 
-def _page_check(pdf_path):
+def _page_check(pdf_path, allow_partial=False):
     """Compare the page numbers printed on the pages with their physical order.
+    `allow_partial` skips the "says 'von N' but has M pages" rule — for documents the user
+    deliberately split in the editor, every part still carries the bundle's total.
     Returns {"ok", "numbered", "detail", "pages": [{index, number, of, strong}]}."""
     try:
         d = fitz.open(str(pdf_path))
@@ -680,7 +682,7 @@ def _page_check(pdf_path):
     for p in cand:
         if p["strong"] and p["of"]:
             ofs[p["of"]] = ofs.get(p["of"], 0) + 1
-    if ofs:
+    if ofs and not allow_partial:
         n, c = max(ofs.items(), key=lambda kv: kv[1])
         if c >= 3 and n != total:
             problems.append(f"Seiten sagen 'von {n}', Dokument hat {total} Seiten")
@@ -914,7 +916,7 @@ def gateway_once():
             _set_processing(None)
 
 
-def _process_and_upload(src_pdf, title, use_vlm=False, force=False, fixed_title=None):
+def _process_and_upload(src_pdf, title, use_vlm=False, force=False, fixed_title=None, allow_partial=False):
     """Make `src_pdf` searchable, run the page-number check, upload with a short
     descriptive title (tagged CHECK_TAG when the check found a problem). `fixed_title`
     (editor) is used verbatim instead of asking the LLM.
@@ -923,7 +925,7 @@ def _process_and_upload(src_pdf, title, use_vlm=False, force=False, fixed_title=
     try:
         mode, n = make_searchable(src_pdf, out, use_vlm=use_vlm, force=force)
         _assert_pagecount(src_pdf, out, mode)  # never upload a silently-truncated result
-        check = _page_check(out) if PAGE_CHECK else None
+        check = _page_check(out, allow_partial=allow_partial) if PAGE_CHECK else None
         name = fixed_title or _smart_name(out, Path(title).stem)
         tags = None
         if check and not check["ok"]:
@@ -1379,7 +1381,8 @@ def _ws_commit(wsdir, m, docs):
             try:
                 stems = " ".join(s["name"].lower() for s in m["sources"])
                 detail, name, check = _process_and_upload(tmp, title or m.get("title") or wsid, fixed_title=title,
-                                                          use_vlm="_vlm" in stems, force="_force" in stems)
+                                                          use_vlm="_vlm" in stems, force="_force" in stems,
+                                                          allow_partial=len(docs) > 1)
                 results.append({"title": name, "pages": len(doc["pages"]), "detail": detail,
                                 "plan": doc["pages"], "page_check": check,
                                 "tags": [CHECK_TAG] if check and not check["ok"] else [], "error": None})
