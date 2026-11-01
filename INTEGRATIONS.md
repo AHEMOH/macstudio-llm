@@ -684,14 +684,24 @@ want to *see* the pages before they go to paperless — open a job or any file i
 **Im Editor öffnen** on the Duplex/Stapel card (takes the files *out* of the job folder so
 nothing processes them meanwhile), **Im Editor** on a single file in *Inbox* / *Originale* /
 *Fehler*, or tick several files and **Markierte im Editor öffnen** (e.g. two jam fragments
-from the archive). The worker renders a thumbnail + preview per page and the browser shows
-the page grid (`#editor/<id>`):
+from the archive). A progress dialog stays open while the worker takes the files over and
+renders a thumbnail + preview per page (a few seconds), then the browser jumps to the editor
+(`#editor/<id>`). **Vorschau** (default) shows a vertical page list on the left, grouped per
+document, and the selected page large on the right — zoom with **Einpassen / Breite / 100 /
+150 / 200 %**, − / +, Ctrl+mouse wheel or double-click (100 % = paper size, 200 % ≈ the
+1600-px preview 1:1), ← / → flip pages; **Raster** is the plain thumbnail grid. Both views
+offer the same actions:
 
 - **Drag & drop** to reorder (also across documents), ◀ ▶ for one step, **Tauschen** with
   exactly two pages ticked, ↶ ↷ / **180°** to rotate (tick *Gerade* for every second page —
   the usual "all backs upside down" fix), ✕ to drop a page, **✂** to start a new document at
   that page (each document gets its own title; empty = LLM name as usual), **Rückgängig**.
-  Click a thumbnail for the large preview with its own rotate / next / previous.
+  Click a thumbnail to show that page in the large view; the view has its own ◀ ▶, rotate,
+  ✂ and ✕ for the page on screen.
+- **＋ Dateien** pulls more files into the open workspace — from *Eingang* / *Duplex* /
+  *Stapel* (moved, like opening) or *Originale* / *Fehler* (copied). Their pages are appended
+  to the last document and pre-selected, so a forgotten page or a second jam fragment joins
+  without starting over. A file with the same name as an existing source gets " (2)".
 - **🤖 KI-Vorschlag** analyses every page (≈1 s per page) and shows a badge per page:
   *✓ richtig*, *→ Seite 7* (belongs elsewhere), *↻ 180°* (text upside down / sideways),
   *✂ neues Dokument?* (a second letter in the stack), *leer*. Hover for the reason.
@@ -707,7 +717,13 @@ the page grid (`#editor/<id>`):
 - **An Paperless senden** builds one PDF per document from the plan (rotation becomes real
   page rotation, so OCR sees upright pages), OCRs, runs the page-number check and uploads;
   the moved originals are archived to `originals/` as usual. **Verwerfen** deletes the
-  workspace — files that were moved in and never sent go back to their folder.
+  workspace — files that were moved in and never sent go back to their folder (each added
+  file remembers where it came from).
+- Every button that needs the worker (open, add, KI-Vorschlag, send, discard, the job
+  cards' merge / concat) shows a progress dialog with the worker's live step ("Vorschau 3",
+  "Seite 4/8 (Vision)", "Zusammenbau") and only closes when the worker has reported back —
+  the worker picks commands up within a second. `PAPERLESS_OCR_PREVIEW_WIDTH` (default
+  1600 px) sets the preview resolution; raise it if you need more than 200 % zoom.
 - Workspaces live in `~/paperless-ocr/work/edit/<id>/` and are kept for
   `PAPERLESS_OCR_ARCHIVE_RETENTION_DAYS` (30) **including after sending**, so a scan can be
   re-opened ("Erneut bearbeiten"), corrected and re-sent — re-sending creates *new* paperless
