@@ -677,6 +677,29 @@ and *Originale* cards have **In Duplex** / **In Stapel** buttons that move a fil
 job folder (originals are kept 30 days, so a wrongly merged document can be re-assembled
 from its archived fragments).
 
+**Page editor ("Arbeitsmappe").** For anything the automatics can't settle — or whenever you
+want to *see* the pages before they go to paperless — open a job or any file in the editor:
+**Im Editor öffnen** on the Duplex/Stapel card (takes the files *out* of the job folder so
+nothing processes them meanwhile), **Im Editor** on a single file in *Inbox* / *Originale* /
+*Fehler*, or tick several files and **Markierte im Editor öffnen** (e.g. two jam fragments
+from the archive). The worker renders a thumbnail + preview per page and the browser shows
+the page grid (`#editor/<id>`):
+
+- **Drag & drop** to reorder (also across documents), ◀ ▶ for one step, **Tauschen** with
+  exactly two pages ticked, ↶ ↷ / **180°** to rotate (tick *Gerade* for every second page —
+  the usual "all backs upside down" fix), ✕ to drop a page, **✂** to start a new document at
+  that page (each document gets its own title; empty = LLM name as usual), **Rückgängig**.
+  Click a thumbnail for the large preview with its own rotate / next / previous.
+- **An Paperless senden** builds one PDF per document from the plan (rotation becomes real
+  page rotation, so OCR sees upright pages), OCRs, runs the page-number check and uploads;
+  the moved originals are archived to `originals/` as usual. **Verwerfen** deletes the
+  workspace — files that were moved in and never sent go back to their folder.
+- Workspaces live in `~/paperless-ocr/work/edit/<id>/` and are kept for
+  `PAPERLESS_OCR_ARCHIVE_RETENTION_DAYS` (30) **including after sending**, so a scan can be
+  re-opened ("Erneut bearbeiten"), corrected and re-sent — re-sending creates *new* paperless
+  documents, delete the old ones there. The *Arbeitsmappen* card lists them; open ones also
+  show up in the MOTD block.
+
 **Ad-hoc CLI:** `paperless-ocr in.pdf out.pdf -l ru-RU,en-US` (also accepts images).
 Verify with `pdftotext out.pdf -` → clean Unicode text.
 
