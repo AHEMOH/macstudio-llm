@@ -693,9 +693,14 @@ document, and the selected page large on the right — zoom with **Einpassen / B
 offer the same actions:
 
 - **Drag & drop** to reorder (also across documents), ◀ ▶ for one step, **Tauschen** with
-  exactly two pages ticked, ↶ ↷ / **180°** to rotate (tick *Gerade* for every second page —
-  the usual "all backs upside down" fix), ✕ to drop a page, **✂** to start a new document at
-  that page (each document gets its own title; empty = LLM name as usual), **Rückgängig**.
+  exactly two pages ticked, **Umkehren** to reverse the ticked pages in place, **Duplex** to
+  interleave them as fronts + backs-scanned-backwards (first half = fronts, second half =
+  backs reversed, then F1 B1 F2 B2 … — the usual "1, 3, … 17 then 18, 16, … 2" ADF result:
+  *Alle* → *Duplex* and the pages read 1–18; backs scanned forwards? tick only the backs,
+  *Umkehren*, then *Alle* → *Duplex*), ↶ ↷ / **180°** to rotate (tick *Gerade* for every
+  second page — the usual "all backs upside down" fix), ✕ to drop a page, **✂** to start a
+  new document at that page (each document gets its own title; empty = LLM name as usual),
+  **Rückgängig**.
   Click a thumbnail to show that page in the large view; the view has its own ◀ ▶, rotate,
   ✂ and ✕ for the page on screen.
 - **＋ Dateien** pulls more files into the open workspace — from *Eingang* / *Duplex* /

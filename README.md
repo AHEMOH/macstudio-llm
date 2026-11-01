@@ -529,7 +529,8 @@ shows it any time). Six views:
   **page editor** (`#editor/<id>`): a vertical page list on the left (grouped
   per document) next to a large, zoomable view of the selected page (Einpassen /
   Breite / 100–200 %, Ctrl+wheel) — or the classic thumbnail grid; drag & drop
-  reorder, rotate, delete, split into several documents with their own titles,
+  reorder, reverse / duplex-interleave the ticked pages (fronts 1,3,… + backs
+  …,4,2 → 1,2,3,…), rotate, delete, split into several documents with their own titles,
   **＋ Dateien** to pull more files into an open workspace, a per-page
   **KI-Vorschlag** (orientation via Apple Vision, order via printed page
   numbers, document boundaries via `main-fast`) that can be applied in one

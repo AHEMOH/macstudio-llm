@@ -1685,6 +1685,8 @@ function viewEditor() {
         <button class="small" data-ed="rotl" ${ed.sel.size ? "" : "disabled"}>↶ 90°</button>
         <button class="small" data-ed="rotr" ${ed.sel.size ? "" : "disabled"}>↷ 90°</button>
         <button class="small" data-ed="swap" ${ed.sel.size === 2 ? "" : "disabled"} title="genau zwei markierte Seiten vertauschen">Tauschen</button>
+        <button class="small" data-ed="reverse" ${ed.sel.size >= 2 ? "" : "disabled"} title="Reihenfolge der markierten Seiten umdrehen (die Plätze bleiben, der Inhalt wird gespiegelt)">Umkehren</button>
+        <button class="small" data-ed="duplex" ${ed.sel.size >= 2 ? "" : "disabled"} title="Vorderseiten (erste Hälfte der Markierung) mit rückwärts gescannten Rückseiten (zweite Hälfte) verschränken: 1,3,5 + 6,4,2 → 1–6. Rückseiten vorwärts gescannt? Erst nur die Rückseiten markieren und Umkehren.">Duplex</button>
         <button class="small danger" data-ed="del" ${ed.sel.size ? "" : "disabled"}>Entfernen</button>
         <span class="muted">·</span>
         <button class="small" data-ed="selall">Alle</button>
@@ -1698,8 +1700,8 @@ function viewEditor() {
         <button class="danger" data-ed="discard" ${locked ? "disabled" : ""}>Verwerfen</button>
       </div>
       <div class="sub" style="margin-top:8px">${ed.view === "split"
-        ? "Klick auf eine Seite links zeigt sie rechts groß (Strg+Mausrad / Doppelklick = Zoom, ←/→ = blättern). Ziehen zum Sortieren, auch in ein anderes Dokument; ✂ = ab dieser Seite ein neues Dokument."
-        : "Ziehen zum Sortieren (auch in ein anderes Dokument), Klick aufs Bild = große Ansicht, ✂ = ab dieser Seite ein neues Dokument."}</div>
+        ? "Klick auf eine Seite links zeigt sie rechts groß (Strg+Mausrad / Doppelklick = Zoom, ←/→ = blättern). Ziehen zum Sortieren, auch in ein anderes Dokument; ✂ = ab dieser Seite ein neues Dokument. Alle → Duplex bringt einen Vorder-/Rückseiten-Scan (1,3,… dann …,4,2) in die richtige Reihenfolge."
+        : "Ziehen zum Sortieren (auch in ein anderes Dokument), Klick aufs Bild = große Ansicht, ✂ = ab dieser Seite ein neues Dokument. Alle → Duplex bringt einen Vorder-/Rückseiten-Scan (1,3,… dann …,4,2) in die richtige Reihenfolge."}</div>
     </div>`;
     const compact = ed.view === "split";
     if (compact && !pageOf(ed.cur)) ed.cur = pages.length ? pages[0].img : null;
@@ -1831,6 +1833,19 @@ function viewEditor() {
     ed.docs[toDoc].pages.splice(Math.max(0, Math.min(toIdx, ed.docs[toDoc].pages.length)), 0, p);
     rerender();
   }
+  // Markierte Seiten in PLAN-Reihenfolge (ed.sel ist ein Set in Klick-Reihenfolge) einsammeln,
+  // fn liefert die neue Sequenz gleicher Länge, die in dieselben (di, pi)-Plätze zurückgeschrieben
+  // wird – Dokumente, Titel und Drehungen bleiben erhalten (anders als "Vorschlag übernehmen").
+  function reorderSel(fn) {
+    const slots = [];
+    ed.docs.forEach((d, di) => d.pages.forEach((p, pi) => { if (ed.sel.has(p.img)) slots.push({ di, pi }); }));
+    if (slots.length < 2) return;
+    const seq = fn(slots.map(s => ed.docs[s.di].pages[s.pi]));
+    if (seq.length !== slots.length) return;
+    snap();
+    slots.forEach((s, i) => { ed.docs[s.di].pages[s.pi] = seq[i]; });
+    rerender();
+  }
 
   function bind() {
     $$("#edBody input[data-sel]").forEach(cb => cb.onchange = () => { cb.checked ? ed.sel.add(cb.dataset.sel) : ed.sel.delete(cb.dataset.sel); rerender(); });
@@ -1886,6 +1901,14 @@ function viewEditor() {
         const pa = ed.docs[a.di].pages[a.pi], pb = ed.docs[b.di].pages[b.pi];
         ed.docs[a.di].pages[a.pi] = pb; ed.docs[b.di].pages[b.pi] = pa; render(); return;
       }
+      case "reverse": reorderSel(p => p.slice().reverse()); return;
+      case "duplex": reorderSel(p => {
+        // Worker-Logik (_assemble_duplex, reverse=True): erste ⌈n/2⌉ = Vorderseiten, Rest = Rückseiten
+        // rückwärts gescannt → umdrehen und verschränken: V1 R1 V2 R2 … (ungerade Anzahl: letzte Vorderseite allein).
+        const half = Math.ceil(p.length / 2), f = p.slice(0, half), b = p.slice(half).reverse(), out = [];
+        for (let i = 0; i < half; i++) { out.push(f[i]); if (i < b.length) out.push(b[i]); }
+        return out;
+      }); return;
       case "selall": allPages().forEach(p => ed.sel.add(p.img)); rerender(); return;
       case "seleven": ed.sel.clear(); allPages().forEach((p, i) => { if (i % 2 === 1) ed.sel.add(p.img); }); rerender(); return;
       case "selnone": ed.sel.clear(); rerender(); return;
