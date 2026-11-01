@@ -507,7 +507,7 @@ the `omlx-main.log` follow is filtered to request/completion lines. Or on the CL
 Open **`http://mac.home.arpa:8090`** and log in with the token from
 `/usr/local/etc/macstudio.conf` (key `DASHBOARD_TOKEN` — printed once when
 `--apply` generates it; `grep DASHBOARD_TOKEN /usr/local/etc/macstudio.conf`
-shows it any time). Five views:
+shows it any time). Six views:
 
 - **Übersicht** — status tiles (gateway, active models, RAM/GPU/swap/pressure)
   plus power / temperature / GPU / memory charts (~1 h history). The
@@ -520,6 +520,13 @@ shows it any time). Five views:
   rerank; same validation incl. BROKEN refusal), delete local files,
   store the HF token. The GB column shows the real on-disk size once downloaded.
 - **Dienste** — every active daemon with live state; restart / stop / wake.
+- **Paperless-OCR** (with `INSTALL_PAPERLESS_OCR=1`) — the scan inbox folders
+  and the **scan jobs**: a *Duplex* card (fronts + backs, jam-split fragments
+  included) and a *Stapel* card (several single-sided files = one document)
+  show every file with page count and settle state, the worker's proposal,
+  and buttons to confirm / reorder / pause; plus the last results with the
+  page-number check. See
+  [INTEGRATIONS.md](INTEGRATIONS.md#paperless-ngx--apple-vision-searchable-pdf-ocr-install_paperless_ocr).
 - **Einstellungen** — every `macstudio.conf` key, grouped, with the same hints
   as the TUI; **Speichern** writes the conf, **Speichern & Anwenden** runs
   `setup.sh --apply` with a live log. The apply survives the dashboard

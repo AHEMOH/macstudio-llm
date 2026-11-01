@@ -971,9 +971,74 @@ def _po_dirs():
     return {
         "inbox": inbox,
         "duplex": os.path.join(inbox, c.get("PAPERLESS_OCR_DUPLEX_SUBDIR", "duplex")),
+        "stapel": os.path.join(inbox, c.get("PAPERLESS_OCR_BATCH_SUBDIR", "stapel")),
         "originals": c.get("PAPERLESS_OCR_ARCHIVE", os.path.join(parent, "originals")),
         "errors": c.get("PAPERLESS_OCR_ERRORS", os.path.join(parent, "errors")),
+        # The worker's status/command exchange lives here (derived the same way the worker
+        # derives WORK = INBOX.parent / "work"; never listed as a folder).
+        "work": os.path.join(parent, "work"),
     }
+
+
+PO_STATUS_NAME = "scanjob-status.json"
+PO_COMMAND_NAME = "scanjob-command.json"
+PO_JOBS = ("duplex", "stapel")
+PO_JOB_ACTIONS = ("merge", "concat", "hold", "release")
+
+
+def _po_read_status():
+    """The worker's scan-job status (written by paperless-ocr.py every tick), or None."""
+    try:
+        with open(os.path.join(_po_dirs()["work"], PO_STATUS_NAME), "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def po_job_command(body):
+    """Write a scan-job command for the worker. SHAPE check only (job/action known, plain
+    file names, expect = {name: [size, pages]}) — the worker validates against the real
+    folder state (settled, unchanged, page sums) and reports back via last_command."""
+    job = str(body.get("job", ""))
+    action = str(body.get("action", ""))
+    if job not in PO_JOBS:
+        return (False, "unbekannter Job")
+    if action not in PO_JOB_ACTIONS:
+        return (False, "unbekannte Aktion")
+
+    def names_ok(v):
+        return (isinstance(v, list) and v and
+                all(isinstance(n, str) and n and os.path.basename(n) == n and not n.startswith(".") for n in v))
+
+    cmd = {"version": 1, "ts": int(time.time()), "job": job, "action": action}
+    if action == "merge":
+        if not names_ok(body.get("fronts")) or not names_ok(body.get("backs")):
+            return (False, "Vorder-/Rückseiten-Liste ungültig")
+        cmd["fronts"], cmd["backs"] = body["fronts"], body["backs"]
+        cmd["reverse"] = bool(body.get("reverse", True))
+        cmd["force"] = bool(body.get("force", False))
+    elif action == "concat":
+        if not names_ok(body.get("order")):
+            return (False, "Dateiliste ungültig")
+        cmd["order"] = body["order"]
+    if action in ("merge", "concat"):
+        expect = body.get("expect") or {}
+        if not isinstance(expect, dict) or not all(
+                isinstance(k, str) and isinstance(v, list) and len(v) == 2 and all(isinstance(x, int) for x in v)
+                for k, v in expect.items()):
+            return (False, "expect ungültig")
+        cmd["expect"] = expect
+    work = _po_dirs()["work"]
+    try:
+        os.makedirs(work, exist_ok=True)
+        tmp = os.path.join(work, PO_COMMAND_NAME + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cmd, f, ensure_ascii=False)
+        os.replace(tmp, os.path.join(work, PO_COMMAND_NAME))
+    except OSError as e:
+        return (False, str(e))
+    return (True, "Befehl an den Worker übergeben (Antwort folgt in ~10 s)")
 
 
 def _po_list(path, stable_sec, mark_pending):
@@ -1003,10 +1068,15 @@ def _po_list(path, stable_sec, mark_pending):
 def api_paperless_ocr():
     c = conf()
     try:
-        stable = int(c.get("PAPERLESS_OCR_STABLE_SEC", "30"))
+        stable = int(c.get("PAPERLESS_OCR_STABLE_SEC", "90"))
     except ValueError:
-        stable = 30
+        stable = 90
     d = _po_dirs()
+    status = _po_read_status()
+    try:
+        status_age = int(time.time()) - int(status["ts"]) if status else -1
+    except (KeyError, TypeError, ValueError):
+        status_age = -1
     return {
         "enabled": c.get("INSTALL_PAPERLESS_OCR", "0") == "1",
         "configured": bool(c.get("PAPERLESS_OCR_URL", "")) and bool(c.get("PAPERLESS_OCR_TOKEN", "")),
@@ -1015,12 +1085,19 @@ def api_paperless_ocr():
         "smb_shared": c.get("PAPERLESS_OCR_SMB_SHARE", "0") == "1",
         "smb_name": c.get("PAPERLESS_OCR_SMB_NAME", "inbox"),
         "duplex_sub": c.get("PAPERLESS_OCR_DUPLEX_SUBDIR", "duplex"),
+        "stapel_sub": c.get("PAPERLESS_OCR_BATCH_SUBDIR", "stapel"),
+        "paperless_url": c.get("PAPERLESS_OCR_URL", ""),
         "folders": {
             "inbox": _po_list(d["inbox"], stable, True),
             "duplex": _po_list(d["duplex"], stable, True),
+            "stapel": _po_list(d["stapel"], stable, True),
             "originals": _po_list(d["originals"], stable, False),
             "errors": _po_list(d["errors"], stable, False),
         },
+        # Raw passthrough of the worker's scan-job status (jobs, proposal, processing,
+        # last_command, last_results) — the UI renders it, the dashboard never interprets PDFs.
+        "jobs": status,
+        "status_age": status_age,
     }
 
 
@@ -1028,7 +1105,7 @@ def po_action(folder, name, action):
     """Delete or re-queue a single paperless-ocr file. Path-traversal-safe: the target
     must be a regular file whose parent is exactly the configured folder."""
     dirs = _po_dirs()
-    if folder not in dirs:
+    if folder not in dirs or folder == "work":
         return (False, "unbekannter Ordner")
     base = os.path.realpath(dirs[folder])
     target = os.path.realpath(os.path.join(base, os.path.basename(name or "")))
@@ -1038,10 +1115,19 @@ def po_action(folder, name, action):
         if action == "delete":
             os.remove(target)
             return (True, "gelöscht")
-        if action == "requeue":
-            inbox = os.path.realpath(dirs["inbox"])
-            os.rename(target, os.path.join(inbox, os.path.basename(name)))
-            return (True, "in Inbox verschoben")
+        # requeue -> inbox; requeue_duplex / requeue_stapel -> the job folders (recovery after
+        # a failed job landed its fragments in errors/). A same-named file is never clobbered.
+        dest_key = {"requeue": "inbox", "requeue_duplex": "duplex", "requeue_stapel": "stapel"}.get(action)
+        if dest_key:
+            dest_dir = os.path.realpath(dirs[dest_key])
+            os.makedirs(dest_dir, exist_ok=True)
+            dest = os.path.join(dest_dir, os.path.basename(name))
+            if os.path.exists(dest):
+                return (False, "Zieldatei existiert bereits")
+            os.rename(target, dest)
+            # A moved file gets a fresh mtime so the job quiet-timer / settle logic re-arms.
+            os.utime(dest, None)
+            return (True, f"nach {dest_key}/ verschoben")
     except OSError as e:
         return (False, str(e))
     return (False, "unbekannte Aktion")
@@ -1288,6 +1374,9 @@ class Handler(BaseHTTPRequestHandler):
             self.handle_service_action(path)
         elif path == "/api/paperless-ocr/action":
             ok, msg = po_action(body.get("folder"), body.get("name"), body.get("action"))
+            self.send_json({"ok": ok, "msg": msg}, code=200 if ok else 400)
+        elif path == "/api/paperless-ocr/job":
+            ok, msg = po_job_command(body)
             self.send_json({"ok": ok, "msg": msg}, code=200 if ok else 400)
         else:
             self.send_json({"error": "not found"}, code=404)

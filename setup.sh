@@ -194,6 +194,13 @@ CONFIG_KEYS=(
   PAPERLESS_OCR_DUPLEX_SUBDIR
   PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC
   PAPERLESS_OCR_DUPLEX_REVERSE
+  PAPERLESS_OCR_DUPLEX_AUTO
+  PAPERLESS_OCR_DUPLEX_DROP_BLANK_BACKS
+  PAPERLESS_OCR_BLANK_MAX_DARK
+  PAPERLESS_OCR_JOB_QUIET_SEC
+  PAPERLESS_OCR_BATCH_SUBDIR
+  PAPERLESS_OCR_PAGE_CHECK
+  PAPERLESS_OCR_CHECK_TAG
   PAPERLESS_OCR_VLM_AUTO
   PAPERLESS_OCR_VLM_MODEL
   PAPERLESS_OCR_VLM_URL
@@ -333,6 +340,13 @@ config_default() {
     PAPERLESS_OCR_DUPLEX_SUBDIR) echo duplex ;;
     PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC) echo 1800 ;;
     PAPERLESS_OCR_DUPLEX_REVERSE) echo 1 ;;
+    PAPERLESS_OCR_DUPLEX_AUTO)   echo 1 ;;
+    PAPERLESS_OCR_DUPLEX_DROP_BLANK_BACKS) echo 1 ;;
+    PAPERLESS_OCR_BLANK_MAX_DARK) echo 0.0003 ;;
+    PAPERLESS_OCR_JOB_QUIET_SEC) echo 180 ;;
+    PAPERLESS_OCR_BATCH_SUBDIR)  echo stapel ;;
+    PAPERLESS_OCR_PAGE_CHECK)    echo 1 ;;
+    PAPERLESS_OCR_CHECK_TAG)     echo scan:check ;;
     PAPERLESS_OCR_VLM_AUTO)      echo 1 ;;
     PAPERLESS_OCR_VLM_MODEL)     echo main-fast ;;
     PAPERLESS_OCR_VLM_URL)       echo "http://127.0.0.1:11434/v1/chat/completions" ;;
@@ -448,12 +462,19 @@ config_hint() {
     PAPERLESS_OCR_SUPERSEDED_TAG) echo "Tag applied to the OLD document after a retro-fix copy is created" ;;
     PAPERLESS_OCR_DELETE_ORIGINAL) echo "1 = delete the old paperless doc after retro-fix (default 0 = keep it, tagged superseded)" ;;
     PAPERLESS_OCR_POLL_SEC)      echo "Retro-fix poll interval in seconds (gateway polls every min(10,this))" ;;
-    PAPERLESS_OCR_STABLE_SEC)    echo "Gateway waits until an inbox file is unmodified AND not held open (SMB) for this many seconds before OCR — prevents processing half-scanned files. Raise if your scanner pauses long between pages (default 30)" ;;
+    PAPERLESS_OCR_STABLE_SEC)    echo "Gateway waits until an inbox file is unmodified AND not held open (SMB) for this many seconds before OCR — prevents processing half-scanned files. Raise if your scanner pauses long between pages (default 90)" ;;
     PAPERLESS_OCR_SMB_SHARE)     echo "1 = --apply enables macOS File Sharing (smbd) and shares the inbox folder over SMB (no guest) so a network scanner can drop files in. Default 0 (off). Toggling back to 0 does NOT remove the share (do that with 'sudo sharing -r <name>')" ;;
     PAPERLESS_OCR_SMB_NAME)      echo "SMB share name for the inbox folder (Windows: \\\\<mac>\\<name>). Default 'inbox'" ;;
-    PAPERLESS_OCR_DUPLEX_SUBDIR) echo "Inbox subfolder for double-sided jobs: scan fronts then backs here; the two files are interleaved into one document (for simplex ADFs). Default 'duplex'" ;;
-    PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC) echo "If only one file waits in the duplex folder this long, treat it as single-sided (the backs pass never came). Default 1800 (30 min)" ;;
-    PAPERLESS_OCR_DUPLEX_REVERSE) echo "1 = reverse the 2nd (backs) file when interleaving (normal after flipping the stack). Set 0 if pages come out mis-ordered" ;;
+    PAPERLESS_OCR_DUPLEX_SUBDIR) echo "Inbox subfolder for double-sided jobs: scan the fronts, flip, scan the backs — ALL files here form ONE document (jam-split fragments just add up); fronts/backs are split by page count (for simplex ADFs). Default 'duplex'" ;;
+    PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC) echo "If a SINGLE file waits alone in the duplex folder this long, treat it as single-sided (the backs pass never came). Default 1800 (30 min)" ;;
+    PAPERLESS_OCR_DUPLEX_REVERSE) echo "1 = reverse the backs (as a whole) when interleaving (normal after flipping the stack). Set 0 if pages come out mis-ordered" ;;
+    PAPERLESS_OCR_DUPLEX_AUTO)   echo "1 = the unambiguous duplex case (exactly 2 files, equal page counts) merges by itself after the quiet time; 0 = every duplex job waits for a dashboard confirmation. Anything ambiguous (3+ files, unequal counts) ALWAYS waits in the dashboard with a proposal" ;;
+    PAPERLESS_OCR_DUPLEX_DROP_BLANK_BACKS) echo "1 = drop blank back pages when interleaving a duplex job (single-sided sheets in a double-sided stack). Threshold: PAPERLESS_OCR_BLANK_MAX_DARK" ;;
+    PAPERLESS_OCR_BLANK_MAX_DARK) echo "Fraction of dark pixels (50 dpi, 5% margin cut) BELOW which a back page counts as blank. Default 0.0003 (=0.03%): a short 10-pt line measures ~0.0005, a full line ~0.0025, dust/speckle ~0.0001. Keep it LOW — a kept blank page is harmless, a dropped signature is not" ;;
+    PAPERLESS_OCR_JOB_QUIET_SEC) echo "Quiet time after the NEWEST file in a duplex/stapel job folder before the job runs automatically — long enough to clear a paper jam and re-scan the rest. A dashboard confirmation ignores it. Default 180" ;;
+    PAPERLESS_OCR_BATCH_SUBDIR)  echo "Inbox subfolder for single-sided multi-file jobs (e.g. a jam-split scan): every file here is concatenated into ONE document after the quiet time. Default 'stapel'" ;;
+    PAPERLESS_OCR_PAGE_CHECK)    echo "1 = after OCR compare the page numbers printed on the pages ('Seite 3 von 18', 'Page 3 of 18', footer numbers) with the physical order; a mis-assembled or truncated scan is uploaded TAGGED (see _CHECK_TAG), never blocked" ;;
+    PAPERLESS_OCR_CHECK_TAG)     echo "Paperless tag put on documents the page-number check flagged (open the doc, check order/completeness, remove the tag). Default scan:check" ;;
     PAPERLESS_OCR_VLM_AUTO)      echo "1 = auto-fallback to the vision LLM when Apple Vision reads suspiciously little (handwriting/forms). 0 = only the '$(config_default PAPERLESS_OCR_VLM_TAG)' tag / '_vlm' filename force it. Benchmark: Vision wins on print, VLM on handwriting/math, VLMs loop on dense tables (docs/ocr-benchmark.md)" ;;
     PAPERLESS_OCR_VLM_MODEL)     echo "Gateway model alias for the VLM fallback route (default main-fast = Gemma-4, thinking-off). Reads handwriting/math; no per-word boxes (full-page invisible layer)" ;;
     PAPERLESS_OCR_VLM_URL)       echo "LiteLLM gateway chat-completions URL for the VLM route (default http://127.0.0.1:11434/v1/chat/completions). Empty = VLM route off" ;;
@@ -644,7 +665,9 @@ motd_services() {
   fi
   [ "${INSTALL_IMMICH:-0}" = 1 ] && od+=("immich-ml :${ML_PUBLIC_PORT:-3003}")
   [ "${INSTALL_DOCLING:-1}" = 1 ] && od+=("docling :${DOCLING_PUBLIC_PORT:-5001}")
-  [ "${INSTALL_DASHBOARD:-1}" = 1 ] && web+=("dashboard :${DASHBOARD_PORT:-8090}")
+  # The dashboard gets its full URL (not just the port): the Paperless-OCR MOTD block links
+  # into it, and it is the one web UI people actually open from the banner.
+  [ "${INSTALL_DASHBOARD:-1}" = 1 ] && web+=("dashboard http://$(/bin/hostname 2>/dev/null || echo localhost):${DASHBOARD_PORT:-8090}")
   if [ "${INSTALL_REMOTE:-1}" = 1 ]; then
     web+=("VNC :5900")
     [ "${INSTALL_NOVNC:-1}" = 1 ] && web+=("noVNC :${NOVNC_PORT:-6080}")
@@ -1304,7 +1327,7 @@ ensure_paperless_ocr_dirs() {
   errors="${PAPERLESS_OCR_ERRORS:-$TARGET_HOME/paperless-ocr/errors}"
   base="$(dirname "$inbox")"
   /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$inbox" "$inbox/${PAPERLESS_OCR_DUPLEX_SUBDIR:-duplex}" \
-    "$archive" "$errors" 2>/dev/null || true
+    "$inbox/${PAPERLESS_OCR_BATCH_SUBDIR:-stapel}" "$archive" "$errors" 2>/dev/null || true
   # The recursive chown/chmod is a ONE-TIME repair of files a previous root-owned
   # daemon left un-downloadable over SMB (see comment above); paperless-ocr.py now
   # writes them correctly. Recursing over the whole (potentially thousands-of-files)
@@ -2703,7 +2726,7 @@ render_all_plists() {
         # macOS Local Network Privacy blocks the non-Apple venv python from the LAN as a user);
         # needs its own venv (ocrmac/pymupdf/requests). It chowns the files it writes back to
         # TARGET_USER so archived originals stay reachable over SMB.
-        [ "${INSTALL_PAPERLESS_OCR:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
+        [ "${INSTALL_PAPERLESS_OCR:-0}" = 1 ] || { remove_plist "$label"; /bin/rm -f /var/macstudio/paperless-ocr-status; continue; } ;;
     esac
     local before_hash; before_hash=$(hash_file "$dst")
     render_template "$src" "$dst" 644 root:wheel || true
