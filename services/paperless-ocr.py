@@ -6,8 +6,10 @@ core and a small paperless-ngx REST client:
 
   * gateway  — watch PAPERLESS_OCR_INBOX; OCR each new file; upload the searchable
                PDF to paperless; keep the pristine original in PAPERLESS_OCR_ARCHIVE.
-               A `<INBOX>/<DUPLEX_SUBDIR>` folder pairs two scans (fronts + backs)
-               into one interleaved document — for simplex ADFs scanning both sides.
+               `<INBOX>/<DUPLEX_SUBDIR>` and `<INBOX>/<BATCH_SUBDIR>` are JOB folders:
+               every file in them belongs to ONE document (fronts + backs interleaved for
+               a simplex ADF, or plain concatenation). Jam-split fragments just add up;
+               ambiguous jobs wait for a dashboard confirmation (status/command JSON).
   * retrofix — poll paperless for documents carrying PAPERLESS_OCR_TRIGGER_TAG;
                download the original, OCR it, re-upload as a new (searchable) copy,
                then retag the old document PAPERLESS_OCR_SUPERSEDED_TAG. A doc that
@@ -45,6 +47,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -102,12 +105,36 @@ GATEWAY_POLL = min(10, POLL)
 STABLE_SEC = int(os.environ.get("PAPERLESS_OCR_STABLE_SEC", "30"))
 # Double-sided (duplex) support for simplex ADFs (e.g. Canon MAXIFY GX2050): scan the
 # fronts, then flip the stack and scan the backs — both passes into the INBOX/<subdir>
-# folder. The two files are interleaved here into ONE document (backs reversed, like
+# folder. The files are interleaved here into ONE document (backs reversed, like
 # paperless-ngx' collate), then OCR'd + uploaded. Needed because paperless' own collate
 # is a consume-directory feature, unavailable over the API.
 DUPLEX_SUBDIR = os.environ.get("PAPERLESS_OCR_DUPLEX_SUBDIR", "duplex")
 DUPLEX_TIMEOUT = int(os.environ.get("PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC", "1800"))
 DUPLEX_REVERSE = os.environ.get("PAPERLESS_OCR_DUPLEX_REVERSE", "1") == "1"
+# --- Scan JOBS (duplex + stapel folders) ----------------------------------------------
+# A jam-prone ADF (the GX2050 swallows pages, finalizes the PDF, the rest is re-scanned)
+# turns ONE document into 2-4 fragment files. So the duplex folder is a JOB, not a pair:
+# every settled file in it belongs to one document. The fronts/backs split is derived from
+# the page counts (both halves must be equal — the split point is unique if it exists); only
+# the unambiguous classic case (exactly 2 files, equal pages) runs by itself after a quiet
+# period. Everything else is HELD and shown in the dashboard with a proposal for one-click
+# confirmation. The dashboard talks to this worker through two JSON files in WORK/ (status
+# out, command in) — it never touches the PDFs itself (stdlib-only, no PyMuPDF there).
+JOB_QUIET = int(os.environ.get("PAPERLESS_OCR_JOB_QUIET_SEC", "180"))
+DUPLEX_AUTO = os.environ.get("PAPERLESS_OCR_DUPLEX_AUTO", "1") == "1"
+DROP_BLANK_BACKS = os.environ.get("PAPERLESS_OCR_DUPLEX_DROP_BLANK_BACKS", "1") == "1"
+BLANK_MAX_DARK = float(os.environ.get("PAPERLESS_OCR_BLANK_MAX_DARK", "0.0003"))
+PAGE_CHECK = os.environ.get("PAPERLESS_OCR_PAGE_CHECK", "1") == "1"
+CHECK_TAG = os.environ.get("PAPERLESS_OCR_CHECK_TAG", "scan:check")
+BATCH_SUBDIR = os.environ.get("PAPERLESS_OCR_BATCH_SUBDIR", "stapel")
+STATUS_FILE = WORK / "scanjob-status.json"
+COMMAND_FILE = WORK / "scanjob-command.json"
+# MOTD: a short status block at SSH login (held jobs, errors, last result) with a link into
+# the dashboard. Written as a flag file for motd-compose.sh, same mechanism the weekly
+# autoupdate uses for its "ACTION NEEDED" block.
+DASHBOARD_PORT = os.environ.get("DASHBOARD_PORT", "8090")
+MOTD_STATUS_FILE = Path("/var/macstudio/paperless-ocr-status")
+MOTD_COMPOSE = "/usr/local/sbin/motd-compose.sh"
 
 # --- VLM fallback route (Gemma-4 via the LiteLLM gateway) -----------------------------
 # Apple Vision is the best engine for PRINTED documents (fast, tiny RAM, exact) but it is
@@ -264,22 +291,85 @@ def _open_as_pdf(path):
     return fitz.open("pdf", pdfbytes)
 
 
-def interleave(front, back, dst):
-    """Merge a fronts file and a backs file (backs reversed unless DUPLEX_REVERSE=0)
-    into one page-ordered PDF at `dst`, the way a duplex document reads."""
-    f = _open_as_pdf(front)
-    b = _open_as_pdf(back)
+_BLANK_TABLE = bytes(1 if v < 128 else 0 for v in range(256))
+
+
+def _is_blank_page(page):
+    """(blank?, dark_fraction) for a page: render at 50 dpi gray, drop a 5 % margin on each
+    side (ADF edge shadows), count pixels darker than mid-gray. Measured at this scale: a
+    short 10-pt line ("Unterschrift: Max M.") is ~0.044 % of an A4 page, a full-width line
+    ~0.25 %, dust/speckle ~0.01 %, and bleed-through from the front sits at gray 200+ (not
+    counted). BLANK_MAX_DARK defaults to 0.0003 (0.03 %) — deliberately LOW: a kept blank
+    page is harmless, a dropped back that only carried a signature or stamp is not."""
+    pix = page.get_pixmap(matrix=fitz.Matrix(50 / 72, 50 / 72), colorspace=fitz.csGRAY, alpha=False)
+    w, h = pix.width, pix.height
+    mx, my = int(w * 0.05), int(h * 0.05)
+    buf = pix.samples
+    dark = total = 0
+    for y in range(my, h - my):
+        row = buf[y * w + mx: y * w + w - mx]
+        total += len(row)
+        dark += sum(row.translate(_BLANK_TABLE))
+    frac = dark / total if total else 0.0
+    return (frac < BLANK_MAX_DARK, frac)
+
+
+def _concat_pdfs(paths):
+    """Open every path (PDF or image) and append them into ONE in-memory PDF, in order."""
     out = fitz.open()
-    backs = list(range(b.page_count - 1, -1, -1)) if DUPLEX_REVERSE else list(range(b.page_count))
-    for i in range(max(f.page_count, len(backs))):
+    for p in paths:
+        d = _open_as_pdf(p)
+        out.insert_pdf(d)
+        d.close()
+    return out
+
+
+def _assemble_duplex(fronts, backs, dst, reverse=True, drop_blank=False):
+    """Build the page-ordered duplex document at `dst` from the FRONT files and the BACK
+    files (each list in scan order — fragments of one pass after a jam just concatenate).
+
+    The backs pass scans the stack as it came out of the fronts pass, i.e. sheet N first; a
+    jam does not reorder the remaining stack, so B1‖B2 is still one descending run N..1 and
+    is reversed AS A WHOLE (never per fragment) when `reverse` — exactly the old behaviour
+    once "the backs file" becomes "all back files". With reverse=False (user re-sorted the
+    stack) the plain concatenation already reads 1..N.
+
+    Returns {"pages": n, "dropped_backs": [1-based back-sheet numbers dropped as blank]}."""
+    f = _concat_pdfs(fronts)
+    b = _concat_pdfs(backs)
+    order = list(range(b.page_count - 1, -1, -1)) if reverse else list(range(b.page_count))
+    dropped = []
+    if drop_blank:
+        keep = []
+        for sheet, idx in enumerate(order, start=1):
+            blank, frac = _is_blank_page(b[idx])
+            if blank:
+                dropped.append(sheet)
+                log(f"duplex: back of sheet {sheet} is blank (dark {frac:.4%}) — dropped")
+            else:
+                keep.append(idx)
+        order = keep
+    out = fitz.open()
+    for i in range(max(f.page_count, len(order))):
         if i < f.page_count:
             out.insert_pdf(f, from_page=i, to_page=i)
-        if i < len(backs):
-            out.insert_pdf(b, from_page=backs[i], to_page=backs[i])
+        if i < len(order):
+            out.insert_pdf(b, from_page=order[i], to_page=order[i])
+    n = out.page_count
     out.save(str(dst))
     out.close()
     f.close()
     b.close()
+    return {"pages": n, "dropped_backs": dropped}
+
+
+def _assemble_concat(paths, dst):
+    """Concatenate files in order into one PDF at `dst` (single-sided multi-file jobs)."""
+    out = _concat_pdfs(paths)
+    n = out.page_count
+    out.save(str(dst))
+    out.close()
+    return {"pages": n, "dropped_backs": []}
 
 
 def ocr_pdf(src, dst):
@@ -491,6 +581,106 @@ def _pdf_pages(path):
         return -1
 
 
+# (size, mtime) -> page count, so files that sit in a job folder waiting for the user are not
+# re-opened by PyMuPDF on every 10 s tick. A changed size/mtime invalidates the entry.
+_pages_cache = {}
+
+
+def _cached_pages(path, st):
+    key = str(path)
+    hit = _pages_cache.get(key)
+    if hit and hit[0] == st.st_size and hit[1] == st.st_mtime:
+        return hit[2]
+    pages = _pdf_pages(path) if path.suffix.lower() == ".pdf" else 1
+    if pages > 0:
+        _pages_cache[key] = (st.st_size, st.st_mtime, pages)
+    return pages
+
+
+# ---------------------------------------------------------------- page-number check
+# After OCR, read the page numbers the document itself carries ("Seite 3 von 18", "Page 3
+# of 18", "Стр. 3", a bare "3" in the footer) and compare them with the physical order. A
+# mis-assembled duplex job reads 1,18,2,17,…; a jam fragment uploaded alone says "Seite 1
+# von 18" in a 7-page file. Deliberately conservative: only STRONG matches (explicit
+# "Seite/Page X [von N]") can raise a warning, bare footer numbers merely support the chain.
+_STRONG_OF_RE = re.compile(
+    r"(?:Seite|Page|Blatt|Стр(?:аница)?\.?)\s*(\d{1,3})\s*(?:von|of|из|/)\s*(\d{1,3})\b", re.I)
+_STRONG_RE = re.compile(r"(?:Seite|Page|Стр(?:аница)?\.?)\s*(\d{1,3})\b", re.I)
+_WEAK_RES = (re.compile(r"^\s*-?\s*(\d{1,3})\s*-?\s*$"),
+             re.compile(r"^\s*(\d{1,3})\s*/\s*(\d{1,3})\s*$"))
+
+
+def _page_number_of(text):
+    """{'number', 'of', 'strong'} read from one page's text, or None."""
+    m = _STRONG_OF_RE.search(text)
+    if m:
+        x, n = int(m.group(1)), int(m.group(2))
+        if 1 <= x <= n <= 500:
+            return {"number": x, "of": n, "strong": True}
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    # "Seite 7" without a total only counts when it sits on a short header/footer line —
+    # "siehe Seite 7" inside a paragraph is a cross-reference, not a page number.
+    for ln in lines:
+        if len(ln) <= 40:
+            m = _STRONG_RE.search(ln)
+            if m and 1 <= int(m.group(1)) <= 500:
+                return {"number": int(m.group(1)), "of": None, "strong": True}
+    for ln in lines[:2] + lines[-2:]:
+        for rx in _WEAK_RES:
+            m = rx.match(ln)
+            if not m:
+                continue
+            x = int(m.group(1))
+            n = int(m.group(2)) if m.lastindex and m.lastindex >= 2 else None
+            if 1 <= x <= 200 and (n is None or x <= n <= 200):
+                return {"number": x, "of": n, "strong": False}
+    return None
+
+
+def _page_check(pdf_path):
+    """Compare the page numbers printed on the pages with their physical order.
+    Returns {"ok", "numbered", "detail", "pages": [{index, number, of, strong}]}."""
+    try:
+        d = fitz.open(str(pdf_path))
+    except Exception as e:
+        return {"ok": True, "numbered": 0, "detail": f"nicht prüfbar ({e})", "pages": []}
+    try:
+        total = d.page_count
+        pages = []
+        for i, p in enumerate(d):
+            info = _page_number_of(p.get_text() or "")
+            pages.append({"index": i, "number": info["number"] if info else None,
+                          "of": info["of"] if info else None, "strong": bool(info and info["strong"])})
+    finally:
+        d.close()
+    cand = [p for p in pages if p["number"] is not None]
+    if len(cand) < 3:
+        return {"ok": True, "numbered": len(cand), "detail": "zu wenige Seitenzahlen für eine Prüfung",
+                "pages": pages}
+    # The most common (number - index) offset is the chain; strong outliers contradict it.
+    bases = {}
+    for p in cand:
+        b = p["number"] - p["index"]
+        bases[b] = bases.get(b, 0) + 1
+    base = max(bases.items(), key=lambda kv: kv[1])[0]
+    problems = []
+    for p in cand:
+        if p["strong"] and p["number"] - p["index"] != base:
+            problems.append(f"Seite {p['index'] + 1} trägt Nr. {p['number']} (erwartet {p['index'] + base})")
+    ofs = {}
+    for p in cand:
+        if p["strong"] and p["of"]:
+            ofs[p["of"]] = ofs.get(p["of"], 0) + 1
+    if ofs:
+        n, c = max(ofs.items(), key=lambda kv: kv[1])
+        if c >= 3 and n != total:
+            problems.append(f"Seiten sagen 'von {n}', Dokument hat {total} Seiten")
+    if problems:
+        more = f" (+{len(problems) - 4} weitere)" if len(problems) > 4 else ""
+        return {"ok": False, "numbered": len(cand), "detail": "; ".join(problems[:4]) + more, "pages": pages}
+    return {"ok": True, "numbered": len(cand), "detail": f"{len(cand)} Seitenzahlen in Reihenfolge", "pages": pages}
+
+
 def _assert_pagecount(src, out, mode):
     """Guard against silent page loss: an OCR/VLM output must have exactly as many pages as
     its source (passthrough copies the whole file, so it is equal by construction). Raises on
@@ -633,7 +823,7 @@ def _is_settled(path):
         return False
     # A PDF is only valid once its trailer/xref is written; a half-streamed one fails to
     # open or reports fewer pages. Images have no such structure -> page count is fixed at 1.
-    pages = _pdf_pages(path) if path.suffix.lower() == ".pdf" else 1
+    pages = _cached_pages(path, st)
     if pages <= 0:
         _settle_seen[key] = None
         return False  # not a complete/parseable PDF yet — wait for the next poll
@@ -642,8 +832,18 @@ def _is_settled(path):
     _settle_seen[key] = sig
     if prev != sig:
         return False  # size/page-count still changing -> give it one more poll cycle
-    _settle_seen.pop(key, None)  # confirmed stable; forget it (it'll be consumed now)
+    # Keep the signature: a job-folder file may stay here (settled but waiting for the user)
+    # for a long time, and forgetting it made the verdict flap every other tick. If the
+    # scanner appends to it again, the changed signature re-arms the two-poll rule.
     return True
+
+
+def _settle_prune(live_keys):
+    """Drop settle/page-cache entries for paths that no longer exist (consumed, moved by the
+    dashboard, deleted) so a same-named future scan starts with a clean slate."""
+    for cache in (_settle_seen, _pages_cache):
+        for k in [k for k in cache if k not in live_keys]:
+            cache.pop(k, None)
 
 
 def gateway_once():
@@ -656,26 +856,27 @@ def gateway_once():
             continue  # ignore scanner temp/partial files with other extensions
         if not _is_settled(p):
             continue  # still being written (or too fresh) — try again next poll
+        _set_processing({"kind": "inbox", "id": "inbox", "since": time.time(),
+                         "files": [p.name], "progress": "OCR"})
+        result = {"ts": time.time(), "job": "inbox", "files": [p.name], "title": None, "pages": 0,
+                  "dropped_blank": [], "page_check": None, "tags": [], "error": None}
         try:
-            out = WORK / (p.stem + ".ocr.pdf")
             # inbox filename hints: "_vlm" -> Gemma route; "_force" -> re-OCR even if text exists.
             stem_l = p.stem.lower()
-            mode, n = make_searchable(p, out, use_vlm="_vlm" in stem_l, force="_force" in stem_l)
-            _assert_pagecount(p, out, mode)  # never upload+delete a silently-truncated result
-            name = _smart_name(out, p.stem)  # short descriptive name from the OCR text
-            _upload(out, title=name)
+            n, name, check = _process_and_upload(p, p.stem, use_vlm="_vlm" in stem_l,
+                                                 force="_force" in stem_l)
             # archive the pristine original under the descriptive name (retention prunes it),
             # then hand it to the TARGET_USER so it is downloadable/deletable over SMB.
             ARCHIVE.mkdir(parents=True, exist_ok=True)
             dst = _unique_path(ARCHIVE, name, p.suffix)
             shutil.copy2(str(p), str(dst))
             _handoff(dst)
-            detail = {"passthrough": "passed through (already had text)",
-                      "vlm": f"VLM-OCR'd ({n} chars)"}.get(mode, f"OCR'd ({n} boxes)")
-            log(f"gateway: {p.name} -> '{name}' uploaded, {detail}; original archived")
+            result.update(title=name, pages=_pdf_pages(p), page_check=check,
+                          tags=[CHECK_TAG] if check and not check["ok"] else [])
+            log(f"gateway: {p.name} -> '{name}' uploaded ({n}); original archived")
             p.unlink()
-            out.unlink(missing_ok=True)
         except Exception as e:
+            result["error"] = str(e)
             log(f"gateway ERROR {p.name}: {e}")
             try:
                 ERRORS.mkdir(parents=True, exist_ok=True)
@@ -684,70 +885,440 @@ def gateway_once():
                 _handoff(dst)  # keep the failed original reachable over SMB, too
             except Exception:
                 pass
+        finally:
+            _settle_seen.pop(str(p), None)
+            _pages_cache.pop(str(p), None)
+            _push_result(result)
+            _set_processing(None)
 
 
-def _process_and_upload(src_pdf, title, archive_names):
-    """Make `src_pdf` searchable, upload with a short descriptive title. Returns (boxes, name)."""
+def _process_and_upload(src_pdf, title, use_vlm=False, force=False):
+    """Make `src_pdf` searchable, run the page-number check, upload with a short
+    descriptive title (tagged CHECK_TAG when the check found a problem).
+    Returns (detail_str, name, check_dict_or_None)."""
     out = WORK / (Path(title).stem + ".ocr.pdf")
-    _mode, n = make_searchable(src_pdf, out)
-    _assert_pagecount(src_pdf, out, _mode)  # never upload a silently-truncated result
-    name = _smart_name(out, Path(title).stem)
-    _upload(out, title=name)
-    out.unlink(missing_ok=True)
-    return n, name
+    try:
+        mode, n = make_searchable(src_pdf, out, use_vlm=use_vlm, force=force)
+        _assert_pagecount(src_pdf, out, mode)  # never upload a silently-truncated result
+        check = _page_check(out) if PAGE_CHECK else None
+        name = _smart_name(out, Path(title).stem)
+        tags = None
+        if check and not check["ok"]:
+            tags = [_tag_id(CHECK_TAG)]
+            log(f"page-check '{name}': {check['detail']} -> tagged '{CHECK_TAG}'")
+        _upload(out, title=name, tags=tags)
+    finally:
+        out.unlink(missing_ok=True)
+    detail = {"passthrough": "passed through (already had text)",
+              "vlm": f"VLM-OCR'd ({n} chars)"}.get(mode, f"OCR'd ({n} boxes)")
+    return detail, name, check
 
 
-def duplex_once():
-    """Pair up the two oldest settled files in INBOX/<DUPLEX_SUBDIR> as fronts+backs,
-    interleave into one document, OCR + upload. A lone file older than DUPLEX_TIMEOUT
-    is treated as single-sided (the backs pass never came)."""
-    ddir = INBOX / DUPLEX_SUBDIR
-    if not ddir.exists():
-        return
-    files = [p for p in sorted(ddir.iterdir(), key=lambda x: x.stat().st_mtime)
-             if not p.is_dir() and not p.name.startswith(".")
-             and p.suffix.lower() in ACCEPT_EXTS and _is_settled(p)]
-    if len(files) >= 2:
-        front, back = files[0], files[1]
+# ---------------------------------------------------------------------- scan jobs
+# One document = every settled file in a job folder. See the JOB_QUIET comment block up top
+# for the why. State is in-memory (the folders are the source of truth); the dashboard
+# sees it through STATUS_FILE and talks back through COMMAND_FILE.
+_job_hold = {}          # job -> True while the user paused auto-processing (dashboard "Anhalten")
+_job_states = {}        # job -> last computed state dict (what STATUS_FILE shows)
+_last_results = []      # newest first, capped
+_last_command = None    # outcome of the last dashboard command (shown as a toast)
+_processing = None      # {"kind","id","since","files","progress"} while a blocking step runs
+_motd_last = None       # last MOTD status text written (write only on change)
+
+
+def _job_dirs():
+    return {"duplex": (INBOX / DUPLEX_SUBDIR, "duplex"),
+            "stapel": (INBOX / BATCH_SUBDIR, "concat")}
+
+
+def _fmt_secs(s):
+    s = int(max(0, s))
+    return f"{s // 60} min" if s >= 120 else f"{s} s"
+
+
+def _list_job_files(jdir):
+    """Every candidate file in a job folder, oldest first, with settle verdict + page count."""
+    out = []
+    if not jdir.exists():
+        return out
+    now = time.time()
+    for p in jdir.iterdir():
+        if p.is_dir() or p.name.startswith(".") or p.suffix.lower() not in ACCEPT_EXTS:
+            continue
         try:
-            for s in (front, back):
-                d = ARCHIVE / s.name
-                shutil.copy2(str(s), str(d))
-                _handoff(d)
-            combined = WORK / "duplex_combined.pdf"
-            interleave(front, back, combined)
-            n, name = _process_and_upload(combined, front.stem, [front, back])
-            combined.unlink(missing_ok=True)
-            log(f"duplex: {front.name} + {back.name} -> '{name}' ({n} boxes)")
-            front.unlink(); back.unlink()
-        except Exception as e:
-            log(f"duplex ERROR {front.name}+{back.name}: {e}")
+            st = p.stat()
+        except OSError:
+            continue
+        settled = _is_settled(p)
+        out.append({"path": p, "name": p.name, "size": st.st_size, "mtime": int(st.st_mtime),
+                    "age": int(now - st.st_mtime), "settled": settled,
+                    "pages": _cached_pages(p, st)})
+    out.sort(key=lambda f: (f["mtime"], f["name"]))
+    return out
+
+
+def _duplex_split(pages):
+    """Index k such that the first k files hold exactly half of all pages (fronts), the rest
+    the other half (backs). Prefix sums rise strictly, so k is unique if it exists."""
+    total = sum(pages)
+    if len(pages) < 2 or total <= 0 or total % 2:
+        return None
+    acc = 0
+    for k, n in enumerate(pages, start=1):
+        acc += n
+        if acc == total // 2:
+            return k if k < len(pages) else None
+        if acc > total // 2:
+            return None
+    return None
+
+
+def _job_state(job, jdir, mode):
+    files = _list_job_files(jdir)
+    st = {"dir": str(jdir), "mode": mode, "files": [], "total_pages": 0, "state": "empty",
+          "reason": "", "quiet_remaining": -1, "lone_timeout_remaining": None,
+          "held": bool(_job_hold.get(job)), "proposal": None}
+    for f in files:
+        st["files"].append({k: v for k, v in f.items() if k != "path"})
+    if not files:
+        return st
+    settled = [f for f in files if f["settled"]]
+    st["total_pages"] = sum(max(0, f["pages"]) for f in files)
+    quiet_rem = max(0, JOB_QUIET - min(f["age"] for f in files))
+    st["quiet_remaining"] = quiet_rem
+    names = [f["name"] for f in settled]
+    pages = [f["pages"] for f in settled]
+    if mode == "duplex":
+        k = _duplex_split(pages) if settled else None
+        if k:
+            st["proposal"] = {"fronts": names[:k], "backs": names[k:], "reverse": DUPLEX_REVERSE}
+    else:
+        st["proposal"] = {"order": names}
+    if len(settled) < len(files):
+        n = len(files) - len(settled)
+        st["state"], st["reason"] = "waiting", f"{n} Datei(en) werden noch geschrieben"
+        return st
+    if st["held"]:
+        st["state"], st["reason"] = "held", "angehalten (Dashboard) – Freigeben oder manuell zusammenführen"
+        return st
+    if mode == "concat":
+        if quiet_rem > 0:
+            st["state"], st["reason"] = "waiting", f"Abschluss in {_fmt_secs(quiet_rem)} (Sammelzeit)"
+        else:
+            st["state"], st["reason"] = "auto-pending", "wird zu einem Dokument zusammengefügt"
+        return st
+    if len(settled) == 1:
+        rem = max(0, DUPLEX_TIMEOUT - settled[0]["age"])
+        st["lone_timeout_remaining"] = rem
+        if rem > 0:
+            st["state"], st["reason"] = "waiting", f"wartet auf die Rückseiten (einseitig in {_fmt_secs(rem)})"
+        else:
+            st["state"], st["reason"] = "lone", "einzelne Datei – wird einseitig verarbeitet"
+        return st
+    if len(settled) == 2 and pages[0] == pages[1]:
+        if not DUPLEX_AUTO:
+            st["state"], st["reason"] = "held", "Auto-Zusammenführung aus – bitte bestätigen"
+        elif quiet_rem > 0:
+            st["state"], st["reason"] = "waiting", f"Auto-Zusammenführung in {_fmt_secs(quiet_rem)}"
+        else:
+            st["state"], st["reason"] = "auto-pending", "wird zusammengeführt"
+        return st
+    st["state"] = "held"
+    if st["proposal"]:
+        front_n = sum(pages[:len(st["proposal"]["fronts"])])
+        st["reason"] = (f"{len(settled)} Dateien – bitte bestätigen (Vorschlag: {front_n} Seiten vorne, "
+                        f"{st['total_pages'] - front_n} hinten)")
+    elif len(settled) == 2:
+        st["reason"] = f"ungleiche Seitenzahl {pages[0]} ≠ {pages[1]} – bitte bestätigen"
+    else:
+        st["reason"] = (f"{st['total_pages']} Seiten in {len(settled)} Dateien, keine Teilung in zwei "
+                        f"gleiche Hälften – bitte bestätigen")
+    return st
+
+
+def _push_result(result):
+    _last_results.insert(0, result)
+    del _last_results[20:]
+
+
+def _set_processing(info, progress=None):
+    """Update the 'blocking step running' marker and publish it immediately, so the dashboard
+    can show progress / lock its buttons while OCR runs for minutes."""
+    global _processing
+    if info is None:
+        _processing = None
+    else:
+        _processing = info
+    if progress is not None and _processing:
+        _processing["progress"] = progress
+    _write_status()
+
+
+def _run_job(job, jdir, plan, origin):
+    """The ONE execution path for every job (auto, lone timeout, dashboard command, stapel):
+    archive sources -> assemble -> OCR/check/upload -> delete sources. Any failure moves ALL
+    sources of the job to errors/ (never leaves them to be retried every tick)."""
+    if plan["kind"] == "merge":
+        srcs = list(plan["fronts"]) + list(plan["backs"])
+    else:
+        srcs = list(plan["order"])
+    names = [p.name for p in srcs]
+    _set_processing({"kind": "job", "id": job, "since": time.time(), "files": names, "progress": "Zusammenbau"})
+    result = {"ts": time.time(), "job": job, "origin": origin, "files": names, "title": None,
+              "pages": 0, "dropped_blank": [], "page_check": None, "tags": [], "error": None}
+    combined = WORK / f"job_{job}_combined.pdf"
+    try:
+        ARCHIVE.mkdir(parents=True, exist_ok=True)
+        for s in srcs:
+            d = _unique_path(ARCHIVE, s.stem, s.suffix)
+            shutil.copy2(str(s), str(d))
+            _handoff(d)
+        if plan["kind"] == "merge":
+            info = _assemble_duplex(plan["fronts"], plan["backs"], combined,
+                                    reverse=plan.get("reverse", DUPLEX_REVERSE), drop_blank=DROP_BLANK_BACKS)
+        else:
+            info = _assemble_concat(srcs, combined)
+        expected = sum(_pdf_pages(s) for s in srcs) - len(info["dropped_backs"])
+        if info["pages"] != expected:
+            raise RuntimeError(f"assembly page count {info['pages']} != expected {expected}")
+        stems = " ".join(s.stem.lower() for s in srcs)
+        _set_processing(_processing, progress=f"OCR ({info['pages']} Seiten)")
+        detail, name, check = _process_and_upload(combined, srcs[0].stem,
+                                                  use_vlm="_vlm" in stems, force="_force" in stems)
+        result.update(title=name, pages=info["pages"], dropped_blank=info["dropped_backs"],
+                      page_check=check, tags=[CHECK_TAG] if check and not check["ok"] else [])
+        for s in srcs:
+            s.unlink(missing_ok=True)
+        log(f"job {job} ({origin}): {' + '.join(names)} -> '{name}' {info['pages']} pages, {detail}"
+            + (f", blank backs dropped {info['dropped_backs']}" if info["dropped_backs"] else ""))
+    except Exception as e:
+        result["error"] = str(e)
+        log(f"job {job} ERROR {' + '.join(names)}: {e}")
+        try:
             ERRORS.mkdir(parents=True, exist_ok=True)
-            for s in (front, back):
-                try:
-                    d = ERRORS / s.name
+            for s in srcs:
+                if s.exists():
+                    d = _unique_path(ERRORS, s.stem, s.suffix)
                     shutil.move(str(s), str(d))
                     _handoff(d)
-                except Exception:
-                    pass
-    elif len(files) == 1:
-        p = files[0]
-        if time.time() - p.stat().st_mtime > DUPLEX_TIMEOUT:
-            try:
-                d = ARCHIVE / p.name
-                shutil.copy2(str(p), str(d))
-                _handoff(d)
-                n, name = _process_and_upload(p, p.stem, [p])
-                log(f"duplex: lone {p.name} timed out -> '{name}' single-sided ({n} boxes)")
-                p.unlink()
-            except Exception as e:
-                log(f"duplex lone ERROR {p.name}: {e}")
+        except Exception as e2:
+            log(f"job {job}: could not move sources to errors/: {e2}")
+    finally:
+        combined.unlink(missing_ok=True)
+        for s in srcs:
+            _settle_seen.pop(str(s), None)
+            _pages_cache.pop(str(s), None)
+        _push_result(result)
+        _set_processing(None)
+
+
+def _read_command():
+    """Consume COMMAND_FILE (the dashboard writes it atomically). Always unlinked, even when
+    malformed — a bad command must not be retried forever."""
+    if not COMMAND_FILE.exists():
+        return None
+    try:
+        cmd = json.loads(COMMAND_FILE.read_text(encoding="utf-8"))
+        if not isinstance(cmd, dict):
+            raise ValueError("kein JSON-Objekt")
+    except Exception as e:
+        cmd = {"_error": f"Befehlsdatei unlesbar: {e}"}
+    finally:
+        try:
+            COMMAND_FILE.unlink()
+        except OSError:
+            pass
+    return cmd
+
+
+def _apply_command(cmd):
+    """Validate a dashboard command against the folders AS THEY ARE NOW. Returns
+    (job, jdir, plan) to run, or None. Outcome goes to _last_command either way."""
+    global _last_command
+    dirs = _job_dirs()
+    action = cmd.get("action")
+    job = cmd.get("job")
+
+    def reject(msg):
+        global _last_command
+        _last_command = {"ts": time.time(), "action": action, "job": job, "ok": False, "msg": msg}
+        log(f"command {action} on {job} rejected: {msg}")
+        return None
+
+    if "_error" in cmd:
+        return reject(cmd["_error"])
+    if job not in dirs:
+        return reject(f"unbekannter Job '{job}'")
+    jdir, mode = dirs[job]
+    if action == "hold":
+        _job_hold[job] = True
+        _last_command = {"ts": time.time(), "action": action, "job": job, "ok": True, "msg": "angehalten"}
+        return None
+    if action == "release":
+        _job_hold.pop(job, None)
+        _last_command = {"ts": time.time(), "action": action, "job": job, "ok": True, "msg": "freigegeben"}
+        return None
+    if action not in ("merge", "concat"):
+        return reject(f"unbekannte Aktion '{action}'")
+    files = {f["name"]: f for f in _list_job_files(jdir)}
+    expect = cmd.get("expect") or {}
+
+    def check(names):
+        if not isinstance(names, list) or not names or any(not isinstance(n, str) for n in names):
+            return "leere oder ungültige Dateiliste"
+        if len(set(names)) != len(names):
+            return "Datei doppelt angegeben"
+        for n in names:
+            f = files.get(n)
+            if not f:
+                return f"'{n}' ist nicht (mehr) vorhanden"
+            if not f["settled"]:
+                return f"'{n}' wird noch geschrieben – bitte warten"
+            e = expect.get(n)
+            if e is not None and list(e) != [f["size"], f["pages"]]:
+                return f"'{n}' hat sich seit der Anzeige geändert – bitte erneut prüfen"
+        return None
+
+    if action == "merge":
+        if mode != "duplex":
+            return reject("Zusammenführen gibt es nur im Duplex-Ordner")
+        fronts, backs = cmd.get("fronts"), cmd.get("backs")
+        err = check(fronts) or check(backs)
+        if err:
+            return reject(err)
+        if set(fronts) & set(backs):
+            return reject("eine Datei kann nicht vorne UND hinten sein")
+        pf = sum(files[n]["pages"] for n in fronts)
+        pb = sum(files[n]["pages"] for n in backs)
+        if pf != pb and not cmd.get("force"):
+            return reject(f"ungleiche Seitenzahl vorne {pf} / hinten {pb} – mit 'trotzdem' erzwingen")
+        _last_command = {"ts": time.time(), "action": action, "job": job, "ok": True,
+                         "msg": f"Zusammenführung gestartet ({pf} + {pb} Seiten)"}
+        return (job, jdir, {"kind": "merge", "fronts": [files[n]["path"] for n in fronts],
+                            "backs": [files[n]["path"] for n in backs],
+                            "reverse": bool(cmd.get("reverse", DUPLEX_REVERSE))})
+    order = cmd.get("order")
+    err = check(order)
+    if err:
+        return reject(err)
+    _last_command = {"ts": time.time(), "action": action, "job": job, "ok": True,
+                     "msg": f"{len(order)} Datei(en) werden hintereinander verarbeitet"}
+    return (job, jdir, {"kind": "concat", "order": [files[n]["path"] for n in order]})
+
+
+def jobs_once():
+    cmd = _read_command()
+    if cmd:
+        todo = _apply_command(cmd)
+        if todo:
+            job, jdir, plan = todo
+            _run_job(job, jdir, plan, "dashboard")
+    for job, (jdir, mode) in _job_dirs().items():
+        st = _job_state(job, jdir, mode)
+        _job_states[job] = st
+        if st["state"] not in ("auto-pending", "lone"):
+            continue
+        by_name = {f["name"]: f for f in _list_job_files(jdir)}
+        prop = st["proposal"] or {}
+        if mode == "duplex" and st["state"] == "auto-pending":
+            plan = {"kind": "merge", "fronts": [by_name[n]["path"] for n in prop["fronts"]],
+                    "backs": [by_name[n]["path"] for n in prop["backs"]], "reverse": DUPLEX_REVERSE}
+        else:
+            names = prop.get("order") or [f["name"] for f in st["files"] if f["settled"]]
+            plan = {"kind": "concat", "order": [by_name[n]["path"] for n in names if n in by_name]}
+        if not (plan.get("order") or plan.get("fronts")):
+            continue
+        _run_job(job, jdir, plan, "auto" if st["state"] == "auto-pending" else "lone-timeout")
+        _job_states[job] = _job_state(job, jdir, mode)
+
+
+def _errors_count():
+    try:
+        return sum(1 for f in ERRORS.iterdir() if f.is_file() and not f.name.startswith("."))
+    except OSError:
+        return 0
+
+
+def _write_status():
+    """Publish the worker's view for the dashboard (atomic replace) and refresh the MOTD."""
+    doc = {"version": 1, "ts": int(time.time()),
+           "config": {"quiet_sec": JOB_QUIET, "stable_sec": STABLE_SEC, "duplex_timeout_sec": DUPLEX_TIMEOUT,
+                      "duplex_auto": DUPLEX_AUTO, "reverse": DUPLEX_REVERSE, "drop_blank_backs": DROP_BLANK_BACKS,
+                      "page_check": PAGE_CHECK, "check_tag": CHECK_TAG,
+                      "retention_days": ARCHIVE_RETENTION_DAYS},
+           "jobs": _job_states, "workspaces": [], "processing": _processing,
+           "last_command": _last_command, "last_results": _last_results,
+           "errors": _errors_count()}
+    try:
+        WORK.mkdir(parents=True, exist_ok=True)
+        tmp = STATUS_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, STATUS_FILE)
+    except Exception as e:
+        log(f"status write failed: {e}")
+    _write_motd_status()
+
+
+def _motd_text():
+    url = f"http://{socket.gethostname()}:{DASHBOARD_PORT}/#paperless"
+    lines = []
+    for job, st in _job_states.items():
+        n = len(st.get("files") or [])
+        if st["state"] == "held":
+            lines.append(f"⚠ {job}: {n} Datei(en) warten auf Bestätigung ({st['total_pages']} Seiten) – {st['reason']}")
+        elif st["state"] in ("waiting", "lone") and n:
+            lines.append(f"{job}: {n} Datei(en) gesammelt – {st['reason']}")
+    nerr = _errors_count()
+    if nerr:
+        lines.append(f"⚠ {nerr} Datei(en) in errors/ – im Dashboard prüfen")
+    if _processing:
+        lines.append(f"Verarbeitung läuft: {', '.join(_processing.get('files') or [])} ({_processing.get('progress', '')})")
+    if _last_results:
+        r = _last_results[0]
+        when = time.strftime("%d.%m. %H:%M", time.localtime(r["ts"]))
+        if r.get("error"):
+            lines.append(f"⚠ letzte Verarbeitung {when} FEHLER: {', '.join(r['files'])} – {r['error'][:80]}")
+        else:
+            flag = f" ⚠ {CHECK_TAG}" if r.get("tags") else ""
+            lines.append(f"letzte Verarbeitung {when}: „{r.get('title')}“ ({r.get('pages')} Seiten){flag}")
+    if not lines:
+        lines.append("keine offenen Jobs")
+    # ⚠ lines first (the composer prints them in order).
+    lines.sort(key=lambda s: 0 if s.startswith("⚠") else 1)
+    return url + "\n" + "\n".join(lines[:5]) + "\n"
+
+
+def _write_motd_status():
+    global _motd_last
+    try:
+        text = _motd_text()
+        if text == _motd_last:
+            return
+        MOTD_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = MOTD_STATUS_FILE.with_suffix(".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, MOTD_STATUS_FILE)
+        _motd_last = text
+        if os.access(MOTD_COMPOSE, os.X_OK):
+            subprocess.run([MOTD_COMPOSE, "/etc/motd.macstudio.base", "/etc/motd"],
+                           capture_output=True, timeout=20)  # exit 1 = unchanged, fine
+    except Exception as e:
+        log(f"motd status failed: {e}")
 
 
 def gateway_tick():
     gateway_once()
-    duplex_once()
+    jobs_once()
     prune_archive()  # delete archived originals older than the retention window (hourly)
+    live = set()
+    for d in [INBOX] + [jd for jd, _ in _job_dirs().values()]:
+        try:
+            live.update(str(p) for p in d.iterdir())
+        except OSError:
+            pass
+    _settle_prune(live)
+    _write_status()
 
 
 def retrofix_once():
@@ -836,7 +1407,7 @@ def _loop(fn, interval, name):
 def main():
     # Create the working dirs owned by the TARGET_USER (the daemon is root) so archived
     # originals dropped into them stay reachable/deletable over SMB.
-    for d in (INBOX, INBOX / DUPLEX_SUBDIR, ARCHIVE, ERRORS, WORK):
+    for d in (INBOX, INBOX / DUPLEX_SUBDIR, INBOX / BATCH_SUBDIR, ARCHIVE, ERRORS, WORK):
         _ensure_user_dir(d)
     if not URL or not TOKEN:
         log("PAPERLESS_OCR_URL / PAPERLESS_OCR_TOKEN not set — idling. "
@@ -846,10 +1417,12 @@ def main():
     vlm = f"{VLM_MODEL} (auto<{VLM_MIN_CHARS}ch, tag '{VLM_TAG}')" if (VLM_AUTO or VLM_URL) else "off"
     ret = f"{ARCHIVE_RETENTION_DAYS}d" if ARCHIVE_RETENTION_DAYS > 0 else "keep-forever"
     log(f"starting: url={URL} langs={LANGS} recmode={RECMODE} dpi={DPI} "
-        f"inbox={INBOX} duplex={INBOX / DUPLEX_SUBDIR} "
+        f"inbox={INBOX} duplex={INBOX / DUPLEX_SUBDIR} stapel={INBOX / BATCH_SUBDIR} "
         f"tags=[{TRIGGER_TAG},{TRIGGER_FORCE_TAG},{VLM_TAG},{VLM_FORCE_TAG}] "
         f"vlm-fallback={vlm} smart-name={'on' if SMART_NAME else 'off'} "
-        f"archive-retention={ret} poll={POLL}s")
+        f"archive-retention={ret} poll={POLL}s job-quiet={JOB_QUIET}s "
+        f"duplex-auto={'on' if DUPLEX_AUTO else 'off'} page-check={'on' if PAGE_CHECK else 'off'}")
+    _write_status()  # a fresh ts right away, so the dashboard never shows a stale worker
     threading.Thread(target=_loop, args=(gateway_tick, GATEWAY_POLL, "gateway"), daemon=True).start()
     threading.Thread(target=_loop, args=(retrofix_once, POLL, "retrofix"), daemon=True).start()
     while True:

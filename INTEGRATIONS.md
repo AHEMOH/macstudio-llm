@@ -625,12 +625,57 @@ the folder locally, and the "still being written" guard uses `lsof`, which only 
 on the Mac. An inbox on a NAS would need mounting on the Mac and would fall back to the
 weaker mtime-only settle. Files here are temporary (deleted after upload), so disk use is nil.
 
-**Double-sided originals (simplex ADF, e.g. GX2050).** The GX2050's ADF scans one side per
-pass. Scan the fronts, flip the stack, scan the backs — send **both passes to the
-`<inbox>/duplex/` subfolder**. The gateway interleaves them (backs reversed) into one
-page-ordered document, then OCRs + uploads it. If pages come out mis-ordered (depends on how
-you flip), set `PAPERLESS_OCR_DUPLEX_REVERSE=0`. A single file left alone in `duplex/` for
-`PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC` (30 min) is treated as single-sided.
+**Double-sided originals (simplex ADF, e.g. GX2050) — and paper jams.** The GX2050's ADF scans
+one side per pass, and it mis-feeds: when a page is swallowed the scanner *finalizes* the PDF
+with the pages so far, and the rest has to be re-scanned → one document arrives as 2–4 files.
+So the `<inbox>/duplex/` subfolder is a **job, not a pair**: *every* file in it belongs to
+one document.
+
+1. Scan the fronts, flip the stack, scan the backs — all into `duplex/`. After a jam just
+   clear it and scan the **remaining** sheets into the same folder; don't re-scan what's
+   already there.
+2. The worker splits fronts/backs by **page count** (both halves must be equal; with
+   fragments `7 + 11` fronts and `18` backs the split is unambiguous), concatenates the
+   fragments of each pass in scan order, reverses the backs as a whole and interleaves.
+3. **Only the plain case runs by itself**: exactly 2 files with equal page counts, once
+   nothing new arrived for `PAPERLESS_OCR_JOB_QUIET_SEC` (default 180 s — long enough to
+   clear a jam). Everything else (3+ files, unequal counts, odd totals) **waits in the
+   dashboard** (`http://mac.home.arpa:8090/#paperless`, card *Duplex*) with a proposal:
+   check the roles (vorne/hinten), reorder with ▲▼ if needed, tick *Rückseiten umgekehrt*
+   as appropriate, then **Zusammenführen (Duplex)** — or **Hintereinander (einseitig)** if
+   the stack was single-sided after all. **Anhalten** pauses the automatics while you are
+   still re-scanning. `PAPERLESS_OCR_DUPLEX_AUTO=0` makes *every* duplex job wait for your
+   click.
+4. Blank backs (single-sided sheets in a double-sided stack) are dropped automatically
+   (`PAPERLESS_OCR_DUPLEX_DROP_BLANK_BACKS`; the threshold `PAPERLESS_OCR_BLANK_MAX_DARK` is deliberately low — a kept blank page is harmless, a dropped signature is not; the log prints the measured value for every dropped page).
+
+A single file left alone in `duplex/` for `PAPERLESS_OCR_DUPLEX_TIMEOUT_SEC` (30 min) is
+uploaded single-sided. If pages come out mis-ordered (depends on how you flip), set
+`PAPERLESS_OCR_DUPLEX_REVERSE=0`. The SSH login banner (MOTD) shows a **Paperless-OCR**
+block with waiting jobs, errors and the last result, plus the dashboard link — it refreshes
+within ~10 s of any change.
+
+> **Known blind spot:** a jam *exactly* in the middle of the fronts pass (9 + 9 sheets) looks
+> like a complete 9/9 duplex job. If you then take longer than the quiet time before scanning
+> the backs, the two front halves merge by themselves (the old behaviour did this instantly).
+> The page-number check below usually catches it (`scan:check`); raise the quiet time or set
+> `DUPLEX_AUTO=0` if it bites you.
+
+**Single-sided jobs split by a jam** go into **`<inbox>/stapel/`**: every file there is
+concatenated (scan order) into one document after the quiet time, or immediately with
+**Jetzt abschließen** in the dashboard. Plain `inbox/` stays one-file-per-document.
+
+**Page-number check (`PAPERLESS_OCR_PAGE_CHECK=1`).** After OCR, every gateway upload is
+checked against the page numbers printed on the pages (`Seite 3 von 18`, `Page 3 of 18`,
+`Стр. 3`, bare footer numbers). A broken sequence (a mis-assembled duplex reads 1, 18, 2, 17,
+…) or a `von 18` in a 7-page file uploads **tagged `scan:check`** (`PAPERLESS_OCR_CHECK_TAG`)
+— open the document in paperless, fix or re-scan, remove the tag. Deliberately conservative:
+only explicit `Seite/Page X` matches can raise it, and only with ≥3 numbered pages.
+
+**Recovery:** a failed job moves *all* its fragments to `errors/`; the dashboard's *Fehler*
+and *Originale* cards have **In Duplex** / **In Stapel** buttons that move a file back into a
+job folder (originals are kept 30 days, so a wrongly merged document can be re-assembled
+from its archived fragments).
 
 **Ad-hoc CLI:** `paperless-ocr in.pdf out.pdf -l ru-RU,en-US` (also accepts images).
 Verify with `pdftotext out.pdf -` → clean Unicode text.

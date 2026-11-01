@@ -1170,33 +1170,150 @@ function viewPaperless() {
       <span class="muted" id="poMeta"></span></div>
     <div id="poBody" class="skeleton">Lade…</div>`;
 
+  // inbox/originals/errors are plain folder tables; duplex/stapel are JOB cards fed by the
+  // worker's status JSON (d.jobs) — the dashboard only displays and sends commands, the
+  // worker decides (settled, page counts, split proposal, validation).
   const FOLDERS = {
-    inbox:     ["Inbox – neue Scans", true],
-    duplex:    ["Duplex – Vorder-/Rückseiten", true],
+    inbox:     ["Inbox – neue Scans (einseitig, eine Datei = ein Dokument)", true],
     originals: ["Originale – Archiv", false],
     errors:    ["Fehler", false],
   };
+  const JOBS = {
+    duplex: "Duplex – Vorder-/Rückseiten (alle Dateien = ein Dokument)",
+    stapel: "Stapel – mehrere Dateien = ein Dokument (einseitig)",
+  };
+  const STATE_LBL = { empty: "leer", waiting: "wartet", "auto-pending": "läuft gleich", held: "bitte bestätigen",
+                      lone: "einzelne Datei", processing: "läuft", error: "Fehler" };
+  const stateCls = s => ({ held: "part", "auto-pending": "ok", lone: "part" }[s] || "none");
   const fmtSize = b => b >= 1048576 ? (b/1048576).toFixed(1)+" MB" : Math.max(1,Math.round(b/1024))+" KB";
   const fmtAge = s => s >= 3600 ? Math.floor(s/3600)+" h" : s >= 60 ? Math.floor(s/60)+" min" : s+" s";
+  const fmtClock = ts => new Date(ts * 1000).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+
+  // Per-job edit state (order, roles, reverse) survives the 5-s re-render while the user is
+  // editing; it is reset from the worker's proposal whenever the file set changes.
+  const edit = {};
+  let lastData = null, lastCmdTs = null;
+
+  function syncEdit(job, js) {
+    const names = (js.files || []).map(f => f.name);
+    const e = edit[job];
+    const same = e && e.names.length === names.length && e.names.every(n => names.includes(n));
+    if (e && e.dirty && same) return e;
+    if (e && e.dirty && !same) toast("Dateiliste hat sich geändert – Vorschlag neu geladen");
+    const roles = {};
+    const p = js.proposal;
+    if (job === "duplex") {
+      if (p && p.fronts) { p.fronts.forEach(n => roles[n] = "front"); p.backs.forEach(n => roles[n] = "back"); }
+      const half = Math.floor(names.length / 2);
+      names.forEach((n, i) => { if (!roles[n]) roles[n] = (names.length % 2 === 0 && i >= half) ? "back" : "front"; });
+    }
+    edit[job] = { names: names.slice(), roles, reverse: (p && p.reverse !== undefined) ? !!p.reverse : true, dirty: false };
+    return edit[job];
+  }
+
+  function jobCard(job, js, locked) {
+    const e = syncEdit(job, js);
+    const byName = {}; (js.files || []).forEach(f => byName[f.name] = f);
+    const files = e.names.map(n => byName[n]).filter(Boolean);
+    const allSettled = files.every(f => f.settled);
+    const dis = (locked || !allSettled || !files.length) ? "disabled" : "";
+    let sumF = 0, sumB = 0;
+    files.forEach(f => { const p = f.pages > 0 ? f.pages : 0; if (job === "duplex" && e.roles[f.name] === "back") sumB += p; else sumF += p; });
+    const rows = files.length ? files.map((f, i) => {
+      const st = f.settled ? `<span class="state running"><span class="dot"></span>bereit</span>`
+                           : `<span class="state sleeping"><span class="dot"></span>wird geschrieben</span>`;
+      const role = job === "duplex"
+        ? `<td><button class="small" data-role="${esc(f.name)}" data-job="${job}" title="Rolle umschalten">${e.roles[f.name] === "back" ? "hinten" : "vorne"}</button></td>` : "";
+      const mv = `<button class="small" data-mv="-1" data-job="${job}" data-n="${esc(f.name)}" ${i === 0 ? "disabled" : ""} title="nach oben">▲</button>`
+               + `<button class="small" data-mv="1" data-job="${job}" data-n="${esc(f.name)}" ${i === files.length - 1 ? "disabled" : ""} title="nach unten">▼</button>`;
+      return `<tr><td>${esc(f.name)}</td><td class="num">${f.pages > 0 ? f.pages : "?"}</td><td class="num">${fmtSize(f.size)}</td>
+        <td class="num">${fmtAge(f.age)}</td><td>${st}</td>${role}
+        <td><div class="actions">${mv}<button class="small danger" data-act="delete" data-f="${job}" data-n="${esc(f.name)}">Löschen</button></div></td></tr>`;
+    }).join("") : `<tr><td colspan="7" class="muted">leer – Dateien in diesen Ordner scannen</td></tr>`;
+    const head = `<th>Datei</th><th>Seiten</th><th>Größe</th><th>Alter</th><th>Status</th>${job === "duplex" ? "<th>Rolle</th>" : ""}<th>Aktionen</th>`;
+    const info = job === "duplex"
+      ? `Vorne <b>${sumF}</b> · Hinten <b>${sumB}</b>${files.length && sumF !== sumB ? ' <span class="badge broken">ungleich</span>' : ""}`
+      : `<b>${sumF}</b> Seiten in Reihenfolge`;
+    const btns = job === "duplex"
+      ? `<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" data-rev="${job}" ${e.reverse ? "checked" : ""} style="width:auto"> Rückseiten umgekehrt</label>
+         <button class="primary" data-jobact="merge" data-job="${job}" ${dis}>Zusammenführen (Duplex)</button>
+         <button data-jobact="concat" data-job="${job}" ${dis}>Hintereinander (einseitig)</button>`
+      : `<button class="primary" data-jobact="concat" data-job="${job}" ${dis}>Jetzt abschließen</button>`;
+    const hold = js.held
+      ? `<button data-jobact="release" data-job="${job}">Freigeben</button>`
+      : `<button data-jobact="hold" data-job="${job}" ${files.length ? "" : "disabled"} title="Automatik pausieren, z. B. während du nach einem Papierstau weiterscannst">Anhalten</button>`;
+    return `<div class="card" style="margin-bottom:14px">
+      <div class="section-title" style="margin:0 0 4px"><h3 style="margin:0">${esc(JOBS[job])} <span class="muted">(${files.length})</span></h3>
+        <div class="spacer"></div><span class="badge ${stateCls(js.state)}">${esc(STATE_LBL[js.state] || js.state)}</span></div>
+      <div class="sub" style="margin-bottom:8px">${esc(js.reason || "")}</div>
+      <div class="tablewrap"><table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="actions" style="margin-top:10px;align-items:center"><span class="muted">${info}</span><div class="spacer"></div>${btns}${hold}</div>
+    </div>`;
+  }
+
+  function resultsCard(res) {
+    if (!res || !res.length) return "";
+    const rows = res.slice(0, 10).map(r => {
+      const chk = r.error ? `<span class="badge broken">Fehler</span>`
+                : r.page_check ? (r.page_check.ok ? `<span class="badge ok" title="${esc(r.page_check.detail)}">ok</span>`
+                                                  : `<span class="badge part" title="${esc(r.page_check.detail)}">${esc((r.tags || []).join(", ") || "prüfen")}</span>`)
+                : "–";
+      const note = r.error ? esc(r.error) : (r.page_check && !r.page_check.ok ? esc(r.page_check.detail) : "");
+      return `<tr><td class="num">${fmtClock(r.ts)}</td><td>${esc(r.job)}</td><td>${esc(r.title || r.files.join(" + "))}</td>
+        <td class="num">${r.pages || "–"}</td><td class="num">${(r.dropped_blank || []).length || "–"}</td><td>${chk}</td><td class="muted" style="font-size:12px">${note}</td></tr>`;
+    }).join("");
+    return `<div class="card" style="margin-bottom:14px">
+      <div class="section-title" style="margin:0 0 8px"><h3 style="margin:0">Letzte Verarbeitungen</h3></div>
+      <div class="tablewrap"><table><thead><tr><th>Zeit</th><th>Quelle</th><th>Titel</th><th>Seiten</th><th>Leerseiten</th><th>Prüfung</th><th>Hinweis</th></tr></thead>
+      <tbody>${rows}</tbody></table></div></div>`;
+  }
 
   const render = d => {
     if (!d) return;
+    lastData = d;
     if (!d.enabled) {
       $("#poMeta").textContent = "";
       $("#poBody").innerHTML = `<div class="card">Dienst nicht aktiviert. Unter <b>Einstellungen</b> <code>INSTALL_PAPERLESS_OCR=1</code> setzen, URL + Token eintragen und anwenden.</div>`;
       return;
     }
+    const J = d.jobs || null, cfg = (J && J.config) || {};
     $("#poMeta").textContent = (d.configured ? "aktiv" : "wartet auf URL/Token")
-      + " · Sprachen: " + (d.langs || "–") + " · Ruhezeit: " + d.stable_sec + " s";
+      + " · Sprachen: " + (d.langs || "–") + " · Ruhezeit: " + d.stable_sec + " s"
+      + (cfg.quiet_sec ? " · Sammelzeit: " + cfg.quiet_sec + " s" : "");
     const H = location.hostname || "mac.home.arpa";
     const smbCard = d.smb_shared ? `<div class="card" style="margin-bottom:14px">
       <div class="label">SMB-Freigabe für den Scanner (Anmeldung: Benutzer <code>mac</code>)</div>
       <div class="value" style="font-size:15px;word-break:break-all"><code>\\\\${esc(H)}\\${esc(d.smb_name)}</code>
         <button class="small" data-copy="\\\\${esc(H)}\\${esc(d.smb_name)}">Kopieren</button></div>
-      <div class="sub">Doppelseitig in den Unterordner <code>\\\\${esc(H)}\\${esc(d.smb_name)}\\${esc(d.duplex_sub)}</code></div></div>`
+      <div class="sub">Doppelseitig in <code>\\\\${esc(H)}\\${esc(d.smb_name)}\\${esc(d.duplex_sub)}</code> · mehrere einseitige Dateien als ein Dokument in <code>\\\\${esc(H)}\\${esc(d.smb_name)}\\${esc(d.stapel_sub)}</code></div></div>`
       : `<div class="card" style="margin-bottom:14px"><div class="sub">SMB-Freigabe aus. In den Einstellungen <code>PAPERLESS_OCR_SMB_SHARE=1</code> setzen und anwenden, um den Inbox-Ordner fürs Netzwerk freizugeben.</div></div>`;
-    $("#poBody").innerHTML = smbCard + Object.keys(FOLDERS).map(key => {
-      const [title, isInbox] = FOLDERS[key];
+
+    // Worker status: processing banner / stale warning / missing status file.
+    let statusCard = "";
+    const locked = !!(J && J.processing);
+    if (!J) {
+      statusCard = `<div class="card" style="margin-bottom:14px"><div class="sub">Kein Worker-Status gefunden – läuft <code>com.local.paperless.ocr</code> mit der aktuellen Version? (<code>sudo bash setup.sh --apply</code>, dann <code>llm-restart paperless-ocr</code>)</div></div>`;
+    } else if (J.processing) {
+      const p = J.processing, since = Math.max(0, Math.floor(Date.now() / 1000 - p.since));
+      statusCard = `<div class="card" style="margin-bottom:14px"><div class="label">Verarbeitung läuft</div>
+        <div class="value" style="font-size:15px">${esc((p.files || []).join(" + "))}</div>
+        <div class="sub">${esc(p.progress || "")} · seit ${fmtAge(since)} · Buttons sind solange gesperrt</div></div>`;
+    } else if (d.status_age > 60) {
+      statusCard = `<div class="card" style="margin-bottom:14px"><div class="sub">⚠ Worker-Status ist ${fmtAge(d.status_age)} alt – läuft <code>com.local.paperless.ocr</code>?</div></div>`;
+    }
+    if (J && J.last_command && J.last_command.ts !== lastCmdTs) {
+      if (lastCmdTs !== null) toast((J.last_command.action || "") + ": " + (J.last_command.msg || ""), !J.last_command.ok);
+      lastCmdTs = J.last_command.ts;
+    }
+
+    const jobCards = Object.keys(JOBS).map(job => {
+      const js = (J && J.jobs && J.jobs[job]) || { files: (d.folders[job] || []).map(f => ({ ...f, settled: f.status === "ready", pages: -1 })),
+                                                   state: "waiting", reason: "Worker-Status fehlt", held: false, proposal: null };
+      return jobCard(job, js, locked || !J);
+    }).join("");
+
+    const folderCards = Object.keys(FOLDERS).map(key => {
+      const [title] = FOLDERS[key];
       const files = d.folders[key] || [];
       const rows = files.length ? files.map(f => {
         const st = f.status === "pending" ? `<span class="state sleeping"><span class="dot"></span>wird geschrieben</span>`
@@ -1204,6 +1321,8 @@ function viewPaperless() {
         const acts = [];
         if (key === "errors")    acts.push(`<button class="small" data-act="requeue" data-f="${esc(key)}" data-n="${esc(f.name)}">Erneut versuchen</button>`);
         if (key === "originals") acts.push(`<button class="small" data-act="requeue" data-f="${esc(key)}" data-n="${esc(f.name)}">Neu OCR</button>`);
+        acts.push(`<button class="small" data-act="requeue_duplex" data-f="${esc(key)}" data-n="${esc(f.name)}" title="in den Duplex-Ordner verschieben">In Duplex</button>`);
+        acts.push(`<button class="small" data-act="requeue_stapel" data-f="${esc(key)}" data-n="${esc(f.name)}" title="in den Stapel-Ordner verschieben">In Stapel</button>`);
         acts.push(`<button class="small danger" data-act="delete" data-f="${esc(key)}" data-n="${esc(f.name)}">Löschen</button>`);
         return `<tr><td>${esc(f.name)}</td><td class="num">${fmtSize(f.size)}</td><td class="num">${fmtAge(f.age)}</td><td>${st}</td><td><div class="actions">${acts.join("")}</div></td></tr>`;
       }).join("") : `<tr><td colspan="5" class="muted">leer</td></tr>`;
@@ -1213,6 +1332,10 @@ function viewPaperless() {
           <thead><tr><th>Datei</th><th>Größe</th><th>Alter</th><th>Status</th><th>Aktionen</th></tr></thead>
           <tbody>${rows}</tbody></table></div></div>`;
     }).join("");
+
+    $("#poBody").innerHTML = smbCard + statusCard + jobCards + resultsCard(J && J.last_results) + folderCards;
+
+    // --- folder file actions (delete / requeue*) ---
     $$("#poBody button[data-act]").forEach(btn => {
       btn.onclick = async () => {
         const act = btn.dataset.act, folder = btn.dataset.f, name = btn.dataset.n;
@@ -1220,9 +1343,59 @@ function viewPaperless() {
         try {
           const r = await api("/api/paperless-ocr/action", { method:"POST", body:{ folder, name, action:act } });
           toast(name + ": " + (r.msg || "ok"));
+          if (edit[folder]) edit[folder].dirty = false;
           poRefresh();
         } catch (e) { toast(e.message, true); }
       };
+    });
+    // --- job edits (client-side only until a job action is sent) ---
+    $$("#poBody button[data-role]").forEach(btn => btn.onclick = () => {
+      const e = edit[btn.dataset.job]; const n = btn.dataset.role;
+      e.roles[n] = e.roles[n] === "back" ? "front" : "back"; e.dirty = true; render(lastData);
+    });
+    $$("#poBody button[data-mv]").forEach(btn => btn.onclick = () => {
+      const e = edit[btn.dataset.job]; const i = e.names.indexOf(btn.dataset.n), j = i + Number(btn.dataset.mv);
+      if (i < 0 || j < 0 || j >= e.names.length) return;
+      [e.names[i], e.names[j]] = [e.names[j], e.names[i]]; e.dirty = true; render(lastData);
+    });
+    $$("#poBody input[data-rev]").forEach(inp => inp.onchange = () => { edit[inp.dataset.rev].reverse = inp.checked; edit[inp.dataset.rev].dirty = true; });
+    // --- job actions -> worker command ---
+    $$("#poBody button[data-jobact]").forEach(btn => btn.onclick = async () => {
+      const job = btn.dataset.job, act = btn.dataset.jobact, e = edit[job] || { names: [], roles: {}, reverse: true };
+      const js = (lastData.jobs && lastData.jobs.jobs && lastData.jobs.jobs[job]) || { files: [] };
+      const byName = {}; (js.files || []).forEach(f => byName[f.name] = f);
+      const expect = {}; e.names.forEach(n => { if (byName[n]) expect[n] = [byName[n].size, byName[n].pages]; });
+      const pagesOf = n => (byName[n] && byName[n].pages > 0) ? byName[n].pages : 0;
+      const body = { job, action: act, expect };
+      let title = "", text = "", yes = "";
+      if (act === "merge") {
+        body.fronts = e.names.filter(n => e.roles[n] !== "back");
+        body.backs  = e.names.filter(n => e.roles[n] === "back");
+        body.reverse = !!e.reverse;
+        const pf = body.fronts.reduce((s, n) => s + pagesOf(n), 0), pb = body.backs.reduce((s, n) => s + pagesOf(n), 0);
+        if (!body.fronts.length || !body.backs.length) { toast("Mindestens eine Datei vorne UND eine hinten nötig", true); return; }
+        body.force = pf !== pb;
+        title = "Duplex zusammenführen?";
+        text = `Vorne: ${body.fronts.map(n => n + " (" + pagesOf(n) + ")").join(" + ")} = ${pf} Seiten\n`
+             + `Hinten: ${body.backs.map(n => n + " (" + pagesOf(n) + ")").join(" + ")} = ${pb} Seiten${body.reverse ? ", umgekehrt" : ""}\n`
+             + `Ergebnis: ${pf + pb} Seiten, verschränkt, dann OCR + Upload.`
+             + (pf !== pb ? "\n\n⚠ UNGLEICHE Seitenzahl – das Ergebnis ist vermutlich falsch sortiert. Trotzdem erzwingen?" : "");
+        yes = pf !== pb ? "Trotzdem zusammenführen" : "Zusammenführen";
+      } else if (act === "concat") {
+        body.order = e.names.slice();
+        if (!body.order.length) { toast("Keine Dateien", true); return; }
+        const total = body.order.reduce((s, n) => s + pagesOf(n), 0);
+        title = "Hintereinander verarbeiten?";
+        text = `${body.order.join(" → ")}\nErgebnis: EIN einseitiges Dokument mit ${total} Seiten, dann OCR + Upload.`;
+        yes = "Verarbeiten";
+      }
+      if (title && !await confirmDlg(title, text, yes)) return;
+      try {
+        const r = await api("/api/paperless-ocr/job", { method: "POST", body });
+        toast(r.msg || "ok");
+        if (edit[job]) edit[job].dirty = false;
+        poRefresh();
+      } catch (err) { toast(err.message, true); }
     });
     $$("#poBody [data-copy]").forEach(b => b.onclick = async () => {
       try { await navigator.clipboard.writeText(b.dataset.copy); toast("kopiert"); }
