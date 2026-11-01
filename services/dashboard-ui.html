@@ -245,7 +245,28 @@
   .pg .acts button.small { padding: 2px 6px; }
   .pg .badge.sug { display: block; margin: 4px auto 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .docgroup { border: 1px dashed var(--border); border-radius: var(--radius); padding: 10px; margin-bottom: 14px; }
-  #pvImg { max-width: 100%; max-height: 70vh; display: block; margin: 0 auto; transition: transform .15s; }
+  /* geteilte Ansicht: Seitenleiste links (alle Seiten, nach Dokument), zoombarer Viewer rechts */
+  .edsplit { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 14px; align-items: start; }
+  .edside { position: sticky; top: 10px; max-height: calc(100vh - 20px); overflow-y: auto; padding-right: 4px; }
+  .edside .docgroup { margin-bottom: 10px; padding: 8px; }
+  .pgrid.vertical { grid-template-columns: 1fr; }
+  .pg.compact .thumbwrap { height: 150px; }
+  .pg.cur { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .edview { min-width: 0; }
+  .edcanvas { overflow: auto; height: calc(100vh - 240px); min-height: 420px; background: #000; border-radius: 6px;
+              padding: 8px; box-sizing: border-box; }
+  .edcanvas .edrot { position: relative; margin: 0 auto; }
+  .edcanvas img { position: absolute; left: 50%; top: 50%; max-width: none; user-select: none; }
+  @media (max-width: 900px) {
+    .edsplit { grid-template-columns: 1fr; }
+    .edside { position: static; max-height: none; }
+    .pgrid.vertical { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+    .edcanvas { height: 60vh; }
+  }
+  .spinner { width: 26px; height: 26px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%;
+             animation: spin .8s linear infinite; display: inline-block; flex: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  tr.gone { opacity: .35; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -413,18 +434,30 @@
   </div>
 </div>
 
-<!-- Seiten-Vorschau (Editor) -->
-<div class="overlay" id="pvOverlay">
-  <div class="modal wide" style="max-width:1040px">
-    <h2 id="pvTitle"></h2>
-    <div style="overflow:auto;max-height:72vh;text-align:center"><img id="pvImg" alt=""></div>
+<!-- Worker-Fortschritt (Paperless-OCR): bleibt offen, bis der Worker den Befehl erledigt hat -->
+<div class="overlay" id="busyOverlay">
+  <div class="modal">
+    <h2 id="busyTitle"></h2>
+    <div class="sub" id="busyFiles" style="margin-bottom:12px;word-break:break-word"></div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <span class="spinner" id="busySpin"></span>
+      <span id="busyProgress" style="flex:1"></span>
+      <span class="muted" id="busyTime"></span>
+    </div>
+    <div id="busyErr" style="color:var(--critical);margin-top:12px;display:none;white-space:pre-wrap"></div>
+    <div class="row"><button id="busyClose" style="display:none">Schließen</button></div>
+  </div>
+</div>
+
+<!-- Editor: weitere Dateien in die Arbeitsmappe aufnehmen -->
+<div class="overlay" id="addFilesOverlay">
+  <div class="modal wide">
+    <h2>Dateien hinzufügen</h2>
+    <p>Die Seiten werden ans Ende des letzten Dokuments angehängt. Dateien aus Eingang/Duplex/Stapel werden in die Mappe verschoben, Originale und Fehler-Dateien kopiert.</p>
+    <div id="addFilesBody" style="max-height:55vh;overflow:auto"></div>
     <div class="row">
-      <button id="pvPrev">◀ vorherige</button>
-      <button id="pvRotL">↶ 90°</button>
-      <button id="pvRotR">↷ 90°</button>
-      <button id="pvNext">nächste ▶</button>
-      <div class="spacer"></div>
-      <button id="pvClose">Schließen</button>
+      <button id="addFilesCancel">Abbrechen</button>
+      <button class="primary" id="addFilesOk">Hinzufügen</button>
     </div>
   </div>
 </div>
@@ -460,6 +493,7 @@ const state = {
   view: null,
   status: null,
   timers: [],          // per-view timers, cleared on view switch
+  cleanup: [],         // per-view teardown callbacks (document-level listeners), run on view switch
   globalTimer: null,
   jobModal: { id: null, offset: 0, timer: null },
   logView: { name: null, offset: 0, follow: true, filter: "" },
@@ -506,6 +540,52 @@ async function api(path, opts) {
 }
 
 function setConn(ok) { $("#connDot").classList.toggle("ok", !!ok); }
+
+/* Paperless-OCR: jeder Editor-/Job-Befehl wird vom Dashboard nur als Datei abgelegt; der
+   Worker holt sie ab (≤ 1 s), arbeitet (Vorschauen rendern, OCR …) und meldet das Ergebnis
+   in last_command. Dieses Overlay macht das Warten sichtbar: es bleibt offen, zeigt
+   processing.progress und schließt erst, wenn der Befehl erledigt ist (oder zeigt den Fehler).
+   `untilStarted` = schon schließen, sobald der Worker den Befehl angenommen hat (Senden /
+   Job-Verarbeitung laufen minutenlang und haben ihre eigene Fortschrittsanzeige). */
+async function runWorkerCommand({ title, files, send, done, untilStarted }) {
+  const ov = $("#busyOverlay");
+  $("#busyTitle").textContent = title || "Bitte warten";
+  $("#busyFiles").textContent = (files || []).join(" + ");
+  $("#busyProgress").textContent = "Befehl wird übergeben…";
+  $("#busyErr").style.display = "none"; $("#busyErr").textContent = "";
+  $("#busyClose").style.display = "none"; $("#busySpin").style.display = "";
+  ov.classList.add("open");
+  const t0 = Date.now();
+  const tick = () => { $("#busyTime").textContent = Math.floor((Date.now() - t0) / 1000) + " s"; };
+  const timer = setInterval(tick, 500); tick();
+  const fail = msg => {
+    clearInterval(timer);
+    $("#busySpin").style.display = "none"; $("#busyProgress").textContent = "";
+    $("#busyErr").textContent = msg; $("#busyErr").style.display = "";
+    $("#busyClose").style.display = ""; $("#busyClose").onclick = () => ov.classList.remove("open");
+    return null;
+  };
+  // Vorher den Stand merken: Browser- und Mac-Uhr können abweichen, deshalb wird NICHT mit
+  // Zeitstempeln verglichen, sondern auf einen NEUEN last_command gewartet.
+  let prevTs = null;
+  try { const d0 = await api("/api/paperless-ocr"); prevTs = ((d0.jobs || {}).last_command || {}).ts || null; } catch (e) { /* egal */ }
+  try { await send(); } catch (e) { return fail(e.message); }
+  $("#busyProgress").textContent = "Warte auf den Worker…";
+  for (let i = 0; i < 300; i++) {
+    await new Promise(r => setTimeout(r, 1000));
+    let d; try { d = await api("/api/paperless-ocr"); } catch (e) { continue; }
+    const J = d.jobs || {}, lc = J.last_command, pr = J.processing;
+    if (pr) $("#busyProgress").textContent = (pr.progress || "läuft…") + (pr.files && pr.files.length ? " – " + pr.files.join(" + ") : "");
+    const fresh = lc && lc.ts !== prevTs;
+    if (!fresh) continue;
+    if (lc.ok === false) return fail(lc.msg || "Fehler");
+    if (pr && !untilStarted) continue;   // angenommen, aber noch am Arbeiten (z. B. Vorschauen rendern)
+    clearInterval(timer); ov.classList.remove("open");
+    if (done) await done(lc, d);
+    return lc;
+  }
+  return fail("Der Worker antwortet nicht – läuft com.local.paperless.ocr? (llm-logs paperless-ocr)");
+}
 
 function confirmDlg(title, text, yesLabel) {
   return new Promise(resolve => {
@@ -589,6 +669,8 @@ const VIEWS = { uebersicht: viewUebersicht, modelle: viewModelle, dienste: viewD
 function clearViewTimers() {
   state.timers.forEach(t => clearInterval(t));
   state.timers = [];
+  state.cleanup.forEach(fn => { try { fn(); } catch (e) { /* egal */ } });
+  state.cleanup = [];
 }
 function every(ms, fn) {
   fn();
@@ -1196,6 +1278,10 @@ function viewDienste() {
 /* =========================================================================
    Ansicht: Paperless-OCR (Ordner-Steuerung)
    ========================================================================= */
+// shared by the Paperless-OCR view and the page editor
+const fmtSize = b => b >= 1048576 ? (b/1048576).toFixed(1)+" MB" : Math.max(1,Math.round(b/1024))+" KB";
+const fmtAge = s => s >= 3600 ? Math.floor(s/3600)+" h" : s >= 60 ? Math.floor(s/60)+" min" : s+" s";
+
 function viewPaperless() {
   $("#view").innerHTML = `
     <div class="section-title"><h2>Paperless-OCR</h2><div class="spacer"></div>
@@ -1217,13 +1303,14 @@ function viewPaperless() {
   const STATE_LBL = { empty: "leer", waiting: "wartet", "auto-pending": "läuft gleich", held: "bitte bestätigen",
                       lone: "einzelne Datei", processing: "läuft", error: "Fehler" };
   const stateCls = s => ({ held: "part", "auto-pending": "ok", lone: "part" }[s] || "none");
-  const fmtSize = b => b >= 1048576 ? (b/1048576).toFixed(1)+" MB" : Math.max(1,Math.round(b/1024))+" KB";
-  const fmtAge = s => s >= 3600 ? Math.floor(s/3600)+" h" : s >= 60 ? Math.floor(s/60)+" min" : s+" s";
   const fmtClock = ts => new Date(ts * 1000).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 
   // Per-job edit state (order, roles, reverse) survives the 5-s re-render while the user is
   // editing; it is reset from the worker's proposal whenever the file set changes.
   const edit = {};
+  // Checkbox-Auswahl in den Ordner-Tabellen lebt HIER, nicht im DOM: render() schreibt #poBody
+  // alle 5 s komplett neu, eine Auswahl nur im DOM wäre nach dem nächsten Tick weg.
+  const picked = {};
   let lastData = null, lastCmdTs = null;
 
   function syncEdit(job, js) {
@@ -1303,19 +1390,6 @@ function viewPaperless() {
   }
   let cfgRetention = 30;
 
-  // After a ws_open command: wait until the worker lists the new workspace, then jump to it.
-  async function waitForWorkspace(names, since) {
-    for (let i = 0; i < 40; i++) {
-      await new Promise(r => setTimeout(r, 2000));
-      let d; try { d = await api("/api/paperless-ocr"); } catch (e) { continue; }
-      const J = d.jobs || {};
-      const ws = (J.workspaces || []).find(w => w.created >= since - 5 && names.every(n => w.files.includes(n)));
-      if (ws) { location.hash = "#editor/" + ws.id; return; }
-      if (J.last_command && J.last_command.ts >= since && J.last_command.ok === false) { toast(J.last_command.msg, true); return; }
-    }
-    toast("Arbeitsmappe wurde nicht angelegt – siehe Worker-Log", true);
-  }
-
   function resultsCard(res) {
     if (!res || !res.length) return "";
     const rows = res.slice(0, 10).map(r => {
@@ -1381,6 +1455,9 @@ function viewPaperless() {
     const folderCards = Object.keys(FOLDERS).map(key => {
       const [title] = FOLDERS[key];
       const files = d.folders[key] || [];
+      const have = new Set(files.map(f => f.name));
+      picked[key] = new Set(Array.from(picked[key] || []).filter(n => have.has(n)));   // der Scanner vergibt Namen neu
+      const nPicked = picked[key].size;
       const rows = files.length ? files.map(f => {
         const st = f.status === "pending" ? `<span class="state sleeping"><span class="dot"></span>wird geschrieben</span>`
                  : f.status === "ready"   ? `<span class="state running"><span class="dot"></span>bereit</span>` : "–";
@@ -1391,11 +1468,11 @@ function viewPaperless() {
         acts.push(`<button class="small" data-act="requeue_duplex" data-f="${esc(key)}" data-n="${esc(f.name)}" title="in den Duplex-Ordner verschieben">In Duplex</button>`);
         acts.push(`<button class="small" data-act="requeue_stapel" data-f="${esc(key)}" data-n="${esc(f.name)}" title="in den Stapel-Ordner verschieben">In Stapel</button>`);
         acts.push(`<button class="small danger" data-act="delete" data-f="${esc(key)}" data-n="${esc(f.name)}">Löschen</button>`);
-        return `<tr><td><input type="checkbox" data-pick="${esc(key)}" data-n="${esc(f.name)}" style="width:auto"></td><td>${esc(f.name)}</td><td class="num">${fmtSize(f.size)}</td><td class="num">${fmtAge(f.age)}</td><td>${st}</td><td><div class="actions">${acts.join("")}</div></td></tr>`;
+        return `<tr><td><input type="checkbox" data-pick="${esc(key)}" data-n="${esc(f.name)}" ${picked[key].has(f.name) ? "checked" : ""} style="width:auto"></td><td>${esc(f.name)}</td><td class="num">${fmtSize(f.size)}</td><td class="num">${fmtAge(f.age)}</td><td>${st}</td><td><div class="actions">${acts.join("")}</div></td></tr>`;
       }).join("") : `<tr><td colspan="6" class="muted">leer</td></tr>`;
       return `<div class="card" style="margin-bottom:14px">
         <div class="section-title" style="margin:0 0 8px"><h3 style="margin:0">${esc(title)} <span class="muted">(${files.length})</span></h3>
-          <div class="spacer"></div>${files.length > 1 ? `<button class="small" data-wsopenpicked="${esc(key)}" ${locked ? "disabled" : ""} title="die markierten Dateien zusammen als eine Arbeitsmappe öffnen">Markierte im Editor öffnen</button>` : ""}</div>
+          <div class="spacer"></div>${files.length > 1 ? `<button class="small" data-wsopenpicked="${esc(key)}" ${locked ? "disabled" : ""} title="die markierten Dateien zusammen als eine Arbeitsmappe öffnen">Markierte im Editor öffnen${nPicked ? " (" + nPicked + ")" : ""}</button>` : ""}</div>
         <div class="tablewrap"><table>
           <thead><tr><th></th><th>Datei</th><th>Größe</th><th>Alter</th><th>Status</th><th>Aktionen</th></tr></thead>
           <tbody>${rows}</tbody></table></div></div>`;
@@ -1405,28 +1482,43 @@ function viewPaperless() {
 
     // --- editor: open a workspace from a folder (single file, or the picked ones) ---
     const openWs = async (from, names, roles) => {
-      const since = Math.floor(Date.now() / 1000);
       const folderFiles = (from === "duplex" || from === "stapel")
         ? (((lastData.jobs || {}).jobs || {})[from] || {}).files || [] : [];
       const expect = {}; folderFiles.forEach(f => { if (names.includes(f.name)) expect[f.name] = [f.size, f.pages]; });
-      try {
-        const r = await api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_open", from, files: names, expect, roles } });
-        toast(r.msg || "ok");
-        await waitForWorkspace(names, since);
-      } catch (err) { toast(err.message, true); }
+      await runWorkerCommand({
+        title: "Arbeitsmappe wird angelegt", files: names,
+        send: () => api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_open", from, files: names, expect, roles } }),
+        done: (lc, d) => {
+          if (picked[from]) picked[from].clear();
+          if (edit[from]) edit[from].dirty = false;
+          const ws = (((d.jobs || {}).workspaces) || []).find(w => names.every(n => w.files.includes(n)));
+          if (ws) location.hash = "#editor/" + ws.id; else { toast(lc.msg || "ok"); poRefresh(); }
+        },
+      });
     };
+    $$("#poBody input[data-pick]").forEach(cb => cb.onchange = () => {
+      const set = picked[cb.dataset.pick] = picked[cb.dataset.pick] || new Set();
+      cb.checked ? set.add(cb.dataset.n) : set.delete(cb.dataset.n);
+      const b = $(`#poBody button[data-wsopenpicked="${cb.dataset.pick}"]`);
+      if (b) b.textContent = "Markierte im Editor öffnen" + (set.size ? " (" + set.size + ")" : "");
+    });
     $$("#poBody button[data-wsopen]").forEach(btn => btn.onclick = () => openWs(btn.dataset.wsopen, [btn.dataset.n]));
     $$("#poBody button[data-wsopenpicked]").forEach(btn => btn.onclick = () => {
       const key = btn.dataset.wsopenpicked;
-      const names = $$(`#poBody input[data-pick="${key}"]:checked`).map(i => i.dataset.n);
+      const names = Array.from(picked[key] || []);
       if (!names.length) { toast("Erst Dateien markieren (Häkchen links)", true); return; }
       openWs(key, names);
     });
     $$("#poBody button[data-wsdel]").forEach(btn => btn.onclick = async () => {
       const id = btn.dataset.wsdel;
       if (!await confirmDlg("Arbeitsmappe löschen?", "„" + id + "“ wird gelöscht. Noch nicht gesendete Dateien gehen zurück in ihren Ordner.", "Ja, löschen")) return;
-      try { const r = await api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_discard", id } }); toast(r.msg || "ok"); }
-      catch (err) { toast(err.message, true); }
+      const tr = btn.closest("tr"); if (tr) tr.classList.add("gone");
+      await runWorkerCommand({
+        title: "Arbeitsmappe wird gelöscht", files: [id],
+        send: () => api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_discard", id } }),
+        done: lc => { toast(lc.msg || "gelöscht"); poRefresh(); },
+      });
+      if (tr) tr.classList.remove("gone");
     });
 
     // --- folder file actions (delete / requeue*) ---
@@ -1464,13 +1556,16 @@ function viewPaperless() {
       let title = "", text = "", yes = "";
       if (act === "ws_open") {
         if (!e.names.length) { toast("Keine Dateien", true); return; }
-        const since = Math.floor(Date.now() / 1000);
-        try {
-          const r = await api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_open", from: job, files: e.names.slice(), expect, roles: job === "duplex" ? e.roles : undefined } });
-          toast(r.msg || "ok");
-          if (edit[job]) edit[job].dirty = false;
-          await waitForWorkspace(e.names.slice(), since);
-        } catch (err) { toast(err.message, true); }
+        const names = e.names.slice();
+        await runWorkerCommand({
+          title: "Arbeitsmappe wird angelegt", files: names,
+          send: () => api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_open", from: job, files: names, expect, roles: job === "duplex" ? e.roles : undefined } }),
+          done: (lc, d) => {
+            if (edit[job]) edit[job].dirty = false;
+            const ws = (((d.jobs || {}).workspaces) || []).find(w => names.every(n => w.files.includes(n)));
+            if (ws) location.hash = "#editor/" + ws.id; else { toast(lc.msg || "ok"); poRefresh(); }
+          },
+        });
         return;
       }
       if (act === "merge") {
@@ -1495,12 +1590,12 @@ function viewPaperless() {
         yes = "Verarbeiten";
       }
       if (title && !await confirmDlg(title, text, yes)) return;
-      try {
-        const r = await api("/api/paperless-ocr/job", { method: "POST", body });
-        toast(r.msg || "ok");
-        if (edit[job]) edit[job].dirty = false;
-        poRefresh();
-      } catch (err) { toast(err.message, true); }
+      const TITLES = { merge: "Duplex wird zusammengeführt", concat: "Dateien werden verarbeitet", hold: "Job wird angehalten", release: "Job wird freigegeben" };
+      await runWorkerCommand({
+        title: TITLES[act] || act, files: e.names, untilStarted: act === "merge" || act === "concat",
+        send: () => api("/api/paperless-ocr/job", { method: "POST", body }),
+        done: lc => { if (edit[job]) edit[job].dirty = false; toast(lc.msg || "ok"); poRefresh(); },
+      });
     });
     $$("#poBody [data-copy]").forEach(b => b.onclick = async () => {
       try { await navigator.clipboard.writeText(b.dataset.copy); toast("kopiert"); }
@@ -1525,7 +1620,14 @@ function viewEditor() {
   if (!/^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$/.test(wsid)) { $("#edBody").innerHTML = `<div class="card">Ungültige Arbeitsmappe.</div>`; return; }
 
   const base = "/api/paperless-ocr/ws/" + encodeURIComponent(wsid);
-  const ed = { ws: null, docs: [], sel: new Set(), undo: [], drag: null, processing: null, key: "", lastCmdTs: null, paperlessUrl: "", pv: null, analysis: null };
+  let savedView = "split";
+  try { savedView = localStorage.getItem("po.editor.view") === "grid" ? "grid" : "split"; } catch (e) { /* egal */ }
+  // view: "split" = Seitenleiste + zoombarer Viewer (Standard), "grid" = Kachelraster.
+  // cur = im Viewer gezeigte Seite, zoom = "fit" | "width" | Prozent (100 % = Papiergröße bei 96 dpi,
+  // 200 % ≈ die 1600-px-Vorschau 1:1). known = alle img-Ids, die die Mappe je hatte – neue Seiten
+  // (ws_add) erkennt refresh() daran und hängt sie ans letzte Dokument.
+  const ed = { ws: null, docs: [], sel: new Set(), undo: [], drag: null, processing: null, key: "", lastCmdTs: null, paperlessUrl: "",
+               analysis: null, view: savedView, cur: null, zoom: "fit", zoomEff: 100, known: new Set(), keepScroll: null };
   // KI-Vorschlag badge for one page, evaluated against the CURRENT plan (so applied
   // suggestions turn green without a new analysis).
   function suggestion(p, di, pi, globalPos) {
@@ -1548,6 +1650,7 @@ function viewEditor() {
   const pageOf = img => { const f = find(img); return f ? ed.docs[f.di].pages[f.pi] : null; };
 
   function initDocs(m) {
+    ed.known = new Set(m.pages.map(p => p.img));
     const by = {}; m.pages.forEach(p => by[p.img] = p);
     const c = m.committed;
     if (c && c.docs && c.docs.length && c.docs.every(d => Array.isArray(d.plan))) {
@@ -1564,7 +1667,10 @@ function viewEditor() {
     const [stLbl, stCls] = STATE[m.state] || [m.state, "none"];
     const sent = m.committed ? ` · gesendet ${fmtClock(m.committed.ts)}: ` + m.committed.docs.map(d => "„" + esc(d.title || "?") + "“ (" + d.pages + ")" + ((d.tags || []).length ? " ⚠ " + esc(d.tags.join(",")) : "") + (d.error ? " ✖ " + esc(d.error) : "")).join(", ") : "";
     const head = `<div class="card" style="margin-bottom:14px">
-      <div class="section-title" style="margin:0 0 6px"><h3 style="margin:0">Arbeitsmappe ${esc(m.id)}</h3><div class="spacer"></div><span class="badge ${stCls}">${esc(stLbl)}</span></div>
+      <div class="section-title" style="margin:0 0 6px"><h3 style="margin:0">Arbeitsmappe ${esc(m.id)}</h3><div class="spacer"></div>
+        <button class="small ${ed.view === "split" ? "primary" : ""}" data-ed="view-split" title="Seitenleiste links, große Seite rechts">Vorschau</button>
+        <button class="small ${ed.view === "grid" ? "primary" : ""}" data-ed="view-grid" title="alle Seiten als Kacheln">Raster</button>
+        <span class="badge ${stCls}">${esc(stLbl)}</span></div>
       <div class="sub">Herkunft: <b>${esc(m.origin)}</b> · ${m.sources.map(s => esc(s.name) + " (" + s.pages + ")").join(" + ")} · ${m.pages.length} Seiten${deleted ? ` · <b>${deleted} entfernt</b>` : ""}${sent}${m.error ? ` · <span class="badge broken">${esc(m.error)}</span>` : ""}</div>
       ${m.state === "committed" ? `<div class="sub">Erneutes Senden legt <b>neue</b> Dokumente in Paperless an (die alten dort ggf. löschen).${ed.paperlessUrl ? ` <a href="${esc(ed.paperlessUrl)}/documents?sort=added&reverse=1" target="_blank">Paperless öffnen ↗</a>` : ""}</div>` : ""}
       ${ed.processing ? `<div class="sub">⏳ ${esc(ed.processing.progress || "läuft")} …</div>` : ""}
@@ -1572,6 +1678,7 @@ function viewEditor() {
       <div class="actions" style="margin-top:10px;align-items:center">
         <button data-ed="analyze" ${locked ? "disabled" : ""} title="Ausrichtung per Apple Vision, Reihenfolge per Seitenzahlen, Dokumentgrenzen per LLM – nur ein Vorschlag, nichts wird verändert">🤖 KI-Vorschlag</button>
         <button data-ed="apply" ${locked || !ed.analysis ? "disabled" : ""} title="Vorschlag komplett in den Seitenplan übernehmen (Reihenfolge, Drehung, Teilung, Leerseiten raus)">Vorschlag übernehmen</button>
+        <button data-ed="add" ${locked ? "disabled" : ""} title="weitere Dateien aus Eingang/Duplex/Stapel/Archiv in diese Mappe aufnehmen">＋ Dateien</button>
         <span class="muted">·</span>
         <span class="muted">${ed.sel.size} markiert:</span>
         <button class="small" data-ed="rot180" ${ed.sel.size ? "" : "disabled"}>180°</button>
@@ -1590,19 +1697,23 @@ function viewEditor() {
         <button class="primary" data-ed="commit" ${locked || !pages.length ? "disabled" : ""}>An Paperless senden</button>
         <button class="danger" data-ed="discard" ${locked ? "disabled" : ""}>Verwerfen</button>
       </div>
-      <div class="sub" style="margin-top:8px">Ziehen zum Sortieren (auch in ein anderes Dokument), Klick aufs Bild = große Vorschau, ✂ = ab dieser Seite ein neues Dokument.</div>
+      <div class="sub" style="margin-top:8px">${ed.view === "split"
+        ? "Klick auf eine Seite links zeigt sie rechts groß (Strg+Mausrad / Doppelklick = Zoom, ←/→ = blättern). Ziehen zum Sortieren, auch in ein anderes Dokument; ✂ = ab dieser Seite ein neues Dokument."
+        : "Ziehen zum Sortieren (auch in ein anderes Dokument), Klick aufs Bild = große Ansicht, ✂ = ab dieser Seite ein neues Dokument."}</div>
     </div>`;
+    const compact = ed.view === "split";
+    if (compact && !pageOf(ed.cur)) ed.cur = pages.length ? pages[0].img : null;
     let globalPos = 0;
     const groups = ed.docs.map((d, di) => {
       const cards = d.pages.map((p, pi) => `
-        <div class="pg ${ed.sel.has(p.img) ? "sel" : ""}" draggable="true" data-img="${p.img}">
-          <div class="thumbwrap" data-pv="${p.img}"><img src="${base}/thumbs/${p.img}" style="${rotStyle(p.rotate)}" alt="" loading="lazy"></div>
+        <div class="pg ${ed.sel.has(p.img) ? "sel" : ""} ${compact && ed.cur === p.img ? "cur" : ""} ${compact ? "compact" : ""}" draggable="true" data-img="${p.img}">
+          <div class="thumbwrap" data-cur="${p.img}" title="groß anzeigen"><img src="${base}/thumbs/${p.img}" style="${rotStyle(p.rotate)}" alt="" loading="lazy"></div>
           <div class="cap" title="${esc(p.src)} Seite ${p.page + 1}">${pi + 1} · ${esc(p.src)} S.${p.page + 1}${p.rotate ? " · " + p.rotate + "°" : ""}</div>
           ${suggestion(p, di, pi, ++globalPos)}
           <div class="acts">
             <input type="checkbox" data-sel="${p.img}" ${ed.sel.has(p.img) ? "checked" : ""} style="width:auto" title="markieren">
-            <button class="small" data-pg="left" data-img="${p.img}" ${pi === 0 ? "disabled" : ""} title="eine Position nach vorn">◀</button>
-            <button class="small" data-pg="right" data-img="${p.img}" ${pi === d.pages.length - 1 ? "disabled" : ""} title="eine Position nach hinten">▶</button>
+            <button class="small" data-pg="left" data-img="${p.img}" ${pi === 0 ? "disabled" : ""} title="eine Position nach vorn">${compact ? "▲" : "◀"}</button>
+            <button class="small" data-pg="right" data-img="${p.img}" ${pi === d.pages.length - 1 ? "disabled" : ""} title="eine Position nach hinten">${compact ? "▼" : "▶"}</button>
             <button class="small" data-pg="rotl" data-img="${p.img}" title="90° links">↶</button>
             <button class="small" data-pg="rotr" data-img="${p.img}" title="90° rechts">↷</button>
             <button class="small" data-pg="split" data-img="${p.img}" ${pi === 0 ? "disabled" : ""} title="ab hier neues Dokument">✂</button>
@@ -1611,28 +1722,107 @@ function viewEditor() {
         </div>`).join("");
       return `<div class="docgroup" data-doc="${di}">
         <div class="actions" style="align-items:center;margin-bottom:8px"><b>Dokument ${di + 1}</b><span class="muted">${d.pages.length} Seiten</span>
-          <input type="text" data-title="${di}" value="${esc(d.title)}" placeholder="Titel (leer = KI-Vorschlag beim Senden)" style="flex:1;min-width:220px">
+          <input type="text" data-title="${di}" value="${esc(d.title)}" placeholder="${compact ? "Titel (leer = KI)" : "Titel (leer = KI-Vorschlag beim Senden)"}" style="flex:1;min-width:${compact ? 90 : 220}px">
           ${di > 0 ? `<button class="small" data-join="${di}" title="mit dem vorherigen Dokument zusammenlegen">⇡ zusammenlegen</button>` : ""}
           ${ed.docs.length > 1 && !d.pages.length ? `<button class="small" data-dropdoc="${di}">leeres Dokument entfernen</button>` : ""}</div>
-        <div class="pgrid">${cards || '<div class="muted" style="padding:8px">leer – Seiten hierher ziehen</div>'}</div></div>`;
+        <div class="pgrid ${compact ? "vertical" : ""}">${cards || '<div class="muted" style="padding:8px">leer – Seiten hierher ziehen</div>'}</div></div>`;
     }).join("");
-    $("#edBody").innerHTML = head + groups;
+    if (compact) {
+      $("#edBody").innerHTML = head + `<div class="edsplit"><div class="edside" id="edSide">${groups}</div>${viewer()}</div>`;
+    } else {
+      $("#edBody").innerHTML = head + groups;
+    }
     bind();
+    if (compact) {
+      applyZoom();
+      const sc = ed.keepScroll; ed.keepScroll = null;
+      const side = $("#edSide");
+      if (sc && side) side.scrollTop = sc.side;
+      else { const c = $("#edSide .pg.cur"); if (c) c.scrollIntoView({ block: "nearest" }); }
+    }
   }
 
-  function rotate(imgs, delta) { snap(); imgs.forEach(img => { const p = pageOf(img); if (p) p.rotate = ((p.rotate || 0) + delta + 360) % 360; }); render(); }
-  function removePages(imgs) { snap(); ed.docs.forEach(d => d.pages = d.pages.filter(p => !imgs.includes(p.img))); imgs.forEach(i => ed.sel.delete(i)); render(); }
+  // --- Viewer (rechte Spalte der geteilten Ansicht) ---
+  function viewer() {
+    const list = allPages();
+    if (!list.length || !ed.cur) return `<div class="edview card"><div class="muted" style="padding:40px;text-align:center">keine Seiten</div></div>`;
+    const p = pageOf(ed.cur), f = find(ed.cur), idx = list.findIndex(x => x.img === ed.cur);
+    const zb = (v, lbl) => `<button class="small ${String(ed.zoom) === String(v) ? "primary" : ""}" data-zoom="${v}">${lbl}</button>`;
+    return `<div class="edview">
+      <div class="actions" style="align-items:center;margin-bottom:8px">
+        <button class="small" data-ed="prev" ${idx <= 0 ? "disabled" : ""} title="vorherige Seite (←)">◀</button>
+        <button class="small" data-ed="next" ${idx >= list.length - 1 ? "disabled" : ""} title="nächste Seite (→)">▶</button>
+        <b>Dokument ${f.di + 1}, Seite ${f.pi + 1}</b>
+        <span class="muted">${esc(p.src)} S.${p.page + 1}${p.rotate ? " · " + p.rotate + "°" : ""} · ${idx + 1}/${list.length}</span>
+        <div class="spacer"></div>
+        ${zb("fit", "Einpassen")}${zb("width", "Breite")}${zb(100, "100 %")}${zb(150, "150 %")}${zb(200, "200 %")}
+        <button class="small" data-zoom="-" title="kleiner (−)">−</button><span class="muted" id="edZoomLbl" style="min-width:48px;text-align:center"></span><button class="small" data-zoom="+" title="größer (+)">+</button>
+        <span class="muted">·</span>
+        <button class="small" data-pg="rotl" data-img="${p.img}" title="90° links">↶</button>
+        <button class="small" data-pg="rotr" data-img="${p.img}" title="90° rechts">↷</button>
+        <button class="small" data-pg="split" data-img="${p.img}" ${f.pi === 0 ? "disabled" : ""} title="ab hier neues Dokument">✂</button>
+        <button class="small danger" data-pg="del" data-img="${p.img}" title="Seite entfernen">✕</button>
+      </div>
+      <div class="edcanvas" id="edCanvas" title="Strg+Mausrad = Zoom · Doppelklick = Einpassen/100 %">
+        <div class="edrot" id="edRot"><img id="edImg" src="${base}/preview/${p.img}" alt="" draggable="false"></div>
+      </div>
+    </div>`;
+  }
+
+  // Zoom: fit = ganze Seite sichtbar, width = Seitenbreite, Zahl = Prozent der Papiergröße
+  // (Seitenmaße in pt aus dem Manifest, 96 dpi). Rotation läuft über den .edrot-Rahmen, der die
+  // GEDREHTEN Maße bekommt, damit Scrollen die ganze Seite abdeckt (kein scale()-Trick mehr).
+  function applyZoom() {
+    const im = $("#edImg"), cv = $("#edCanvas"), box = $("#edRot"), p = pageOf(ed.cur);
+    if (!im || !cv || !box || !p) return;
+    if (!im.complete || !im.naturalWidth) { im.onload = applyZoom; return; }
+    const r = p.rotate || 0, swap = r === 90 || r === 270;
+    const nw = im.naturalWidth, nh = im.naturalHeight;
+    const bw = swap ? nh : nw, bh = swap ? nw : nh;                 // gedrehte Box in Bildpixeln
+    const paperW = (swap ? (p.h || 842) : (p.w || 595)) * 96 / 72;  // Papierbreite in CSS-px bei 100 %
+    const cw = cv.clientWidth - 16, ch = cv.clientHeight - 16;
+    let scale;
+    if (ed.zoom === "fit") scale = Math.min(cw / bw, ch / bh);
+    else if (ed.zoom === "width") scale = cw / bw;
+    else scale = (ed.zoom / 100) * paperW / bw;
+    const w = Math.max(1, Math.round(nw * scale)), h = Math.max(1, Math.round(nh * scale));
+    box.style.width = (swap ? h : w) + "px"; box.style.height = (swap ? w : h) + "px";
+    im.style.width = w + "px"; im.style.height = h + "px";
+    im.style.transform = `translate(-50%,-50%) rotate(${r}deg)`;
+    ed.zoomEff = Math.round(scale * bw / paperW * 100);
+    const lbl = $("#edZoomLbl"); if (lbl) lbl.textContent = ed.zoomEff + " %";
+    $$("#edBody [data-zoom]").forEach(b => b.classList.toggle("primary", String(ed.zoom) === b.dataset.zoom));
+    const sc = ed.keepScroll;
+    if (sc) { cv.scrollLeft = sc.left; cv.scrollTop = sc.top; }
+  }
+  function setZoom(z) { ed.zoom = z; applyZoom(); }
+  function stepZoom(delta) { setZoom(Math.max(25, Math.min(400, Math.round((ed.zoomEff + delta) / 5) * 5))); }
+  function showPage(img) {
+    if (!pageOf(img)) return;
+    ed.cur = img; ed.keepScroll = null;
+    if (ed.view !== "split") { ed.view = "split"; try { localStorage.setItem("po.editor.view", "split"); } catch (e) { /* egal */ } }
+    render();
+  }
+  // render() nach einer Plan-Änderung (Drehen, Sortieren …), ohne dass Viewer/Leiste springen.
+  function rerender() {
+    const cv = $("#edCanvas"), side = $("#edSide");
+    ed.keepScroll = cv ? { left: cv.scrollLeft, top: cv.scrollTop, side: side ? side.scrollTop : 0 } : null;
+    render();
+  }
+
+  function rotate(imgs, delta) { snap(); imgs.forEach(img => { const p = pageOf(img); if (p) p.rotate = ((p.rotate || 0) + delta + 360) % 360; }); rerender(); }
+  function removePages(imgs) { snap(); ed.docs.forEach(d => d.pages = d.pages.filter(p => !imgs.includes(p.img))); imgs.forEach(i => ed.sel.delete(i)); rerender(); }
   function movePage(img, toDoc, toIdx) {
     const f = find(img); if (!f) return;
     snap();
     const [p] = ed.docs[f.di].pages.splice(f.pi, 1);
     if (f.di === toDoc && f.pi < toIdx) toIdx--;
     ed.docs[toDoc].pages.splice(Math.max(0, Math.min(toIdx, ed.docs[toDoc].pages.length)), 0, p);
-    render();
+    rerender();
   }
 
   function bind() {
-    $$("#edBody input[data-sel]").forEach(cb => cb.onchange = () => { cb.checked ? ed.sel.add(cb.dataset.sel) : ed.sel.delete(cb.dataset.sel); render(); });
+    $$("#edBody input[data-sel]").forEach(cb => cb.onchange = () => { cb.checked ? ed.sel.add(cb.dataset.sel) : ed.sel.delete(cb.dataset.sel); rerender(); });
     $$("#edBody input[data-title]").forEach(inp => inp.oninput = () => { ed.docs[Number(inp.dataset.title)].title = inp.value; });
     $$("#edBody button[data-pg]").forEach(btn => btn.onclick = () => {
       const img = btn.dataset.img, f = find(img); if (!f) return;
@@ -1642,12 +1832,21 @@ function viewEditor() {
         case "del": removePages([img]); break;
         case "left": movePage(img, f.di, f.pi - 1); break;
         case "right": movePage(img, f.di, f.pi + 2); break;
-        case "split": { snap(); const d = ed.docs[f.di]; const rest = d.pages.splice(f.pi); ed.docs.splice(f.di + 1, 0, { title: "", pages: rest }); render(); break; }
+        case "split": { snap(); const d = ed.docs[f.di]; const rest = d.pages.splice(f.pi); ed.docs.splice(f.di + 1, 0, { title: "", pages: rest }); rerender(); break; }
       }
     });
-    $$("#edBody button[data-join]").forEach(btn => btn.onclick = () => { const di = Number(btn.dataset.join); snap(); ed.docs[di - 1].pages.push(...ed.docs[di].pages); ed.docs.splice(di, 1); render(); });
-    $$("#edBody button[data-dropdoc]").forEach(btn => btn.onclick = () => { snap(); ed.docs.splice(Number(btn.dataset.dropdoc), 1); render(); });
-    $$("#edBody [data-pv]").forEach(el => el.onclick = () => openPreview(el.dataset.pv));
+    $$("#edBody button[data-join]").forEach(btn => btn.onclick = () => { const di = Number(btn.dataset.join); snap(); ed.docs[di - 1].pages.push(...ed.docs[di].pages); ed.docs.splice(di, 1); rerender(); });
+    $$("#edBody button[data-dropdoc]").forEach(btn => btn.onclick = () => { snap(); ed.docs.splice(Number(btn.dataset.dropdoc), 1); rerender(); });
+    $$("#edBody [data-cur]").forEach(el => el.onclick = () => showPage(el.dataset.cur));
+    $$("#edBody [data-zoom]").forEach(b => b.onclick = () => {
+      const z = b.dataset.zoom;
+      if (z === "+") stepZoom(10); else if (z === "-") stepZoom(-10); else setZoom(/^\d+$/.test(z) ? Number(z) : z);
+    });
+    const cv = $("#edCanvas");
+    if (cv) {
+      cv.addEventListener("wheel", ev => { if (!ev.ctrlKey) return; ev.preventDefault(); stepZoom(ev.deltaY < 0 ? 10 : -10); }, { passive: false });
+      cv.ondblclick = () => setZoom(ed.zoom === "fit" ? 100 : "fit");
+    }
     $$("#edBody button[data-ed]").forEach(btn => btn.onclick = () => toolbar(btn.dataset.ed));
     // Drag & drop: a page card onto another card (insert before) or onto a document's grid (append).
     $$("#edBody .pg").forEach(card => {
@@ -1676,13 +1875,64 @@ function viewEditor() {
         const pa = ed.docs[a.di].pages[a.pi], pb = ed.docs[b.di].pages[b.pi];
         ed.docs[a.di].pages[a.pi] = pb; ed.docs[b.di].pages[b.pi] = pa; render(); return;
       }
-      case "selall": allPages().forEach(p => ed.sel.add(p.img)); render(); return;
-      case "seleven": ed.sel.clear(); allPages().forEach((p, i) => { if (i % 2 === 1) ed.sel.add(p.img); }); render(); return;
-      case "selnone": ed.sel.clear(); render(); return;
-      case "undo": if (ed.undo.length) { ed.docs = JSON.parse(ed.undo.pop()); ed.sel.clear(); render(); } return;
+      case "selall": allPages().forEach(p => ed.sel.add(p.img)); rerender(); return;
+      case "seleven": ed.sel.clear(); allPages().forEach((p, i) => { if (i % 2 === 1) ed.sel.add(p.img); }); rerender(); return;
+      case "selnone": ed.sel.clear(); rerender(); return;
+      case "undo": if (ed.undo.length) { ed.docs = JSON.parse(ed.undo.pop()); ed.sel.clear(); rerender(); } return;
+      case "prev": case "next": {
+        const l = allPages(), i = l.findIndex(x => x.img === ed.cur), j = act === "prev" ? i - 1 : i + 1;
+        if (i >= 0 && j >= 0 && j < l.length) showPage(l[j].img);
+        return;
+      }
+      case "view-grid": case "view-split": {
+        ed.view = act === "view-grid" ? "grid" : "split";
+        try { localStorage.setItem("po.editor.view", ed.view); } catch (e) { /* egal */ }
+        render(); return;
+      }
+      case "add": {
+        let d; try { d = await api("/api/paperless-ocr"); } catch (err) { toast(err.message, true); return; }
+        const FOLD = { inbox: ["Eingang", "wird verschoben"], duplex: ["Duplex-Job", "wird verschoben"], stapel: ["Stapel-Job", "wird verschoben"],
+                       originals: ["Originale – Archiv", "Kopie"], errors: ["Fehler", "Kopie"] };
+        const jobs = (d.jobs && d.jobs.jobs) || {};
+        const groups = Object.keys(FOLD).map(k => {
+          const files = ((d.folders || {})[k] || []).filter(f => f.status === "ready");
+          if (!files.length) return "";
+          const jf = {}; ((jobs[k] || {}).files || []).forEach(f => jf[f.name] = f);
+          return `<div style="margin-bottom:12px"><div style="margin-bottom:4px"><b>${FOLD[k][0]}</b> <span class="muted">(${FOLD[k][1]})</span></div>
+            ${files.map(f => `<label style="display:flex;gap:8px;align-items:center;font-size:13px;padding:3px 0;cursor:pointer">
+              <input type="checkbox" data-addf="${esc(k)}" data-n="${esc(f.name)}" data-size="${f.size}" data-pages="${jf[f.name] && jf[f.name].pages > 0 ? jf[f.name].pages : -1}" style="width:auto">
+              <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
+              <span class="muted" style="white-space:nowrap">${fmtSize(f.size)} · ${fmtAge(f.age)}</span></label>`).join("")}</div>`;
+        }).join("");
+        $("#addFilesBody").innerHTML = groups || '<div class="muted">Keine fertigen Dateien in Eingang, Duplex, Stapel, Archiv oder Fehler.</div>';
+        const ov = $("#addFilesOverlay"); ov.classList.add("open");
+        const close = () => { ov.classList.remove("open"); $("#addFilesOk").onclick = $("#addFilesCancel").onclick = null; };
+        $("#addFilesCancel").onclick = close;
+        $("#addFilesOk").onclick = async () => {
+          const chosen = $$("#addFilesBody input[data-addf]:checked");
+          if (!chosen.length) { toast("Erst Dateien markieren", true); return; }
+          close();
+          const byFolder = {};
+          chosen.forEach(i => (byFolder[i.dataset.addf] = byFolder[i.dataset.addf] || []).push(i));
+          for (const from of Object.keys(byFolder)) {
+            const names = byFolder[from].map(i => i.dataset.n), expect = {};
+            byFolder[from].forEach(i => { if (Number(i.dataset.pages) > 0) expect[i.dataset.n] = [Number(i.dataset.size), Number(i.dataset.pages)]; });
+            const ok = await runWorkerCommand({
+              title: "Dateien werden hinzugefügt", files: names,
+              send: () => api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_add", id: wsid, from, files: names, expect } }),
+            });
+            if (!ok) break;
+          }
+          refresh();
+        };
+        return;
+      }
       case "analyze": {
-        try { const r = await api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_analyze", id: wsid } }); toast(r.msg || "ok"); }
-        catch (err) { toast(err.message, true); }
+        await runWorkerCommand({
+          title: "KI-Vorschlag wird erstellt", files: ed.ws.sources.map(s => s.name),
+          send: () => api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_analyze", id: wsid } }),
+          done: lc => { toast(lc.msg || "fertig"); refresh(); },
+        });
         return;
       }
       case "apply": {
@@ -1697,17 +1947,20 @@ function viewEditor() {
           docs[docs.length - 1].pages.push({ ...src, rotate: a.rotate || 0 });
         });
         ed.docs = docs.length ? docs : [{ title: "", pages: [] }];
-        ed.sel.clear(); render();
+        ed.sel.clear(); rerender();
         toast("Vorschlag übernommen – bitte prüfen, dann senden");
         return;
       }
-      case "reset": snap(); ed.docs = [{ title: "", pages: ed.ws.pages.map(p => ({ ...p, rotate: 0 })) }]; ed.sel.clear(); render(); return;
+      case "reset": snap(); ed.docs = [{ title: "", pages: ed.ws.pages.map(p => ({ ...p, rotate: 0 })) }]; ed.sel.clear(); rerender(); return;
       case "discard": {
         const m = ed.ws;
         const back = m.moved && m.state !== "committed" ? " Die Dateien gehen zurück in den Ordner „" + m.origin + "“." : "";
         if (!await confirmDlg("Arbeitsmappe verwerfen?", "Der Seitenplan wird gelöscht." + back, "Ja, verwerfen")) return;
-        try { const r = await api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_discard", id: wsid } }); toast(r.msg || "ok"); location.hash = "#paperless"; }
-        catch (err) { toast(err.message, true); }
+        await runWorkerCommand({
+          title: "Arbeitsmappe wird verworfen", files: m.sources.map(s => s.name),
+          send: () => api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_discard", id: wsid } }),
+          done: lc => { toast(lc.msg || "verworfen"); location.hash = "#paperless"; },
+        });
         return;
       }
       case "commit": {
@@ -1717,31 +1970,32 @@ function viewEditor() {
         const text = docs.map((d, i) => `Dokument ${i + 1}: ${d.title ? "„" + d.title + "“" : "(KI-Titel)"} – ${d.pages.length} Seiten`).join("\n")
           + `\n\n${rotated} gedreht · ${deleted} entfernt · OCR + Upload nach Paperless` + (ed.ws.state === "committed" ? "\n\nHinweis: wurde schon gesendet – es entstehen NEUE Dokumente." : "");
         if (!await confirmDlg("An Paperless senden?", text, "Senden")) return;
-        try { const r = await api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_commit", id: wsid, docs } }); toast(r.msg || "ok"); }
-        catch (err) { toast(err.message, true); }
+        await runWorkerCommand({
+          title: "Senden wird gestartet", files: ed.ws.sources.map(s => s.name), untilStarted: true,
+          send: () => api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_commit", id: wsid, docs } }),
+          done: lc => { toast(lc.msg || "gestartet"); refresh(); },
+        });
         return;
       }
     }
   }
 
-  // --- preview modal ---
-  function openPreview(img) {
-    ed.pv = img; showPreview();
-    $("#pvOverlay").classList.add("open");
-  }
-  function showPreview() {
-    const p = pageOf(ed.pv); if (!p) { $("#pvOverlay").classList.remove("open"); return; }
-    const f = find(ed.pv), list = allPages(), idx = list.findIndex(x => x.img === ed.pv);
-    $("#pvTitle").textContent = `Dokument ${f.di + 1}, Seite ${f.pi + 1} — ${p.src} S.${p.page + 1}${p.rotate ? " · " + p.rotate + "°" : ""}`;
-    const im = $("#pvImg"); im.src = `${base}/preview/${p.img}`; im.style.cssText = rotStyle(p.rotate);
-    $("#pvPrev").disabled = idx <= 0; $("#pvNext").disabled = idx >= list.length - 1;
-  }
-  $("#pvClose").onclick = () => $("#pvOverlay").classList.remove("open");
-  $("#pvOverlay").onclick = ev => { if (ev.target === $("#pvOverlay")) $("#pvOverlay").classList.remove("open"); };
-  $("#pvPrev").onclick = () => { const l = allPages(), i = l.findIndex(x => x.img === ed.pv); if (i > 0) { ed.pv = l[i - 1].img; showPreview(); } };
-  $("#pvNext").onclick = () => { const l = allPages(), i = l.findIndex(x => x.img === ed.pv); if (i < l.length - 1) { ed.pv = l[i + 1].img; showPreview(); } };
-  $("#pvRotL").onclick = () => { rotate([ed.pv], -90); showPreview(); };
-  $("#pvRotR").onclick = () => { rotate([ed.pv], 90); showPreview(); };
+  // --- Tastatur (nur solange der Editor offen ist; clearViewTimers räumt ab) ---
+  const onKey = ev => {
+    if (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName)) return;
+    if (document.querySelector(".overlay.open")) return;
+    if (ed.view !== "split") return;
+    if (ev.key === "ArrowLeft") { toolbar("prev"); ev.preventDefault(); }
+    else if (ev.key === "ArrowRight") { toolbar("next"); ev.preventDefault(); }
+    else if (ev.key === "+" || ev.key === "=") { stepZoom(10); ev.preventDefault(); }
+    else if (ev.key === "-") { stepZoom(-10); ev.preventDefault(); }
+    else if (ev.key === "0") { setZoom("fit"); ev.preventDefault(); }
+  };
+  document.addEventListener("keydown", onKey);
+  state.cleanup.push(() => document.removeEventListener("keydown", onKey));
+  const onResize = () => { if (ed.view === "split" && (ed.zoom === "fit" || ed.zoom === "width")) applyZoom(); };
+  window.addEventListener("resize", onResize);
+  state.cleanup.push(() => window.removeEventListener("resize", onResize));
 
   // --- load + poll (re-render only when the worker-side state changes, never mid-edit) ---
   async function refresh() {
@@ -1756,12 +2010,24 @@ function viewEditor() {
       if (ed.lastCmdTs !== null) toast((d.last_command.action || "") + ": " + (d.last_command.msg || ""), !d.last_command.ok);
       ed.lastCmdTs = d.last_command.ts;
     }
-    const key = d.ws.state + "|" + (d.ws.committed ? d.ws.committed.ts : 0) + "|" + (proc ? proc.progress : "") + "|" + (d.analysis ? d.analysis.ts : 0);
+    const key = d.ws.state + "|" + (d.ws.committed ? d.ws.committed.ts : 0) + "|" + (proc ? proc.progress : "") + "|" + (d.analysis ? d.analysis.ts : 0)
+              + "|" + d.ws.pages.length + "|" + (d.ws.updated || 0);
     const first = !ed.ws;
     const wasCommitting = ed.ws && ed.ws.state === "committing";
     ed.ws = d.ws; ed.processing = proc; ed.analysis = d.analysis || null;
     if (first) initDocs(d.ws);
     else if (wasCommitting && d.ws.state !== "committing") initDocs(d.ws);  // show what was actually sent
+    else {
+      // ws_add: Seiten, die die Mappe noch nie hatte, ans letzte Dokument anhängen und markieren.
+      const fresh = d.ws.pages.filter(p => !ed.known.has(p.img));
+      if (fresh.length) {
+        snap();
+        const last = ed.docs[ed.docs.length - 1] || (ed.docs[0] = { title: "", pages: [] });
+        fresh.forEach(p => { last.pages.push({ ...p, rotate: 0 }); ed.sel.add(p.img); ed.known.add(p.img); });
+        ed.cur = fresh[0].img; ed.keepScroll = null;
+        toast(fresh.length + " Seiten angehängt (Dokument " + ed.docs.length + ")");
+      }
+    }
     if (first || key !== ed.key) { ed.key = key; render(); }
   }
   every(5000, refresh);

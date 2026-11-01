@@ -133,11 +133,14 @@ COMMAND_FILE = WORK / "scanjob-command.json"
 # sources (moved out of the job folders so nothing auto-processes them, or copied from
 # originals/errors), per-page thumbnails + previews rendered here (the dashboard only serves
 # the JPEGs), a pages.json manifest, and the committed plan. Kept ARCHIVE_RETENTION_DAYS so a
-# scan can be re-edited and re-sent to paperless for a month.
+# scan can be re-edited and re-sent to paperless for a month. Previews are 1600 px wide
+# (A4 ~195 dpi) since 2026-11-01 so the editor's 200 % zoom stays legible; more files can be
+# added to an open workspace later (ws_add), so every source carries its own moved/origin/
+# archived flags (older manifests fall back to the workspace-level values).
 EDIT_DIR = WORK / "edit"
 WS_ID_RE = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{4}$")
 THUMB_W = int(os.environ.get("PAPERLESS_OCR_THUMB_WIDTH", "240"))
-PREVIEW_W = int(os.environ.get("PAPERLESS_OCR_PREVIEW_WIDTH", "1000"))
+PREVIEW_W = int(os.environ.get("PAPERLESS_OCR_PREVIEW_WIDTH", "1600"))
 # Per-page AI suggestion ("KI-Vorschlag") for an editor workspace: ONE Apple Vision pass per
 # page — its box ORDER gives the orientation (the text itself is orientation-independent at
 # 'accurate', measured 2026-11-01), the printed page numbers
@@ -1293,6 +1296,54 @@ def _render_page_jpegs(page, wsdir, img):
         (wsdir / sub / f"{img}.jpg").write_bytes(pix.tobytes("jpg", jpg_quality=70))
 
 
+def _ws_ingest(wsdir, srcs, move, origin, k0=0):
+    """Take source Paths into wsdir/source (move, or copy for originals/errors; a name that
+    already exists in the workspace gets ' (2)' appended) and render thumbnail + preview per
+    page with img ids p{k0+1}, p{k0+2}, … . Returns (sources, per_src_pages, taken) where
+    `taken` = [(src_path, dest_path)] for _ws_rollback. Shared by ws_open and ws_add."""
+    sources, per_src_pages, taken, k = [], {}, [], k0
+    for p in srcs:
+        dst = wsdir / "source" / p.name
+        if dst.exists():
+            dst = _unique_path(wsdir / "source", p.stem, p.suffix)
+        if move:
+            shutil.move(str(p), str(dst))
+        else:
+            shutil.copy2(str(p), str(dst))
+        taken.append((p, dst))
+        _settle_seen.pop(str(p), None)
+        _pages_cache.pop(str(p), None)
+    for _p, dst in taken:
+        d = _open_as_pdf(dst)
+        entries = []
+        for i, page in enumerate(d):
+            k += 1
+            img = f"p{k}"
+            _set_processing(_processing, progress=f"Vorschau {k - k0}")
+            _render_page_jpegs(page, wsdir, img)
+            entries.append({"img": img, "src": dst.name, "page": i, "rotate": 0,
+                            "w": int(page.rect.width), "h": int(page.rect.height)})
+        d.close()
+        per_src_pages[dst.name] = entries
+        sources.append({"name": dst.name, "pages": len(entries), "size": dst.stat().st_size,
+                        "role": None, "moved": bool(move), "origin": origin, "archived": False})
+    return sources, per_src_pages, taken
+
+
+def _ws_rollback(taken, move):
+    """Undo _ws_ingest's file step after a failure: moved files go back where they came
+    from (never lose a scan), copies are simply dropped."""
+    for p, dst in taken:
+        try:
+            if move:
+                if dst.exists() and not p.exists():
+                    shutil.move(str(dst), str(p))
+            else:
+                dst.unlink(missing_ok=True)
+        except OSError as e:
+            log(f"workspace rollback: could not restore {p.name}: {e}")
+
+
 def _ws_create(origin, srcs, move, roles=None):
     """Create a workspace from source Paths (in the user's order). `move` = take the files
     out of their folder (job folders/inbox); otherwise copy (originals/errors stay put).
@@ -1304,30 +1355,11 @@ def _ws_create(origin, srcs, move, roles=None):
         (wsdir / sub).mkdir(parents=True, exist_ok=True)
     _set_processing({"kind": "ws_open", "id": wsid, "since": time.time(),
                      "files": [p.name for p in srcs], "progress": "Dateien übernehmen"})
-    sources, per_src_pages, k = [], {}, 0
+    taken = []
     try:
-        for p in srcs:
-            dst = wsdir / "source" / p.name
-            if move:
-                shutil.move(str(p), str(dst))
-            else:
-                shutil.copy2(str(p), str(dst))
-            _settle_seen.pop(str(p), None)
-            _pages_cache.pop(str(p), None)
-        for si, p in enumerate(srcs):
-            d = _open_as_pdf(wsdir / "source" / p.name)
-            entries = []
-            for i, page in enumerate(d):
-                k += 1
-                img = f"p{k}"
-                _set_processing(_processing, progress=f"Vorschau {k}")
-                _render_page_jpegs(page, wsdir, img)
-                entries.append({"img": img, "src": p.name, "page": i, "rotate": 0,
-                                "w": int(page.rect.width), "h": int(page.rect.height)})
-            d.close()
-            per_src_pages[p.name] = entries
-            sources.append({"name": p.name, "pages": len(entries), "size": (wsdir / "source" / p.name).stat().st_size,
-                            "role": (roles or {}).get(p.name)})
+        sources, per_src_pages, taken = _ws_ingest(wsdir, srcs, move, origin)
+        for (p, _dst), s in zip(taken, sources):
+            s["role"] = (roles or {}).get(p.name)
         fronts = [s["name"] for s in sources if s["role"] == "front"]
         backs = [s["name"] for s in sources if s["role"] == "back"]
         if fronts and backs:
@@ -1353,12 +1385,36 @@ def _ws_create(origin, srcs, move, roles=None):
         return m
     except Exception:
         # Never lose the user's scans: put moved sources back, then drop the half-made workspace.
-        if move:
-            for p in srcs:
-                s = wsdir / "source" / p.name
-                if s.exists() and not p.exists():
-                    shutil.move(str(s), str(p))
+        _ws_rollback(taken, move)
         shutil.rmtree(wsdir, ignore_errors=True)
+        raise
+    finally:
+        _set_processing(None)
+
+
+def _ws_add(wsdir, m, origin, srcs, move):
+    """Append more source files (and their pages) to an existing workspace. Page ids
+    continue after the highest existing pN, so nothing in the editor's current plan moves;
+    the editor appends the new pages to its last document. Returns the number of pages
+    added. The manifest is only rewritten when everything succeeded."""
+    k0 = max((int(e["img"][1:]) for e in m["pages"]), default=0)
+    n0 = max((int(e.get("n", 0)) for e in m["pages"]), default=0)
+    _set_processing({"kind": "ws_add", "id": m["id"], "since": time.time(),
+                     "files": [p.name for p in srcs], "progress": "Dateien übernehmen"})
+    taken = []
+    try:
+        sources, per_src_pages, taken = _ws_ingest(wsdir, srcs, move, origin, k0)
+        new = [e for s in sources for e in per_src_pages[s["name"]]]
+        for n, e in enumerate(new, start=n0 + 1):
+            e["n"] = n
+        m["sources"].extend(sources)
+        m["pages"].extend(new)
+        m["updated"] = int(time.time())
+        _ws_write(wsdir, m)
+        log(f"workspace {m['id']}: added {', '.join(s['name'] for s in sources)} from {origin} ({len(new)} pages)")
+        return len(new)
+    except Exception:
+        _ws_rollback(taken, move)
         raise
     finally:
         _set_processing(None)
@@ -1407,14 +1463,19 @@ def _ws_commit(wsdir, m, docs):
                 log(f"workspace {wsid}: doc {di}/{len(docs)} ERROR: {e}")
             finally:
                 tmp.unlink(missing_ok=True)
-        if m.get("moved") and not m.get("archived"):
+        # Moved-in sources (job folders/inbox) get their copy in originals/ exactly once —
+        # per source, since ws_add can bring new moved files into an already-archived
+        # workspace. Old manifests without per-source flags fall back to the workspace-level ones.
+        for s in m["sources"]:
+            if not s.get("moved", m.get("moved")) or s.get("archived", m.get("archived")):
+                continue
             ARCHIVE.mkdir(parents=True, exist_ok=True)
-            for s in m["sources"]:
-                src = wsdir / "source" / s["name"]
-                dst = _unique_path(ARCHIVE, Path(s["name"]).stem, Path(s["name"]).suffix)
-                shutil.copy2(str(src), str(dst))
-                _handoff(dst)
-            m["archived"] = True
+            src = wsdir / "source" / s["name"]
+            dst = _unique_path(ARCHIVE, Path(s["name"]).stem, Path(s["name"]).suffix)
+            shutil.copy2(str(src), str(dst))
+            _handoff(dst)
+            s["archived"] = True
+        m["archived"] = True
         failed = [r for r in results if r["error"]]
         m["committed"] = {"ts": int(time.time()), "docs": results}
         m["state"] = "error" if failed else "committed"
@@ -1674,10 +1735,12 @@ def _ws_analyze(wsdir, m):
 def _ws_discard(wsdir, m):
     """Delete a workspace. Sources that were MOVED in and never sent go back where they
     came from (nothing is lost); copied or already-sent ones are simply dropped."""
-    if m.get("moved") and m["state"] not in ("committed",) and not m.get("archived"):
-        back = {"duplex": INBOX / DUPLEX_SUBDIR, "stapel": INBOX / BATCH_SUBDIR}.get(m["origin"], INBOX)
-        back.mkdir(parents=True, exist_ok=True)
+    if m["state"] not in ("committed",):
         for s in m["sources"]:
+            if not s.get("moved", m.get("moved")) or s.get("archived", m.get("archived")):
+                continue
+            back = {"duplex": INBOX / DUPLEX_SUBDIR, "stapel": INBOX / BATCH_SUBDIR}.get(s.get("origin", m["origin"]), INBOX)
+            back.mkdir(parents=True, exist_ok=True)
             src = wsdir / "source" / s["name"]
             if src.exists():
                 dst = _unique_path(back, Path(s["name"]).stem, Path(s["name"]).suffix)
@@ -1689,7 +1752,8 @@ def _ws_discard(wsdir, m):
 
 
 def _apply_ws_command(cmd):
-    """ws_open / ws_commit / ws_discard. Validation mirrors _apply_command; outcome -> _last_command."""
+    """ws_open / ws_add / ws_analyze / ws_commit / ws_discard. Validation mirrors _apply_command;
+    outcome -> _last_command."""
     global _last_command
     action = cmd.get("action")
 
@@ -1699,27 +1763,36 @@ def _apply_ws_command(cmd):
         if not ok:
             log(f"command {action} rejected: {msg}")
 
-    if action == "ws_open":
+    def resolve_sources():
+        """ws_open / ws_add: validate folder + file list against the folder AS IT IS NOW.
+        Returns (origin, move, names, files_by_name); raises ValueError with the user message."""
         origin = cmd.get("from")
         folders = {"duplex": (INBOX / DUPLEX_SUBDIR, True, True), "stapel": (INBOX / BATCH_SUBDIR, True, True),
                    "inbox": (INBOX, True, True), "originals": (ARCHIVE, False, False), "errors": (ERRORS, False, False)}
         if origin not in folders:
-            return done(False, f"unbekannter Ordner '{origin}'")
+            raise ValueError(f"unbekannter Ordner '{origin}'")
         fdir, move, need_settled = folders[origin]
         names = cmd.get("files")
         if not isinstance(names, list) or not names or len(set(names)) != len(names):
-            return done(False, "ungültige Dateiliste")
+            raise ValueError("ungültige Dateiliste")
         files = {f["name"]: f for f in _list_job_files(fdir)}
         expect = cmd.get("expect") or {}
         for n in names:
             f = files.get(n)
             if not f:
-                return done(False, f"'{n}' ist nicht (mehr) vorhanden")
+                raise ValueError(f"'{n}' ist nicht (mehr) vorhanden")
             if need_settled and not f["settled"]:
-                return done(False, f"'{n}' wird noch geschrieben – bitte warten")
+                raise ValueError(f"'{n}' wird noch geschrieben – bitte warten")
             e = expect.get(n)
             if e is not None and list(e) != [f["size"], f["pages"]]:
-                return done(False, f"'{n}' hat sich seit der Anzeige geändert – bitte erneut prüfen")
+                raise ValueError(f"'{n}' hat sich seit der Anzeige geändert – bitte erneut prüfen")
+        return origin, move, names, files
+
+    if action == "ws_open":
+        try:
+            origin, move, names, files = resolve_sources()
+        except ValueError as e:
+            return done(False, str(e))
         roles = None
         if origin == "duplex":
             roles = cmd.get("roles") if isinstance(cmd.get("roles"), dict) else None
@@ -1738,8 +1811,22 @@ def _apply_ws_command(cmd):
         return done(False, "Arbeitsmappe nicht gefunden")
     m = _ws_read(wsdir)
     if action == "ws_discard":
+        back = m["state"] != "committed" and any(
+            s.get("moved", m.get("moved")) and not s.get("archived", m.get("archived")) for s in m["sources"])
         _ws_discard(wsdir, m)
-        return done(True, "Arbeitsmappe verworfen" + (" – Dateien zurück im Ordner" if m.get("moved") and m["state"] != "committed" else ""))
+        return done(True, "Arbeitsmappe verworfen" + (" – Dateien zurück im Ordner" if back else ""))
+    if action == "ws_add":
+        if m["state"] == "committing":
+            return done(False, "wird gerade gesendet")
+        try:
+            origin, move, names, files = resolve_sources()
+        except ValueError as e:
+            return done(False, str(e))
+        try:
+            n = _ws_add(wsdir, m, origin, [files[x]["path"] for x in names], move)
+        except Exception as e:
+            return done(False, f"Dateien konnten nicht hinzugefügt werden: {e}")
+        return done(True, f"{n} Seiten hinzugefügt")
     if action == "ws_analyze":
         if m["state"] == "committing":
             return done(False, "wird gerade gesendet")
@@ -1981,13 +2068,28 @@ def retrofix_once():
                 log(f"retrofix: could not dead-letter doc {did}: {e2}")
 
 
-def _loop(fn, interval, name):
+def _sleep_or_command(interval):
+    """Sleep up to `interval` s, but return within ~1 s once the dashboard has written a
+    command file — editor/job actions are picked up right away instead of waiting for the
+    rest of the gateway tick (up to 10 s), and the single-thread command handling stays."""
+    end = time.monotonic() + interval
+    while True:
+        left = end - time.monotonic()
+        if left <= 0 or COMMAND_FILE.exists():
+            return
+        time.sleep(min(1.0, left))
+
+
+def _loop(fn, interval, name, wake_on_command=False):
     while True:
         try:
             fn()
         except Exception as e:
             log(f"{name} loop error: {e}\n{traceback.format_exc()}")
-        time.sleep(interval)
+        if wake_on_command:
+            _sleep_or_command(interval)
+        else:
+            time.sleep(interval)
 
 
 def main():
@@ -2010,7 +2112,7 @@ def main():
         f"archive-retention={ret} poll={POLL}s job-quiet={JOB_QUIET}s "
         f"duplex-auto={'on' if DUPLEX_AUTO else 'off'} page-check={'on' if PAGE_CHECK else 'off'}")
     _write_status()  # a fresh ts right away, so the dashboard never shows a stale worker
-    threading.Thread(target=_loop, args=(gateway_tick, GATEWAY_POLL, "gateway"), daemon=True).start()
+    threading.Thread(target=_loop, args=(gateway_tick, GATEWAY_POLL, "gateway", True), daemon=True).start()
     threading.Thread(target=_loop, args=(retrofix_once, POLL, "retrofix"), daemon=True).start()
     while True:
         time.sleep(60)

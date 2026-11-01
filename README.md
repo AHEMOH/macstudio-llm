@@ -526,11 +526,15 @@ shows it any time). Six views:
   show every file with page count and settle state, the worker's proposal,
   and buttons to confirm / reorder / pause; plus the last results with the
   page-number check. **Im Editor öffnen** opens a job or any file in the
-  **page editor** (`#editor/<id>`): thumbnails of every page, drag & drop
+  **page editor** (`#editor/<id>`): a vertical page list on the left (grouped
+  per document) next to a large, zoomable view of the selected page (Einpassen /
+  Breite / 100–200 %, Ctrl+wheel) — or the classic thumbnail grid; drag & drop
   reorder, rotate, delete, split into several documents with their own titles,
-  a per-page **KI-Vorschlag** (orientation via Apple Vision, order via printed
-  page numbers, document boundaries via `main-fast`) that can be applied in one
-  click, then send to paperless; workspaces stay editable for 30 days. See
+  **＋ Dateien** to pull more files into an open workspace, a per-page
+  **KI-Vorschlag** (orientation via Apple Vision, order via printed page
+  numbers, document boundaries via `main-fast`) that can be applied in one
+  click, then send to paperless; workspaces stay editable for 30 days. Every
+  worker command shows a progress dialog until it is done. See
   [INTEGRATIONS.md](INTEGRATIONS.md#paperless-ngx--apple-vision-searchable-pdf-ocr-install_paperless_ocr).
 - **Einstellungen** — every `macstudio.conf` key, grouped, with the same hints
   as the TUI; **Speichern** writes the conf, **Speichern & Anwenden** runs

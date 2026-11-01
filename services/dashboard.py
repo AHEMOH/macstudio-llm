@@ -999,7 +999,7 @@ def _po_write_command(cmd):
         os.replace(tmp, os.path.join(work, PO_COMMAND_NAME))
     except OSError as e:
         return (False, str(e))
-    return (True, "Befehl an den Worker übergeben (Antwort folgt in ~10 s)")
+    return (True, "Befehl übergeben")
 
 
 def _po_ws_path(wsid):
@@ -1043,30 +1043,43 @@ def po_ws_image(wsid, kind, img):
     return p if os.path.isfile(p) else None
 
 
+def _po_check_sources(body, cmd):
+    """Shape-check the source-file part of ws_open / ws_add (folder key, plain file names,
+    expect map) into `cmd`; the worker validates against the real folder state."""
+    src = str(body.get("from", ""))
+    files = body.get("files")
+    if src not in PO_WS_SOURCES:
+        return "unbekannter Ordner"
+    if not (isinstance(files, list) and files and all(
+            isinstance(n, str) and n and os.path.basename(n) == n and not n.startswith(".") for n in files)):
+        return "Dateiliste ungültig"
+    expect = body.get("expect") or {}
+    if not isinstance(expect, dict):
+        return "expect ungültig"
+    cmd.update({"from": src, "files": files, "expect": expect})
+    return None
+
+
 def po_ws_command(body):
     """Shape-check a page-editor command and hand it to the worker."""
     action = str(body.get("action", ""))
     cmd = {"version": 1, "ts": int(time.time()), "action": action}
     if action == "ws_open":
-        src = str(body.get("from", ""))
-        files = body.get("files")
-        if src not in PO_WS_SOURCES:
-            return (False, "unbekannter Ordner")
-        if not (isinstance(files, list) and files and all(
-                isinstance(n, str) and n and os.path.basename(n) == n and not n.startswith(".") for n in files)):
-            return (False, "Dateiliste ungültig")
-        expect = body.get("expect") or {}
-        if not isinstance(expect, dict):
-            return (False, "expect ungültig")
-        cmd.update({"from": src, "files": files, "expect": expect})
+        err = _po_check_sources(body, cmd)
+        if err:
+            return (False, err)
         roles = body.get("roles")
         if isinstance(roles, dict) and all(isinstance(k, str) and v in ("front", "back") for k, v in roles.items()):
             cmd["roles"] = roles
-    elif action in ("ws_commit", "ws_discard", "ws_analyze"):
+    elif action in ("ws_commit", "ws_discard", "ws_analyze", "ws_add"):
         wsid = str(body.get("id", ""))
         if not PO_WS_ID_RE.match(wsid):
             return (False, "ungültige Arbeitsmappe")
         cmd["id"] = wsid
+        if action == "ws_add":
+            err = _po_check_sources(body, cmd)
+            if err:
+                return (False, err)
         if action == "ws_commit":
             docs = body.get("docs")
             if not isinstance(docs, list) or not docs:
