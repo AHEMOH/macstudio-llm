@@ -525,7 +525,10 @@ shows it any time). Six views:
   included) and a *Stapel* card (several single-sided files = one document)
   show every file with page count and settle state, the worker's proposal,
   and buttons to confirm / reorder / pause; plus the last results with the
-  page-number check. See
+  page-number check. **Im Editor öffnen** opens a job or any file in the
+  **page editor** (`#editor/<id>`): thumbnails of every page, drag & drop
+  reorder, rotate, delete, split into several documents with their own titles,
+  then send to paperless; workspaces stay editable for 30 days. See
   [INTEGRATIONS.md](INTEGRATIONS.md#paperless-ngx--apple-vision-searchable-pdf-ocr-install_paperless_ocr).
 - **Einstellungen** — every `macstudio.conf` key, grouped, with the same hints
   as the TUI; **Speichern** writes the conf, **Speichern & Anwenden** runs

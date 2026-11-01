@@ -230,6 +230,22 @@
   .actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .muted { color: var(--muted); }
   .skeleton { color: var(--muted); padding: 30px 0; text-align: center; }
+
+  /* ---- Seiten-Editor (Paperless-OCR Arbeitsmappe) ---------------------------- */
+  .pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; min-height: 40px; }
+  .pg { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px; text-align: center; cursor: grab; }
+  .pg.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .pg.dragover { border-color: var(--warning); box-shadow: inset 3px 0 0 var(--warning); }
+  .docgroup.dragover { border-color: var(--warning); }
+  .pg .thumbwrap { height: 190px; display: flex; align-items: center; justify-content: center; overflow: hidden;
+                   background: #000; border-radius: 4px; cursor: zoom-in; }
+  .pg img { max-width: 100%; max-height: 100%; transition: transform .15s; }
+  .pg .cap { font-size: 11px; color: var(--muted); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pg .acts { display: flex; gap: 3px; justify-content: center; align-items: center; margin-top: 4px; flex-wrap: wrap; }
+  .pg .acts button.small { padding: 2px 6px; }
+  .pg .badge.sug { display: block; margin: 4px auto 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .docgroup { border: 1px dashed var(--border); border-radius: var(--radius); padding: 10px; margin-bottom: 14px; }
+  #pvImg { max-width: 100%; max-height: 70vh; display: block; margin: 0 auto; transition: transform .15s; }
 </style>
 </head>
 <body>
@@ -397,6 +413,22 @@
   </div>
 </div>
 
+<!-- Seiten-Vorschau (Editor) -->
+<div class="overlay" id="pvOverlay">
+  <div class="modal wide" style="max-width:1040px">
+    <h2 id="pvTitle"></h2>
+    <div style="overflow:auto;max-height:72vh;text-align:center"><img id="pvImg" alt=""></div>
+    <div class="row">
+      <button id="pvPrev">◀ vorherige</button>
+      <button id="pvRotL">↶ 90°</button>
+      <button id="pvRotR">↷ 90°</button>
+      <button id="pvNext">nächste ▶</button>
+      <div class="spacer"></div>
+      <button id="pvClose">Schließen</button>
+    </div>
+  </div>
+</div>
+
 <!-- HF-Token-Modal -->
 <div class="overlay" id="hfOverlay">
   <div class="modal">
@@ -552,7 +584,7 @@ $("#logoutBtn").onclick = async () => {
    Router & Polling-Verwaltung
    ========================================================================= */
 const VIEWS = { uebersicht: viewUebersicht, modelle: viewModelle, dienste: viewDienste,
-                paperless: viewPaperless, einstellungen: viewEinstellungen, logs: viewLogs };
+                paperless: viewPaperless, editor: viewEditor, einstellungen: viewEinstellungen, logs: viewLogs };
 
 function clearViewTimers() {
   state.timers.forEach(t => clearInterval(t));
@@ -1242,13 +1274,46 @@ function viewPaperless() {
     const hold = js.held
       ? `<button data-jobact="release" data-job="${job}">Freigeben</button>`
       : `<button data-jobact="hold" data-job="${job}" ${files.length ? "" : "disabled"} title="Automatik pausieren, z. B. während du nach einem Papierstau weiterscannst">Anhalten</button>`;
+    const editBtn = `<button data-jobact="ws_open" data-job="${job}" ${dis} title="Seiten ansehen, drehen, sortieren, teilen – dann senden">Im Editor öffnen</button>`;
     return `<div class="card" style="margin-bottom:14px">
       <div class="section-title" style="margin:0 0 4px"><h3 style="margin:0">${esc(JOBS[job])} <span class="muted">(${files.length})</span></h3>
         <div class="spacer"></div><span class="badge ${stateCls(js.state)}">${esc(STATE_LBL[js.state] || js.state)}</span></div>
       <div class="sub" style="margin-bottom:8px">${esc(js.reason || "")}</div>
       <div class="tablewrap"><table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>
-      <div class="actions" style="margin-top:10px;align-items:center"><span class="muted">${info}</span><div class="spacer"></div>${btns}${hold}</div>
+      <div class="actions" style="margin-top:10px;align-items:center"><span class="muted">${info}</span><div class="spacer"></div>${btns}${editBtn}${hold}</div>
     </div>`;
+  }
+
+  const WS_STATE = { ready: ["offen", "slot"], committing: ["wird gesendet", "part"], committed: ["gesendet", "ok"], error: ["Fehler", "broken"] };
+  function workspacesCard(list, locked) {
+    const rows = (list || []).map(w => {
+      const [lbl, cls] = WS_STATE[w.state] || [w.state, "none"];
+      const sent = w.committed ? w.committed.docs.map(d => "„" + esc(d.title || "?") + "“ (" + d.pages + ")").join(", ") : "";
+      return `<tr><td><a href="#editor/${esc(w.id)}">${esc(w.id)}</a></td><td>${esc(w.origin)}</td><td>${esc(w.files.join(" + "))}</td>
+        <td class="num">${w.page_count}</td><td><span class="badge ${cls}">${esc(lbl)}</span>${w.error ? ` <span class="muted">${esc(w.error)}</span>` : ""}${sent ? `<div class="muted" style="font-size:12px">${sent}</div>` : ""}</td>
+        <td class="num">${fmtAge(w.age)}</td>
+        <td><div class="actions"><a href="#editor/${esc(w.id)}"><button class="small">${w.state === "committed" ? "Erneut bearbeiten" : "Öffnen"}</button></a>
+          <button class="small danger" data-wsdel="${esc(w.id)}" ${locked ? "disabled" : ""}>Löschen</button></div></td></tr>`;
+    }).join("");
+    return `<div class="card" style="margin-bottom:14px">
+      <div class="section-title" style="margin:0 0 8px"><h3 style="margin:0">Arbeitsmappen – Seiten-Editor <span class="muted">(${(list || []).length})</span></h3></div>
+      <div class="sub" style="margin-bottom:8px">Scans ansehen, Seiten drehen / tauschen / löschen, in mehrere Dokumente teilen, dann an Paperless senden. Bleiben ${(cfgRetention || 30)} Tage zum erneuten Bearbeiten.</div>
+      <div class="tablewrap"><table><thead><tr><th>Mappe</th><th>Herkunft</th><th>Dateien</th><th>Seiten</th><th>Status</th><th>Alter</th><th>Aktionen</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="7" class="muted">keine – über „Im Editor öffnen“ bei einem Job oder einer Datei anlegen</td></tr>'}</tbody></table></div></div>`;
+  }
+  let cfgRetention = 30;
+
+  // After a ws_open command: wait until the worker lists the new workspace, then jump to it.
+  async function waitForWorkspace(names, since) {
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      let d; try { d = await api("/api/paperless-ocr"); } catch (e) { continue; }
+      const J = d.jobs || {};
+      const ws = (J.workspaces || []).find(w => w.created >= since - 5 && names.every(n => w.files.includes(n)));
+      if (ws) { location.hash = "#editor/" + ws.id; return; }
+      if (J.last_command && J.last_command.ts >= since && J.last_command.ok === false) { toast(J.last_command.msg, true); return; }
+    }
+    toast("Arbeitsmappe wurde nicht angelegt – siehe Worker-Log", true);
   }
 
   function resultsCard(res) {
@@ -1277,6 +1342,7 @@ function viewPaperless() {
       return;
     }
     const J = d.jobs || null, cfg = (J && J.config) || {};
+    cfgRetention = cfg.retention_days || 30;
     $("#poMeta").textContent = (d.configured ? "aktiv" : "wartet auf URL/Token")
       + " · Sprachen: " + (d.langs || "–") + " · Ruhezeit: " + d.stable_sec + " s"
       + (cfg.quiet_sec ? " · Sammelzeit: " + cfg.quiet_sec + " s" : "");
@@ -1321,19 +1387,47 @@ function viewPaperless() {
         const acts = [];
         if (key === "errors")    acts.push(`<button class="small" data-act="requeue" data-f="${esc(key)}" data-n="${esc(f.name)}">Erneut versuchen</button>`);
         if (key === "originals") acts.push(`<button class="small" data-act="requeue" data-f="${esc(key)}" data-n="${esc(f.name)}">Neu OCR</button>`);
+        acts.push(`<button class="small" data-wsopen="${esc(key)}" data-n="${esc(f.name)}" ${locked ? "disabled" : ""} title="diese Datei im Seiten-Editor öffnen">Im Editor</button>`);
         acts.push(`<button class="small" data-act="requeue_duplex" data-f="${esc(key)}" data-n="${esc(f.name)}" title="in den Duplex-Ordner verschieben">In Duplex</button>`);
         acts.push(`<button class="small" data-act="requeue_stapel" data-f="${esc(key)}" data-n="${esc(f.name)}" title="in den Stapel-Ordner verschieben">In Stapel</button>`);
         acts.push(`<button class="small danger" data-act="delete" data-f="${esc(key)}" data-n="${esc(f.name)}">Löschen</button>`);
-        return `<tr><td>${esc(f.name)}</td><td class="num">${fmtSize(f.size)}</td><td class="num">${fmtAge(f.age)}</td><td>${st}</td><td><div class="actions">${acts.join("")}</div></td></tr>`;
-      }).join("") : `<tr><td colspan="5" class="muted">leer</td></tr>`;
+        return `<tr><td><input type="checkbox" data-pick="${esc(key)}" data-n="${esc(f.name)}" style="width:auto"></td><td>${esc(f.name)}</td><td class="num">${fmtSize(f.size)}</td><td class="num">${fmtAge(f.age)}</td><td>${st}</td><td><div class="actions">${acts.join("")}</div></td></tr>`;
+      }).join("") : `<tr><td colspan="6" class="muted">leer</td></tr>`;
       return `<div class="card" style="margin-bottom:14px">
-        <div class="section-title" style="margin:0 0 8px"><h3 style="margin:0">${esc(title)} <span class="muted">(${files.length})</span></h3></div>
+        <div class="section-title" style="margin:0 0 8px"><h3 style="margin:0">${esc(title)} <span class="muted">(${files.length})</span></h3>
+          <div class="spacer"></div>${files.length > 1 ? `<button class="small" data-wsopenpicked="${esc(key)}" ${locked ? "disabled" : ""} title="die markierten Dateien zusammen als eine Arbeitsmappe öffnen">Markierte im Editor öffnen</button>` : ""}</div>
         <div class="tablewrap"><table>
-          <thead><tr><th>Datei</th><th>Größe</th><th>Alter</th><th>Status</th><th>Aktionen</th></tr></thead>
+          <thead><tr><th></th><th>Datei</th><th>Größe</th><th>Alter</th><th>Status</th><th>Aktionen</th></tr></thead>
           <tbody>${rows}</tbody></table></div></div>`;
     }).join("");
 
-    $("#poBody").innerHTML = smbCard + statusCard + jobCards + resultsCard(J && J.last_results) + folderCards;
+    $("#poBody").innerHTML = smbCard + statusCard + jobCards + workspacesCard(J && J.workspaces, locked) + resultsCard(J && J.last_results) + folderCards;
+
+    // --- editor: open a workspace from a folder (single file, or the picked ones) ---
+    const openWs = async (from, names, roles) => {
+      const since = Math.floor(Date.now() / 1000);
+      const folderFiles = (from === "duplex" || from === "stapel")
+        ? (((lastData.jobs || {}).jobs || {})[from] || {}).files || [] : [];
+      const expect = {}; folderFiles.forEach(f => { if (names.includes(f.name)) expect[f.name] = [f.size, f.pages]; });
+      try {
+        const r = await api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_open", from, files: names, expect, roles } });
+        toast(r.msg || "ok");
+        await waitForWorkspace(names, since);
+      } catch (err) { toast(err.message, true); }
+    };
+    $$("#poBody button[data-wsopen]").forEach(btn => btn.onclick = () => openWs(btn.dataset.wsopen, [btn.dataset.n]));
+    $$("#poBody button[data-wsopenpicked]").forEach(btn => btn.onclick = () => {
+      const key = btn.dataset.wsopenpicked;
+      const names = $$(`#poBody input[data-pick="${key}"]:checked`).map(i => i.dataset.n);
+      if (!names.length) { toast("Erst Dateien markieren (Häkchen links)", true); return; }
+      openWs(key, names);
+    });
+    $$("#poBody button[data-wsdel]").forEach(btn => btn.onclick = async () => {
+      const id = btn.dataset.wsdel;
+      if (!await confirmDlg("Arbeitsmappe löschen?", "„" + id + "“ wird gelöscht. Noch nicht gesendete Dateien gehen zurück in ihren Ordner.", "Ja, löschen")) return;
+      try { const r = await api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_discard", id } }); toast(r.msg || "ok"); }
+      catch (err) { toast(err.message, true); }
+    });
 
     // --- folder file actions (delete / requeue*) ---
     $$("#poBody button[data-act]").forEach(btn => {
@@ -1368,6 +1462,17 @@ function viewPaperless() {
       const pagesOf = n => (byName[n] && byName[n].pages > 0) ? byName[n].pages : 0;
       const body = { job, action: act, expect };
       let title = "", text = "", yes = "";
+      if (act === "ws_open") {
+        if (!e.names.length) { toast("Keine Dateien", true); return; }
+        const since = Math.floor(Date.now() / 1000);
+        try {
+          const r = await api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_open", from: job, files: e.names.slice(), expect, roles: job === "duplex" ? e.roles : undefined } });
+          toast(r.msg || "ok");
+          if (edit[job]) edit[job].dirty = false;
+          await waitForWorkspace(e.names.slice(), since);
+        } catch (err) { toast(err.message, true); }
+        return;
+      }
       if (act === "merge") {
         body.fronts = e.names.filter(n => e.roles[n] !== "back");
         body.backs  = e.names.filter(n => e.roles[n] === "back");
@@ -1405,6 +1510,221 @@ function viewPaperless() {
 
   async function poRefresh() { try { render(await api("/api/paperless-ocr")); } catch (e) { /* leer */ } }
   every(5000, poRefresh);
+}
+
+/* =========================================================================
+   Ansicht: Seiten-Editor (#editor/<id>) — Arbeitsmappe einer Paperless-OCR-Quelle.
+   Alles passiert client-seitig im Seitenplan; erst "An Paperless senden" schickt den
+   Plan (Reihenfolge, Drehung, Teilung, Titel) als ws_commit an den Worker.
+   ========================================================================= */
+function viewEditor() {
+  const wsid = (location.hash.split("/")[1] || "").trim();
+  $("#view").innerHTML = `
+    <div class="section-title"><h2>Seiten-Editor</h2><div class="spacer"></div><a href="#paperless">← zurück zu Paperless-OCR</a></div>
+    <div id="edBody" class="skeleton">Lade…</div>`;
+  if (!/^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$/.test(wsid)) { $("#edBody").innerHTML = `<div class="card">Ungültige Arbeitsmappe.</div>`; return; }
+
+  const base = "/api/paperless-ocr/ws/" + encodeURIComponent(wsid);
+  const ed = { ws: null, docs: [], sel: new Set(), undo: [], drag: null, processing: null, key: "", lastCmdTs: null, paperlessUrl: "", pv: null };
+  const STATE = { ready: ["offen", "slot"], committing: ["wird gesendet…", "part"], committed: ["gesendet", "ok"], error: ["Fehler", "broken"] };
+  const rotStyle = r => (r === 90 || r === 270) ? `transform:rotate(${r}deg) scale(.76)` : `transform:rotate(${r}deg)`;
+  const fmtClock = ts => new Date(ts * 1000).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const allPages = () => ed.docs.flatMap(d => d.pages);
+  const snap = () => { ed.undo.push(JSON.stringify(ed.docs)); if (ed.undo.length > 60) ed.undo.shift(); };
+  const find = img => { for (let di = 0; di < ed.docs.length; di++) { const pi = ed.docs[di].pages.findIndex(p => p.img === img); if (pi >= 0) return { di, pi }; } return null; };
+  const pageOf = img => { const f = find(img); return f ? ed.docs[f.di].pages[f.pi] : null; };
+
+  function initDocs(m) {
+    const by = {}; m.pages.forEach(p => by[p.img] = p);
+    const c = m.committed;
+    if (c && c.docs && c.docs.length && c.docs.every(d => Array.isArray(d.plan))) {
+      ed.docs = c.docs.map(d => ({ title: d.title || "", pages: d.plan.filter(pg => by[pg.img]).map(pg => ({ ...by[pg.img], rotate: pg.rotate || 0 })) }));
+    } else {
+      ed.docs = [{ title: "", pages: m.pages.map(p => ({ ...p, rotate: 0 })) }];
+    }
+  }
+
+  function render() {
+    const m = ed.ws; if (!m) return;
+    const locked = m.state === "committing" || !!ed.processing;
+    const pages = allPages(), deleted = m.pages.length - pages.length;
+    const [stLbl, stCls] = STATE[m.state] || [m.state, "none"];
+    const sent = m.committed ? ` · gesendet ${fmtClock(m.committed.ts)}: ` + m.committed.docs.map(d => "„" + esc(d.title || "?") + "“ (" + d.pages + ")" + ((d.tags || []).length ? " ⚠ " + esc(d.tags.join(",")) : "") + (d.error ? " ✖ " + esc(d.error) : "")).join(", ") : "";
+    const head = `<div class="card" style="margin-bottom:14px">
+      <div class="section-title" style="margin:0 0 6px"><h3 style="margin:0">Arbeitsmappe ${esc(m.id)}</h3><div class="spacer"></div><span class="badge ${stCls}">${esc(stLbl)}</span></div>
+      <div class="sub">Herkunft: <b>${esc(m.origin)}</b> · ${m.sources.map(s => esc(s.name) + " (" + s.pages + ")").join(" + ")} · ${m.pages.length} Seiten${deleted ? ` · <b>${deleted} entfernt</b>` : ""}${sent}${m.error ? ` · <span class="badge broken">${esc(m.error)}</span>` : ""}</div>
+      ${m.state === "committed" ? `<div class="sub">Erneutes Senden legt <b>neue</b> Dokumente in Paperless an (die alten dort ggf. löschen).${ed.paperlessUrl ? ` <a href="${esc(ed.paperlessUrl)}/documents?sort=added&reverse=1" target="_blank">Paperless öffnen ↗</a>` : ""}</div>` : ""}
+      ${ed.processing ? `<div class="sub">⏳ ${esc(ed.processing.progress || "läuft")} …</div>` : ""}
+      <div class="actions" style="margin-top:10px;align-items:center">
+        <span class="muted">${ed.sel.size} markiert:</span>
+        <button class="small" data-ed="rot180" ${ed.sel.size ? "" : "disabled"}>180°</button>
+        <button class="small" data-ed="rotl" ${ed.sel.size ? "" : "disabled"}>↶ 90°</button>
+        <button class="small" data-ed="rotr" ${ed.sel.size ? "" : "disabled"}>↷ 90°</button>
+        <button class="small" data-ed="swap" ${ed.sel.size === 2 ? "" : "disabled"} title="genau zwei markierte Seiten vertauschen">Tauschen</button>
+        <button class="small danger" data-ed="del" ${ed.sel.size ? "" : "disabled"}>Entfernen</button>
+        <span class="muted">·</span>
+        <button class="small" data-ed="selall">Alle</button>
+        <button class="small" data-ed="seleven" title="jede 2. Seite (typisch: alle Rückseiten)">Gerade</button>
+        <button class="small" data-ed="selnone" ${ed.sel.size ? "" : "disabled"}>Keine</button>
+        <span class="muted">·</span>
+        <button class="small" data-ed="undo" ${ed.undo.length ? "" : "disabled"}>Rückgängig</button>
+        <button class="small" data-ed="reset" title="Seitenplan auf den Ausgangszustand zurücksetzen">Zurücksetzen</button>
+        <div class="spacer"></div>
+        <button class="primary" data-ed="commit" ${locked || !pages.length ? "disabled" : ""}>An Paperless senden</button>
+        <button class="danger" data-ed="discard" ${locked ? "disabled" : ""}>Verwerfen</button>
+      </div>
+      <div class="sub" style="margin-top:8px">Ziehen zum Sortieren (auch in ein anderes Dokument), Klick aufs Bild = große Vorschau, ✂ = ab dieser Seite ein neues Dokument.</div>
+    </div>`;
+    const groups = ed.docs.map((d, di) => {
+      const cards = d.pages.map((p, pi) => `
+        <div class="pg ${ed.sel.has(p.img) ? "sel" : ""}" draggable="true" data-img="${p.img}">
+          <div class="thumbwrap" data-pv="${p.img}"><img src="${base}/thumbs/${p.img}" style="${rotStyle(p.rotate)}" alt="" loading="lazy"></div>
+          <div class="cap" title="${esc(p.src)} Seite ${p.page + 1}">${pi + 1} · ${esc(p.src)} S.${p.page + 1}${p.rotate ? " · " + p.rotate + "°" : ""}</div>
+          <div class="acts">
+            <input type="checkbox" data-sel="${p.img}" ${ed.sel.has(p.img) ? "checked" : ""} style="width:auto" title="markieren">
+            <button class="small" data-pg="left" data-img="${p.img}" ${pi === 0 ? "disabled" : ""} title="eine Position nach vorn">◀</button>
+            <button class="small" data-pg="right" data-img="${p.img}" ${pi === d.pages.length - 1 ? "disabled" : ""} title="eine Position nach hinten">▶</button>
+            <button class="small" data-pg="rotl" data-img="${p.img}" title="90° links">↶</button>
+            <button class="small" data-pg="rotr" data-img="${p.img}" title="90° rechts">↷</button>
+            <button class="small" data-pg="split" data-img="${p.img}" ${pi === 0 ? "disabled" : ""} title="ab hier neues Dokument">✂</button>
+            <button class="small danger" data-pg="del" data-img="${p.img}" title="Seite entfernen">✕</button>
+          </div>
+        </div>`).join("");
+      return `<div class="docgroup" data-doc="${di}">
+        <div class="actions" style="align-items:center;margin-bottom:8px"><b>Dokument ${di + 1}</b><span class="muted">${d.pages.length} Seiten</span>
+          <input type="text" data-title="${di}" value="${esc(d.title)}" placeholder="Titel (leer = KI-Vorschlag beim Senden)" style="flex:1;min-width:220px">
+          ${di > 0 ? `<button class="small" data-join="${di}" title="mit dem vorherigen Dokument zusammenlegen">⇡ zusammenlegen</button>` : ""}
+          ${ed.docs.length > 1 && !d.pages.length ? `<button class="small" data-dropdoc="${di}">leeres Dokument entfernen</button>` : ""}</div>
+        <div class="pgrid">${cards || '<div class="muted" style="padding:8px">leer – Seiten hierher ziehen</div>'}</div></div>`;
+    }).join("");
+    $("#edBody").innerHTML = head + groups;
+    bind();
+  }
+
+  function rotate(imgs, delta) { snap(); imgs.forEach(img => { const p = pageOf(img); if (p) p.rotate = ((p.rotate || 0) + delta + 360) % 360; }); render(); }
+  function removePages(imgs) { snap(); ed.docs.forEach(d => d.pages = d.pages.filter(p => !imgs.includes(p.img))); imgs.forEach(i => ed.sel.delete(i)); render(); }
+  function movePage(img, toDoc, toIdx) {
+    const f = find(img); if (!f) return;
+    snap();
+    const [p] = ed.docs[f.di].pages.splice(f.pi, 1);
+    if (f.di === toDoc && f.pi < toIdx) toIdx--;
+    ed.docs[toDoc].pages.splice(Math.max(0, Math.min(toIdx, ed.docs[toDoc].pages.length)), 0, p);
+    render();
+  }
+
+  function bind() {
+    $$("#edBody input[data-sel]").forEach(cb => cb.onchange = () => { cb.checked ? ed.sel.add(cb.dataset.sel) : ed.sel.delete(cb.dataset.sel); render(); });
+    $$("#edBody input[data-title]").forEach(inp => inp.oninput = () => { ed.docs[Number(inp.dataset.title)].title = inp.value; });
+    $$("#edBody button[data-pg]").forEach(btn => btn.onclick = () => {
+      const img = btn.dataset.img, f = find(img); if (!f) return;
+      switch (btn.dataset.pg) {
+        case "rotl": rotate([img], -90); break;
+        case "rotr": rotate([img], 90); break;
+        case "del": removePages([img]); break;
+        case "left": movePage(img, f.di, f.pi - 1); break;
+        case "right": movePage(img, f.di, f.pi + 2); break;
+        case "split": { snap(); const d = ed.docs[f.di]; const rest = d.pages.splice(f.pi); ed.docs.splice(f.di + 1, 0, { title: "", pages: rest }); render(); break; }
+      }
+    });
+    $$("#edBody button[data-join]").forEach(btn => btn.onclick = () => { const di = Number(btn.dataset.join); snap(); ed.docs[di - 1].pages.push(...ed.docs[di].pages); ed.docs.splice(di, 1); render(); });
+    $$("#edBody button[data-dropdoc]").forEach(btn => btn.onclick = () => { snap(); ed.docs.splice(Number(btn.dataset.dropdoc), 1); render(); });
+    $$("#edBody [data-pv]").forEach(el => el.onclick = () => openPreview(el.dataset.pv));
+    $$("#edBody button[data-ed]").forEach(btn => btn.onclick = () => toolbar(btn.dataset.ed));
+    // Drag & drop: a page card onto another card (insert before) or onto a document's grid (append).
+    $$("#edBody .pg").forEach(card => {
+      card.ondragstart = ev => { ed.drag = card.dataset.img; ev.dataTransfer.effectAllowed = "move"; try { ev.dataTransfer.setData("text/plain", ed.drag); } catch (e) { /* egal */ } };
+      card.ondragover = ev => { ev.preventDefault(); card.classList.add("dragover"); };
+      card.ondragleave = () => card.classList.remove("dragover");
+      card.ondrop = ev => { ev.preventDefault(); ev.stopPropagation(); card.classList.remove("dragover"); const t = find(card.dataset.img); if (ed.drag && t && ed.drag !== card.dataset.img) movePage(ed.drag, t.di, t.pi); ed.drag = null; };
+    });
+    $$("#edBody .docgroup").forEach(g => {
+      g.ondragover = ev => { ev.preventDefault(); g.classList.add("dragover"); };
+      g.ondragleave = () => g.classList.remove("dragover");
+      g.ondrop = ev => { ev.preventDefault(); g.classList.remove("dragover"); const di = Number(g.dataset.doc); if (ed.drag) movePage(ed.drag, di, ed.docs[di].pages.length); ed.drag = null; };
+    });
+  }
+
+  async function toolbar(act) {
+    const sel = Array.from(ed.sel).filter(img => find(img));
+    switch (act) {
+      case "rot180": rotate(sel, 180); return;
+      case "rotl": rotate(sel, -90); return;
+      case "rotr": rotate(sel, 90); return;
+      case "del": removePages(sel); return;
+      case "swap": {
+        if (sel.length !== 2) return;
+        const a = find(sel[0]), b = find(sel[1]); snap();
+        const pa = ed.docs[a.di].pages[a.pi], pb = ed.docs[b.di].pages[b.pi];
+        ed.docs[a.di].pages[a.pi] = pb; ed.docs[b.di].pages[b.pi] = pa; render(); return;
+      }
+      case "selall": allPages().forEach(p => ed.sel.add(p.img)); render(); return;
+      case "seleven": ed.sel.clear(); allPages().forEach((p, i) => { if (i % 2 === 1) ed.sel.add(p.img); }); render(); return;
+      case "selnone": ed.sel.clear(); render(); return;
+      case "undo": if (ed.undo.length) { ed.docs = JSON.parse(ed.undo.pop()); ed.sel.clear(); render(); } return;
+      case "reset": snap(); ed.docs = [{ title: "", pages: ed.ws.pages.map(p => ({ ...p, rotate: 0 })) }]; ed.sel.clear(); render(); return;
+      case "discard": {
+        const m = ed.ws;
+        const back = m.moved && m.state !== "committed" ? " Die Dateien gehen zurück in den Ordner „" + m.origin + "“." : "";
+        if (!await confirmDlg("Arbeitsmappe verwerfen?", "Der Seitenplan wird gelöscht." + back, "Ja, verwerfen")) return;
+        try { const r = await api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_discard", id: wsid } }); toast(r.msg || "ok"); location.hash = "#paperless"; }
+        catch (err) { toast(err.message, true); }
+        return;
+      }
+      case "commit": {
+        const docs = ed.docs.filter(d => d.pages.length).map(d => ({ title: d.title.trim(), pages: d.pages.map(p => ({ img: p.img, rotate: p.rotate || 0 })) }));
+        if (!docs.length) return;
+        const rotated = allPages().filter(p => p.rotate).length, deleted = ed.ws.pages.length - allPages().length;
+        const text = docs.map((d, i) => `Dokument ${i + 1}: ${d.title ? "„" + d.title + "“" : "(KI-Titel)"} – ${d.pages.length} Seiten`).join("\n")
+          + `\n\n${rotated} gedreht · ${deleted} entfernt · OCR + Upload nach Paperless` + (ed.ws.state === "committed" ? "\n\nHinweis: wurde schon gesendet – es entstehen NEUE Dokumente." : "");
+        if (!await confirmDlg("An Paperless senden?", text, "Senden")) return;
+        try { const r = await api("/api/paperless-ocr/ws", { method: "POST", body: { action: "ws_commit", id: wsid, docs } }); toast(r.msg || "ok"); }
+        catch (err) { toast(err.message, true); }
+        return;
+      }
+    }
+  }
+
+  // --- preview modal ---
+  function openPreview(img) {
+    ed.pv = img; showPreview();
+    $("#pvOverlay").classList.add("open");
+  }
+  function showPreview() {
+    const p = pageOf(ed.pv); if (!p) { $("#pvOverlay").classList.remove("open"); return; }
+    const f = find(ed.pv), list = allPages(), idx = list.findIndex(x => x.img === ed.pv);
+    $("#pvTitle").textContent = `Dokument ${f.di + 1}, Seite ${f.pi + 1} — ${p.src} S.${p.page + 1}${p.rotate ? " · " + p.rotate + "°" : ""}`;
+    const im = $("#pvImg"); im.src = `${base}/preview/${p.img}`; im.style.cssText = rotStyle(p.rotate);
+    $("#pvPrev").disabled = idx <= 0; $("#pvNext").disabled = idx >= list.length - 1;
+  }
+  $("#pvClose").onclick = () => $("#pvOverlay").classList.remove("open");
+  $("#pvOverlay").onclick = ev => { if (ev.target === $("#pvOverlay")) $("#pvOverlay").classList.remove("open"); };
+  $("#pvPrev").onclick = () => { const l = allPages(), i = l.findIndex(x => x.img === ed.pv); if (i > 0) { ed.pv = l[i - 1].img; showPreview(); } };
+  $("#pvNext").onclick = () => { const l = allPages(), i = l.findIndex(x => x.img === ed.pv); if (i < l.length - 1) { ed.pv = l[i + 1].img; showPreview(); } };
+  $("#pvRotL").onclick = () => { rotate([ed.pv], -90); showPreview(); };
+  $("#pvRotR").onclick = () => { rotate([ed.pv], 90); showPreview(); };
+
+  // --- load + poll (re-render only when the worker-side state changes, never mid-edit) ---
+  async function refresh() {
+    let d;
+    try { d = await api(base); } catch (e) {
+      if (e.status === 404) { $("#edBody").innerHTML = `<div class="card">Arbeitsmappe nicht (mehr) vorhanden. <a href="#paperless">Zurück</a></div>`; clearViewTimers(); }
+      return;
+    }
+    ed.paperlessUrl = (d.paperless_url || "").replace(/\/+$/, "");
+    const proc = d.processing && d.processing.id === wsid ? d.processing : null;
+    if (d.last_command && d.last_command.job === "editor" && d.last_command.ts !== ed.lastCmdTs) {
+      if (ed.lastCmdTs !== null) toast((d.last_command.action || "") + ": " + (d.last_command.msg || ""), !d.last_command.ok);
+      ed.lastCmdTs = d.last_command.ts;
+    }
+    const key = d.ws.state + "|" + (d.ws.committed ? d.ws.committed.ts : 0) + "|" + (proc ? proc.progress : "");
+    const first = !ed.ws;
+    const wasCommitting = ed.ws && ed.ws.state === "committing";
+    ed.ws = d.ws; ed.processing = proc;
+    if (first) initDocs(d.ws);
+    else if (wasCommitting && d.ws.state !== "committing") initDocs(d.ws);  // show what was actually sent
+    if (first || key !== ed.key) { ed.key = key; render(); }
+  }
+  every(5000, refresh);
 }
 
 /* =========================================================================

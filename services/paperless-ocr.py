@@ -129,6 +129,15 @@ CHECK_TAG = os.environ.get("PAPERLESS_OCR_CHECK_TAG", "scan:check")
 BATCH_SUBDIR = os.environ.get("PAPERLESS_OCR_BATCH_SUBDIR", "stapel")
 STATUS_FILE = WORK / "scanjob-status.json"
 COMMAND_FILE = WORK / "scanjob-command.json"
+# Page editor "Arbeitsmappe": a workspace per opened job/file set under WORK/edit/<id>/ —
+# sources (moved out of the job folders so nothing auto-processes them, or copied from
+# originals/errors), per-page thumbnails + previews rendered here (the dashboard only serves
+# the JPEGs), a pages.json manifest, and the committed plan. Kept ARCHIVE_RETENTION_DAYS so a
+# scan can be re-edited and re-sent to paperless for a month.
+EDIT_DIR = WORK / "edit"
+WS_ID_RE = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{4}$")
+THUMB_W = int(os.environ.get("PAPERLESS_OCR_THUMB_WIDTH", "240"))
+PREVIEW_W = int(os.environ.get("PAPERLESS_OCR_PREVIEW_WIDTH", "1000"))
 # MOTD: a short status block at SSH login (held jobs, errors, last result) with a link into
 # the dashboard. Written as a flag file for motd-compose.sh, same mechanism the weekly
 # autoupdate uses for its "ACTION NEEDED" block.
@@ -719,6 +728,19 @@ def prune_archive():
         log(f"archive prune error: {e}")
     if removed:
         log(f"archive: pruned {removed} original(s) older than {ARCHIVE_RETENTION_DAYS} days")
+    # Editor workspaces follow the same window (pages.json mtime = last edit/commit).
+    pruned = 0
+    try:
+        if EDIT_DIR.exists():
+            for d in EDIT_DIR.iterdir():
+                mf = d / "pages.json"
+                if d.is_dir() and WS_ID_RE.match(d.name) and (not mf.exists() or mf.stat().st_mtime < cutoff):
+                    shutil.rmtree(d, ignore_errors=True)
+                    pruned += 1
+    except Exception as e:
+        log(f"workspace prune error: {e}")
+    if pruned:
+        log(f"editor: pruned {pruned} workspace(s) older than {ARCHIVE_RETENTION_DAYS} days")
 
 
 # ------------------------------------------------------------------- paperless client
@@ -892,16 +914,17 @@ def gateway_once():
             _set_processing(None)
 
 
-def _process_and_upload(src_pdf, title, use_vlm=False, force=False):
+def _process_and_upload(src_pdf, title, use_vlm=False, force=False, fixed_title=None):
     """Make `src_pdf` searchable, run the page-number check, upload with a short
-    descriptive title (tagged CHECK_TAG when the check found a problem).
+    descriptive title (tagged CHECK_TAG when the check found a problem). `fixed_title`
+    (editor) is used verbatim instead of asking the LLM.
     Returns (detail_str, name, check_dict_or_None)."""
     out = WORK / (Path(title).stem + ".ocr.pdf")
     try:
         mode, n = make_searchable(src_pdf, out, use_vlm=use_vlm, force=force)
         _assert_pagecount(src_pdf, out, mode)  # never upload a silently-truncated result
         check = _page_check(out) if PAGE_CHECK else None
-        name = _smart_name(out, Path(title).stem)
+        name = fixed_title or _smart_name(out, Path(title).stem)
         tags = None
         if check and not check["ok"]:
             tags = [_tag_id(CHECK_TAG)]
@@ -1206,9 +1229,300 @@ def _apply_command(cmd):
     return (job, jdir, {"kind": "concat", "order": [files[n]["path"] for n in order]})
 
 
+# ---------------------------------------------------------------- page editor (workspaces)
+def _ws_dir(wsid):
+    if not isinstance(wsid, str) or not WS_ID_RE.match(wsid):
+        return None
+    d = EDIT_DIR / wsid
+    return d if (d / "pages.json").is_file() else None
+
+
+def _ws_read(wsdir):
+    return json.loads((wsdir / "pages.json").read_text(encoding="utf-8"))
+
+
+def _ws_write(wsdir, manifest):
+    tmp = wsdir / "pages.json.tmp"
+    tmp.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, wsdir / "pages.json")
+
+
+def _ws_list():
+    """Summary of every workspace for the status file (newest first)."""
+    out = []
+    if not EDIT_DIR.exists():
+        return out
+    for d in EDIT_DIR.iterdir():
+        if not d.is_dir() or not WS_ID_RE.match(d.name):
+            continue
+        try:
+            m = _ws_read(d)
+        except Exception:
+            continue
+        out.append({"id": m["id"], "created": m["created"], "origin": m["origin"], "state": m["state"],
+                    "files": [s["name"] for s in m["sources"]], "page_count": len(m["pages"]),
+                    "title": m.get("title"), "committed": m.get("committed"), "error": m.get("error"),
+                    "age": int(time.time() - m["created"])})
+    out.sort(key=lambda w: w["created"], reverse=True)
+    return out
+
+
+def _render_page_jpegs(page, wsdir, img):
+    """Thumbnail + preview JPEG for one source page (page rotation already applied by
+    get_pixmap, so the editor shows the page as a viewer would)."""
+    w = max(1.0, page.rect.width)
+    for sub, width in (("thumbs", THUMB_W), ("preview", PREVIEW_W)):
+        s = width / w
+        pix = page.get_pixmap(matrix=fitz.Matrix(s, s), colorspace=fitz.csRGB, alpha=False)
+        (wsdir / sub / f"{img}.jpg").write_bytes(pix.tobytes("jpg", jpg_quality=70))
+
+
+def _ws_create(origin, srcs, move, roles=None):
+    """Create a workspace from source Paths (in the user's order). `move` = take the files
+    out of their folder (job folders/inbox); otherwise copy (originals/errors stay put).
+    Initial page order: the duplex interleave when `roles` splits fronts/backs, else the
+    plain concatenation. Returns the manifest."""
+    wsid = time.strftime("%Y%m%d-%H%M%S") + "-" + os.urandom(2).hex()
+    wsdir = EDIT_DIR / wsid
+    for sub in ("source", "thumbs", "preview"):
+        (wsdir / sub).mkdir(parents=True, exist_ok=True)
+    _set_processing({"kind": "ws_open", "id": wsid, "since": time.time(),
+                     "files": [p.name for p in srcs], "progress": "Dateien übernehmen"})
+    sources, per_src_pages, k = [], {}, 0
+    try:
+        for p in srcs:
+            dst = wsdir / "source" / p.name
+            if move:
+                shutil.move(str(p), str(dst))
+            else:
+                shutil.copy2(str(p), str(dst))
+            _settle_seen.pop(str(p), None)
+            _pages_cache.pop(str(p), None)
+        for si, p in enumerate(srcs):
+            d = _open_as_pdf(wsdir / "source" / p.name)
+            entries = []
+            for i, page in enumerate(d):
+                k += 1
+                img = f"p{k}"
+                _set_processing(_processing, progress=f"Vorschau {k}")
+                _render_page_jpegs(page, wsdir, img)
+                entries.append({"img": img, "src": p.name, "page": i, "rotate": 0,
+                                "w": int(page.rect.width), "h": int(page.rect.height)})
+            d.close()
+            per_src_pages[p.name] = entries
+            sources.append({"name": p.name, "pages": len(entries), "size": (wsdir / "source" / p.name).stat().st_size,
+                            "role": (roles or {}).get(p.name)})
+        fronts = [s["name"] for s in sources if s["role"] == "front"]
+        backs = [s["name"] for s in sources if s["role"] == "back"]
+        if fronts and backs:
+            f = [e for n in fronts for e in per_src_pages[n]]
+            b = [e for n in backs for e in per_src_pages[n]]
+            if DUPLEX_REVERSE:
+                b = b[::-1]
+            pages = []
+            for i in range(max(len(f), len(b))):
+                if i < len(f):
+                    pages.append(f[i])
+                if i < len(b):
+                    pages.append(b[i])
+        else:
+            pages = [e for s in sources for e in per_src_pages[s["name"]]]
+        for n, e in enumerate(pages, start=1):
+            e["n"] = n
+        m = {"version": 1, "id": wsid, "created": int(time.time()), "origin": origin, "moved": bool(move),
+             "state": "ready", "sources": sources, "pages": pages,
+             "title": Path(srcs[0].name).stem, "committed": None, "error": None}
+        _ws_write(wsdir, m)
+        log(f"workspace {wsid}: opened from {origin} ({', '.join(p.name for p in srcs)}, {len(pages)} pages)")
+        return m
+    except Exception:
+        # Never lose the user's scans: put moved sources back, then drop the half-made workspace.
+        if move:
+            for p in srcs:
+                s = wsdir / "source" / p.name
+                if s.exists() and not p.exists():
+                    shutil.move(str(s), str(p))
+        shutil.rmtree(wsdir, ignore_errors=True)
+        raise
+    finally:
+        _set_processing(None)
+
+
+def _ws_commit(wsdir, m, docs):
+    """Build one PDF per doc from the page plan (each page = source page + extra rotation),
+    OCR/check/upload each, archive moved sources to originals/, mark the workspace
+    committed (it stays for re-editing until the retention prune)."""
+    wsid = m["id"]
+    by_img = {e["img"]: e for e in m["pages"]}
+    opened = {}
+    results = []
+    m["state"], m["error"] = "committing", None
+    _ws_write(wsdir, m)
+    _set_processing({"kind": "ws_commit", "id": wsid, "since": time.time(),
+                     "files": [s["name"] for s in m["sources"]], "progress": "Zusammenbau"})
+    try:
+        for s in m["sources"]:
+            opened[s["name"]] = _open_as_pdf(wsdir / "source" / s["name"])
+        for di, doc in enumerate(docs, start=1):
+            out = fitz.open()
+            for pg in doc["pages"]:
+                e = by_img[pg["img"]]
+                out.insert_pdf(opened[e["src"]], from_page=e["page"], to_page=e["page"])
+                if pg.get("rotate"):
+                    np_ = out[-1]
+                    np_.set_rotation((np_.rotation + int(pg["rotate"])) % 360)
+            tmp = WORK / f"ws_{wsid}_doc{di}.pdf"
+            out.save(str(tmp))
+            out.close()
+            title = _safe_filename(doc.get("title") or "") or None
+            _set_processing(_processing, progress=f"Dokument {di}/{len(docs)}: OCR ({len(doc['pages'])} Seiten)")
+            try:
+                stems = " ".join(s["name"].lower() for s in m["sources"])
+                detail, name, check = _process_and_upload(tmp, title or m.get("title") or wsid, fixed_title=title,
+                                                          use_vlm="_vlm" in stems, force="_force" in stems)
+                results.append({"title": name, "pages": len(doc["pages"]), "detail": detail,
+                                "plan": doc["pages"], "page_check": check,
+                                "tags": [CHECK_TAG] if check and not check["ok"] else [], "error": None})
+                log(f"workspace {wsid}: doc {di}/{len(docs)} -> '{name}' {len(doc['pages'])} pages, {detail}")
+            except Exception as e:
+                results.append({"title": title, "pages": len(doc["pages"]), "plan": doc["pages"],
+                                "page_check": None, "tags": [], "error": str(e)})
+                log(f"workspace {wsid}: doc {di}/{len(docs)} ERROR: {e}")
+            finally:
+                tmp.unlink(missing_ok=True)
+        if m.get("moved") and not m.get("archived"):
+            ARCHIVE.mkdir(parents=True, exist_ok=True)
+            for s in m["sources"]:
+                src = wsdir / "source" / s["name"]
+                dst = _unique_path(ARCHIVE, Path(s["name"]).stem, Path(s["name"]).suffix)
+                shutil.copy2(str(src), str(dst))
+                _handoff(dst)
+            m["archived"] = True
+        failed = [r for r in results if r["error"]]
+        m["committed"] = {"ts": int(time.time()), "docs": results}
+        m["state"] = "error" if failed else "committed"
+        m["error"] = f"{len(failed)} von {len(results)} Dokument(en) fehlgeschlagen" if failed else None
+        _push_result({"ts": time.time(), "job": "editor", "origin": m["origin"], "files": [s["name"] for s in m["sources"]],
+                      "title": ", ".join(str(r["title"]) for r in results), "pages": sum(r["pages"] for r in results),
+                      "dropped_blank": [], "page_check": next((r["page_check"] for r in results if r["page_check"] and not r["page_check"]["ok"]), None),
+                      "tags": sorted({t for r in results for t in r["tags"]}), "error": m["error"]})
+    except Exception as e:
+        m["state"], m["error"] = "error", str(e)
+        log(f"workspace {wsid} commit ERROR: {e}")
+    finally:
+        for d in opened.values():
+            d.close()
+        _ws_write(wsdir, m)
+        _set_processing(None)
+
+
+def _ws_discard(wsdir, m):
+    """Delete a workspace. Sources that were MOVED in and never sent go back where they
+    came from (nothing is lost); copied or already-sent ones are simply dropped."""
+    if m.get("moved") and m["state"] not in ("committed",) and not m.get("archived"):
+        back = {"duplex": INBOX / DUPLEX_SUBDIR, "stapel": INBOX / BATCH_SUBDIR}.get(m["origin"], INBOX)
+        back.mkdir(parents=True, exist_ok=True)
+        for s in m["sources"]:
+            src = wsdir / "source" / s["name"]
+            if src.exists():
+                dst = _unique_path(back, Path(s["name"]).stem, Path(s["name"]).suffix)
+                shutil.move(str(src), str(dst))
+                os.utime(dst, None)
+                _handoff(dst)
+    shutil.rmtree(wsdir, ignore_errors=True)
+    log(f"workspace {m['id']}: discarded")
+
+
+def _apply_ws_command(cmd):
+    """ws_open / ws_commit / ws_discard. Validation mirrors _apply_command; outcome -> _last_command."""
+    global _last_command
+    action = cmd.get("action")
+
+    def done(ok, msg):
+        global _last_command
+        _last_command = {"ts": time.time(), "action": action, "job": "editor", "ok": ok, "msg": msg}
+        if not ok:
+            log(f"command {action} rejected: {msg}")
+
+    if action == "ws_open":
+        origin = cmd.get("from")
+        folders = {"duplex": (INBOX / DUPLEX_SUBDIR, True, True), "stapel": (INBOX / BATCH_SUBDIR, True, True),
+                   "inbox": (INBOX, True, True), "originals": (ARCHIVE, False, False), "errors": (ERRORS, False, False)}
+        if origin not in folders:
+            return done(False, f"unbekannter Ordner '{origin}'")
+        fdir, move, need_settled = folders[origin]
+        names = cmd.get("files")
+        if not isinstance(names, list) or not names or len(set(names)) != len(names):
+            return done(False, "ungültige Dateiliste")
+        files = {f["name"]: f for f in _list_job_files(fdir)}
+        expect = cmd.get("expect") or {}
+        for n in names:
+            f = files.get(n)
+            if not f:
+                return done(False, f"'{n}' ist nicht (mehr) vorhanden")
+            if need_settled and not f["settled"]:
+                return done(False, f"'{n}' wird noch geschrieben – bitte warten")
+            e = expect.get(n)
+            if e is not None and list(e) != [f["size"], f["pages"]]:
+                return done(False, f"'{n}' hat sich seit der Anzeige geändert – bitte erneut prüfen")
+        roles = None
+        if origin == "duplex":
+            roles = cmd.get("roles") if isinstance(cmd.get("roles"), dict) else None
+            if not roles:
+                k = _duplex_split([files[n]["pages"] for n in names])
+                if k:
+                    roles = {n: ("front" if i < k else "back") for i, n in enumerate(names)}
+        try:
+            m = _ws_create(origin, [files[n]["path"] for n in names], move, roles)
+        except Exception as e:
+            return done(False, f"Arbeitsmappe konnte nicht angelegt werden: {e}")
+        return done(True, f"Arbeitsmappe {m['id']} angelegt ({len(m['pages'])} Seiten)")
+
+    wsdir = _ws_dir(cmd.get("id"))
+    if not wsdir:
+        return done(False, "Arbeitsmappe nicht gefunden")
+    m = _ws_read(wsdir)
+    if action == "ws_discard":
+        _ws_discard(wsdir, m)
+        return done(True, "Arbeitsmappe verworfen" + (" – Dateien zurück im Ordner" if m.get("moved") and m["state"] != "committed" else ""))
+    if action != "ws_commit":
+        return done(False, f"unbekannte Aktion '{action}'")
+    if m["state"] == "committing":
+        return done(False, "wird gerade gesendet")
+    docs = cmd.get("docs")
+    imgs = {e["img"] for e in m["pages"]}
+    used = set()
+    if not isinstance(docs, list) or not docs:
+        return done(False, "kein Dokument angegeben")
+    for doc in docs:
+        pages = doc.get("pages") if isinstance(doc, dict) else None
+        if not isinstance(pages, list) or not pages:
+            return done(False, "ein Dokument hat keine Seiten")
+        for pg in pages:
+            img = pg.get("img") if isinstance(pg, dict) else None
+            if img not in imgs:
+                return done(False, f"unbekannte Seite '{img}'")
+            if img in used:
+                return done(False, f"Seite '{img}' doppelt verwendet")
+            used.add(img)
+            if pg.get("rotate", 0) not in (0, 90, 180, 270):
+                return done(False, "ungültige Drehung")
+    n_docs, n_pages = len(docs), len(used)
+    _last_command = {"ts": time.time(), "action": action, "job": "editor", "ok": True,
+                     "msg": f"Senden gestartet: {n_docs} Dokument(e), {n_pages} Seiten"}
+    _ws_commit(wsdir, m, docs)
+
+
 def jobs_once():
+    global _last_command
     cmd = _read_command()
-    if cmd:
+    if cmd and str(cmd.get("action", "")).startswith("ws_"):
+        try:
+            _apply_ws_command(cmd)
+        except Exception as e:
+            _last_command = {"ts": time.time(), "action": cmd.get("action"), "job": "editor", "ok": False, "msg": str(e)}
+            log(f"workspace command failed: {e}\n{traceback.format_exc()}")
+    elif cmd:
         todo = _apply_command(cmd)
         if todo:
             job, jdir, plan = todo
@@ -1246,7 +1560,7 @@ def _write_status():
                       "duplex_auto": DUPLEX_AUTO, "reverse": DUPLEX_REVERSE, "drop_blank_backs": DROP_BLANK_BACKS,
                       "page_check": PAGE_CHECK, "check_tag": CHECK_TAG,
                       "retention_days": ARCHIVE_RETENTION_DAYS},
-           "jobs": _job_states, "workspaces": [], "processing": _processing,
+           "jobs": _job_states, "workspaces": _ws_list(), "processing": _processing,
            "last_command": _last_command, "last_results": _last_results,
            "errors": _errors_count()}
     try:
@@ -1271,6 +1585,13 @@ def _motd_text():
     nerr = _errors_count()
     if nerr:
         lines.append(f"⚠ {nerr} Datei(en) in errors/ – im Dashboard prüfen")
+    open_ws = [w for w in _ws_list() if w["state"] in ("ready", "error")]
+    if open_ws:
+        w = open_ws[0]
+        more = f" (+{len(open_ws) - 1} weitere)" if len(open_ws) > 1 else ""
+        since = time.strftime("%d.%m. %H:%M", time.localtime(w["created"]))
+        lines.append(f"⚠ Arbeitsmappe {w['id']}: {w['page_count']} Seiten, offen seit {since}{more}"
+                     + (f" – FEHLER: {w['error']}" if w["state"] == "error" else ""))
     if _processing:
         lines.append(f"Verarbeitung läuft: {', '.join(_processing.get('files') or [])} ({_processing.get('progress', '')})")
     if _last_results:
@@ -1409,6 +1730,7 @@ def main():
     # originals dropped into them stay reachable/deletable over SMB.
     for d in (INBOX, INBOX / DUPLEX_SUBDIR, INBOX / BATCH_SUBDIR, ARCHIVE, ERRORS, WORK):
         _ensure_user_dir(d)
+    EDIT_DIR.mkdir(parents=True, exist_ok=True)
     if not URL or not TOKEN:
         log("PAPERLESS_OCR_URL / PAPERLESS_OCR_TOKEN not set — idling. "
             "Set them in /usr/local/etc/macstudio.conf and restart.")

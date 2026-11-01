@@ -984,6 +984,101 @@ PO_STATUS_NAME = "scanjob-status.json"
 PO_COMMAND_NAME = "scanjob-command.json"
 PO_JOBS = ("duplex", "stapel")
 PO_JOB_ACTIONS = ("merge", "concat", "hold", "release")
+PO_WS_ID_RE = re.compile(r"^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$")
+PO_IMG_RE = re.compile(r"^p[0-9]{1,4}$")
+PO_WS_SOURCES = ("duplex", "stapel", "inbox", "originals", "errors")
+
+
+def _po_write_command(cmd):
+    work = _po_dirs()["work"]
+    try:
+        os.makedirs(work, exist_ok=True)
+        tmp = os.path.join(work, PO_COMMAND_NAME + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cmd, f, ensure_ascii=False)
+        os.replace(tmp, os.path.join(work, PO_COMMAND_NAME))
+    except OSError as e:
+        return (False, str(e))
+    return (True, "Befehl an den Worker übergeben (Antwort folgt in ~10 s)")
+
+
+def _po_ws_path(wsid):
+    """Workspace dir under work/edit/ for a validated id, or None."""
+    if not isinstance(wsid, str) or not PO_WS_ID_RE.match(wsid):
+        return None
+    d = os.path.join(_po_dirs()["work"], "edit", wsid)
+    return d if os.path.isfile(os.path.join(d, "pages.json")) else None
+
+
+def api_paperless_ws(wsid):
+    """The editor's view of one workspace: its manifest + the worker's processing marker."""
+    d = _po_ws_path(wsid)
+    if not d:
+        return None
+    try:
+        with open(os.path.join(d, "pages.json"), "r", encoding="utf-8") as f:
+            m = json.load(f)
+    except (OSError, ValueError):
+        return None
+    status = _po_read_status() or {}
+    c = conf()
+    return {"ws": m, "processing": status.get("processing"), "last_command": status.get("last_command"),
+            "paperless_url": c.get("PAPERLESS_OCR_URL", ""), "check_tag": c.get("PAPERLESS_OCR_CHECK_TAG", "scan:check")}
+
+
+def po_ws_image(wsid, kind, img):
+    """Path of a workspace thumbnail/preview JPEG, or None (ids validated by regex, so the
+    path can only ever point inside work/edit/<id>/<kind>/)."""
+    d = _po_ws_path(wsid)
+    if not d or kind not in ("thumbs", "preview") or not PO_IMG_RE.match(img or ""):
+        return None
+    p = os.path.join(d, kind, img + ".jpg")
+    return p if os.path.isfile(p) else None
+
+
+def po_ws_command(body):
+    """Shape-check a page-editor command and hand it to the worker."""
+    action = str(body.get("action", ""))
+    cmd = {"version": 1, "ts": int(time.time()), "action": action}
+    if action == "ws_open":
+        src = str(body.get("from", ""))
+        files = body.get("files")
+        if src not in PO_WS_SOURCES:
+            return (False, "unbekannter Ordner")
+        if not (isinstance(files, list) and files and all(
+                isinstance(n, str) and n and os.path.basename(n) == n and not n.startswith(".") for n in files)):
+            return (False, "Dateiliste ungültig")
+        expect = body.get("expect") or {}
+        if not isinstance(expect, dict):
+            return (False, "expect ungültig")
+        cmd.update({"from": src, "files": files, "expect": expect})
+        roles = body.get("roles")
+        if isinstance(roles, dict) and all(isinstance(k, str) and v in ("front", "back") for k, v in roles.items()):
+            cmd["roles"] = roles
+    elif action in ("ws_commit", "ws_discard"):
+        wsid = str(body.get("id", ""))
+        if not PO_WS_ID_RE.match(wsid):
+            return (False, "ungültige Arbeitsmappe")
+        cmd["id"] = wsid
+        if action == "ws_commit":
+            docs = body.get("docs")
+            if not isinstance(docs, list) or not docs:
+                return (False, "kein Dokument")
+            clean = []
+            for doc in docs:
+                if not isinstance(doc, dict) or not isinstance(doc.get("pages"), list) or not doc["pages"]:
+                    return (False, "Dokument ohne Seiten")
+                pages = []
+                for pg in doc["pages"]:
+                    if not isinstance(pg, dict) or not PO_IMG_RE.match(str(pg.get("img", ""))) \
+                            or pg.get("rotate", 0) not in (0, 90, 180, 270):
+                        return (False, "ungültige Seite")
+                    pages.append({"img": pg["img"], "rotate": pg.get("rotate", 0)})
+                clean.append({"title": str(doc.get("title", ""))[:200], "pages": pages})
+            cmd["docs"] = clean
+    else:
+        return (False, "unbekannte Aktion")
+    return _po_write_command(cmd)
 
 
 def _po_read_status():
@@ -1029,16 +1124,7 @@ def po_job_command(body):
                 for k, v in expect.items()):
             return (False, "expect ungültig")
         cmd["expect"] = expect
-    work = _po_dirs()["work"]
-    try:
-        os.makedirs(work, exist_ok=True)
-        tmp = os.path.join(work, PO_COMMAND_NAME + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(cmd, f, ensure_ascii=False)
-        os.replace(tmp, os.path.join(work, PO_COMMAND_NAME))
-    except OSError as e:
-        return (False, str(e))
-    return (True, "Befehl an den Worker übergeben (Antwort folgt in ~10 s)")
+    return _po_write_command(cmd)
 
 
 def _po_list(path, stable_sec, mark_pending):
@@ -1190,6 +1276,24 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             pass
 
+    def send_file(self, path, ctype, cache="no-store"):
+        """Serve one static file (editor thumbnails/previews). Callers validate the path."""
+        try:
+            with open(path, "rb") as f:
+                body = f.read()
+        except OSError:
+            self.send_json({"error": "Datei nicht lesbar"}, code=404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", cache)
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except OSError:
+            pass
+
     def read_body_json(self):
         try:
             n = int(self.headers.get("Content-Length", "0") or "0")
@@ -1271,6 +1375,24 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(api_telemetry())
         elif path == "/api/paperless-ocr":
             self.send_json(api_paperless_ocr())
+        elif path.startswith("/api/paperless-ocr/ws/"):
+            # /ws/<id>            -> manifest + processing
+            # /ws/<id>/thumbs/pN  -> JPEG   (also /preview/pN)
+            parts = path[len("/api/paperless-ocr/ws/"):].strip("/").split("/")
+            if len(parts) == 1:
+                d = api_paperless_ws(parts[0])
+                if d is None:
+                    self.send_json({"error": "Arbeitsmappe nicht gefunden"}, code=404)
+                else:
+                    self.send_json(d)
+            elif len(parts) == 3:
+                p = po_ws_image(parts[0], parts[1], parts[2])
+                if not p:
+                    self.send_json({"error": "Bild nicht gefunden"}, code=404)
+                else:
+                    self.send_file(p, "image/jpeg", "max-age=86400")
+            else:
+                self.send_json({"error": "not found"}, code=404)
         elif path == "/api/links":
             self.send_json(api_links())
         elif path == "/api/config":
@@ -1377,6 +1499,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"ok": ok, "msg": msg}, code=200 if ok else 400)
         elif path == "/api/paperless-ocr/job":
             ok, msg = po_job_command(body)
+            self.send_json({"ok": ok, "msg": msg}, code=200 if ok else 400)
+        elif path == "/api/paperless-ocr/ws":
+            ok, msg = po_ws_command(body)
             self.send_json({"ok": ok, "msg": msg}, code=200 if ok else 400)
         else:
             self.send_json({"error": "not found"}, code=404)
