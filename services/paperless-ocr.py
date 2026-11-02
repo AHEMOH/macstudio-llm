@@ -187,15 +187,15 @@ VLM_PROMPT = os.environ.get(
     "handschriftliche Eintraege. Gib mathematische Formeln als LaTeX aus. Nur die "
     "Transkription, keine Kommentare.")
 
-# --- Pictures without text (children's drawings, photos, graphics) ---------------------
+# --- Pictures without text (drawings/paintings, photos, graphics) ----------------------
 # When Vision reads (almost) nothing, ONE vision call first asks the VLM whether the page is
 # a picture or a document. A picture gets an invisible "Bildbeschreibung: …" layer instead of
 # a pointless transcription, a short title, and the tag PICTURE_TAG_PREFIX + kind
-# (bild:kinderbild|foto|grafik) for paperless workflows to map onto type/person. A document
+# (bild:zeichnung|foto|grafik) for paperless workflows to map onto type/person. A document
 # (handwriting, forms) takes the VLM transcription route as before. Forced VLM routes skip it.
 PICTURE_DETECT = os.environ.get("PAPERLESS_OCR_PICTURE_DETECT", "1") == "1"
 PICTURE_TAG_PREFIX = os.environ.get("PAPERLESS_OCR_PICTURE_TAG_PREFIX", "bild:")
-PICTURE_KINDS = ("kinderbild", "foto", "grafik")
+PICTURE_KINDS = ("zeichnung", "foto", "grafik")
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".webp"}
 ACCEPT_EXTS = {".pdf"} | IMAGE_EXTS
@@ -550,14 +550,19 @@ def _classify_picture(src):
         d.close()
     prompt = (
         "Ist dieses Bild ein Dokument oder ein Bild? Antworte NUR mit JSON: "
-        "{\"art\": \"kinderbild|foto|grafik|dokument|leer\", \"titel\": \"...\", \"beschreibung\": \"...\"}.\n"
+        "{\"art\": \"zeichnung|foto|grafik|dokument|leer\", \"titel\": \"...\", \"beschreibung\": \"...\"}.\n"
         "art: 'dokument', sobald lesbarer Text, Handschrift oder ein Formular zu sehen ist; "
-        "'leer' für eine leere oder fast leere Seite; 'kinderbild' für Zeichnungen/Malereien "
-        "von Kindern; 'foto' für Fotos; 'grafik' für alles andere Bildhafte.\n"
-        "titel: 3-6 Wörter auf Deutsch, z. B. 'Aquarell blau-gelb' oder 'Zeichnung Haus mit Sonne'.\n"
-        "beschreibung: 1-2 Sätze auf Deutsch: Motiv, Farben, Technik. Nichts erfinden.")
+        "'leer' für eine leere oder fast leere Seite; 'zeichnung' für Zeichnungen, Malereien, "
+        "Gemälde und Basteleien; 'foto' für Fotos; 'grafik' für alles andere Bildhafte "
+        "(Diagramm, Logo, Plakat, Karte).\n"
+        "titel: 3-8 Wörter auf Deutsch, die den Inhalt konkret benennen: Technik + Motiv, z. B. "
+        "'Aquarell mit blauen und gelben Farbflächen', 'Buntstiftzeichnung Haus mit Sonne', "
+        "'Foto Familie am Strand'.\n"
+        "beschreibung: 2-3 Sätze auf Deutsch: was zu sehen ist (Motive, Personen, Tiere, "
+        "Gegenstände, Umgebung), Farben, Technik und Stil. Nur beschreiben, was sichtbar ist — "
+        "NICHT raten, wer es gemacht hat, wie alt jemand ist oder wo es entstanden ist.")
     b64 = base64.b64encode(jpg).decode("ascii")
-    payload = {"model": VLM_MODEL, "temperature": 0, "max_tokens": 300,
+    payload = {"model": VLM_MODEL, "temperature": 0, "max_tokens": 500,
                "response_format": {"type": "json_object"},
                "messages": [{"role": "user", "content": [
                    {"type": "text", "text": prompt},

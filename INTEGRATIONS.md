@@ -636,22 +636,26 @@ to trigger it:
 The VLM route reuses the already-loaded `main` (no second model — the "one big model" rule holds)
 but a full-page Gemma pass takes ~1–2 min, versus ~2 s for Apple Vision.
 
-**Pictures without text (children's drawings, photos, graphics).** When Apple Vision reads
-(almost) nothing, the worker first asks the VLM **once** whether page 1 is a picture or a
-document (`PAPERLESS_OCR_PICTURE_DETECT=1`, default on). A **picture** is not transcribed:
-- it gets a short title (e.g. `Aquarell blau-gelb`) instead of the scanner's file name,
-- an invisible text layer `Bildbeschreibung: <motif, colours, technique>` — so it is findable
-  in paperless and paperless-gpt has something to fill a Summary field from,
-- and the tag **`bild:kinderbild`**, **`bild:foto`** or **`bild:grafik`**
+**Pictures without text (drawings, paintings, photos, graphics).** When Apple Vision reads
+(almost) nothing, the worker first asks the VLM **once** whether page 1 is a picture, a blank
+page or a document (`PAPERLESS_OCR_PICTURE_DETECT=1`, default on). A **picture** is described,
+not transcribed:
+- a title that names technique + motif (e.g. `Aquarell mit blauen und gelben Farbflächen`,
+  `Buntstiftzeichnung Haus mit Sonne`) instead of the scanner's file name,
+- an invisible text layer `Bildbeschreibung: …` — 2–3 sentences on what is visible (motifs,
+  people, animals, objects, colours, technique), so it is findable in paperless and
+  paperless-gpt has something to fill a Summary field from. The VLM is told to describe only
+  what it sees — never to guess who made it, anyone's age or where it was made,
+- and the tag **`bild:zeichnung`**, **`bild:foto`** or **`bild:grafik`**
   (`PAPERLESS_OCR_PICTURE_TAG_PREFIX`, default `bild:`).
 
-A **document** (handwriting, forms, blank page) takes the VLM route above unchanged; the forced
-routes (`ocr:vlm*`, `_vlm` filename) skip the check. Works for the inbox, scan jobs, the page
-editor and retro-fix — to describe an existing text-less picture, tag it `ocr:apple`.
-The VLM can't know *whose* drawing it is, so map the tag in paperless: **Workflows → new**,
-trigger *Document Added*, filter *has tag* `bild:kinderbild` → assign document type
-`Kinderbild` and the custom field *Person* (and remove `paperless-gpt-auto` if paperless-gpt
-shouldn't touch pictures — then give this workflow a higher *order* than the one that adds it).
+A **blank page** keeps an empty text layer. A **document** (handwriting, forms) takes the VLM
+route above unchanged; the forced routes (`ocr:vlm*`, `_vlm` filename) skip the check. Works for
+the inbox, scan jobs, the page editor and retro-fix — to describe an existing text-less picture,
+tag it `ocr:apple`. Who made a drawing (your child, …) is yours to add: e.g. a paperless
+**Workflow** (trigger *Document Added*, filter *has tag* `bild:zeichnung`) can set a document type,
+and the custom field *Person* you fill in by hand. To keep paperless-gpt off pictures, let that
+workflow also remove `paperless-gpt-auto` and give it a higher *order* than the one that adds it.
 
 **E-mail attachments.** paperless-ngx reads mail and ingests attachments **itself** — those
 never pass through this worker. Digital-born attachments (most) already have text, so paperless
