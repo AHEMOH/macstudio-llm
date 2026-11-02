@@ -517,8 +517,8 @@ config_hint() {
     PAPERLESS_OCR_VLM_MIN_CHARS) echo "Auto-fallback threshold: if Apple Vision yields fewer than this many text chars/page, re-OCR with the VLM (default 80). Raise if blank/near-blank scans wrongly trigger the VLM" ;;
     PAPERLESS_OCR_VLM_MAX_TOKENS) echo "Max tokens for the VLM transcription per page (default 4000)" ;;
     PAPERLESS_OCR_VLM_TIMEOUT_SEC) echo "HTTP timeout (seconds) for a VLM page request (default 300; a big model can be slow)" ;;
-    PAPERLESS_OCR_PICTURE_DETECT) echo "1 = when Apple Vision reads (almost) nothing, one VLM call checks whether the page is a picture (children's drawing/photo/graphic). A picture gets a short title, an invisible 'Bildbeschreibung' text layer and a tag; documents (handwriting) take the VLM route as before. 0 = off" ;;
-    PAPERLESS_OCR_PICTURE_TAG_PREFIX) echo "Tag prefix for detected pictures (default bild: -> bild:kinderbild, bild:foto, bild:grafik). Map them to a document type / person with a paperless workflow" ;;
+    PAPERLESS_OCR_PICTURE_DETECT) echo "1 = when Apple Vision reads (almost) nothing, one VLM call checks whether the page is a picture (drawing/painting, photo, graphic). A picture gets a short title, an invisible 'Bildbeschreibung' text layer and a tag; documents (handwriting) take the VLM route as before. 0 = off" ;;
+    PAPERLESS_OCR_PICTURE_TAG_PREFIX) echo "Tag prefix for detected pictures (default bild: -> bild:zeichnung, bild:foto, bild:grafik). Map them to a document type / person with a paperless workflow" ;;
     *)                           echo "" ;;
   esac
 }
