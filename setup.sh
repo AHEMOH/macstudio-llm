@@ -219,6 +219,8 @@ CONFIG_KEYS=(
   PAPERLESS_OCR_VLM_MIN_CHARS
   PAPERLESS_OCR_VLM_MAX_TOKENS
   PAPERLESS_OCR_VLM_TIMEOUT_SEC
+  PAPERLESS_OCR_PICTURE_DETECT
+  PAPERLESS_OCR_PICTURE_TAG_PREFIX
   AUTO_ACCEPT
 )
 # Bash-3.2 safe (macOS ships /bin/bash 3.2): lookup functions instead of
@@ -252,7 +254,7 @@ config_default() {
     OMLX_NATIVE_KERNELS)         echo 1 ;;
     OMLX_MAX_CONCURRENT_REQUESTS) echo 8 ;;
     OMLX_MAX_CONTEXT_WINDOW)     echo 65536 ;;
-    OMLX_ACTIVATION_FP16)        echo 1 ;;
+    OMLX_ACTIVATION_FP16)        echo 0 ;;
     OMLX_BIND_HOST)              echo 127.0.0.1 ;;
     OMLX_API_KEY)                echo "" ;;
     GEMMA_TOP_K)                 echo 64 ;;
@@ -375,6 +377,8 @@ config_default() {
     PAPERLESS_OCR_VLM_MIN_CHARS) echo 80 ;;
     PAPERLESS_OCR_VLM_MAX_TOKENS) echo 4000 ;;
     PAPERLESS_OCR_VLM_TIMEOUT_SEC) echo 300 ;;
+    PAPERLESS_OCR_PICTURE_DETECT) echo 1 ;;
+    PAPERLESS_OCR_PICTURE_TAG_PREFIX) echo bild: ;;
     AUTO_ACCEPT)                 echo 0 ;;
     *)                           echo "" ;;
   esac
@@ -402,7 +406,7 @@ config_hint() {
     OMLX_NATIVE_KERNELS)         echo "1 = build oMLX's native Metal kernels (make kernels; needs full Xcode + 'xcodebuild -downloadComponent MetalToolchain' + cmake). Gives one shared Metal command queue for main+embed+rerank (no multi-model GPU hang, #4224). 0 = skip, delete built kernels → generic MLX paths" ;;
     OMLX_MAX_CONCURRENT_REQUESTS) echo "oMLX max concurrent in-flight requests (--max-concurrent-requests, continuous batching). Default 8" ;;
     OMLX_MAX_CONTEXT_WINDOW)     echo "Per-model context cap for the active main, pre-seeded into ~/.omlx/model_settings.json (NOT a CLI flag — oMLX has no --max-kv-size equivalent). Default 65536 (64K), preserving today's documented ceiling" ;;
-    OMLX_ACTIVATION_FP16)        echo "1 = set activation_fp16_enabled for the active main in ~/.omlx/model_settings.json: oMLX (>= v0.7.3rc1) recasts the checkpoint's bf16 scales/norms/embeddings to fp16 at load, because M1/M2 GPUs have no native bf16 (MLX emulates it). Measured on the M1 Max with gemma4-26b-qat 2026-10-30: prefill +27-32%, long-doc extraction ~23% faster, decode +5%, no quality loss seen. 0 = off (bf16). A change restarts oMLX on the next --apply. Not useful on M3+ (native bf16); cannot be combined with oMLX's MoE expert offload" ;;
+    OMLX_ACTIVATION_FP16)        echo "OFF by default since 2026-11-02 — fp16 BREAKS IMAGES on gemma4 (NaN on every image request: paperless-ocr VLM route, picture detection, image chat). 1 = set activation_fp16_enabled for the active main in ~/.omlx/model_settings.json: oMLX (>= v0.7.3rc1) recasts the checkpoint's bf16 scales/norms/embeddings to fp16 at load, because M1/M2 GPUs have no native bf16 (MLX emulates it). Measured on the M1 Max with gemma4-26b-qat 2026-10-30: prefill +27-32%, long-doc extraction ~23% faster, decode +5%, no quality loss seen. 0 = off (bf16). A change restarts oMLX on the next --apply. Not useful on M3+ (native bf16); cannot be combined with oMLX's MoE expert offload" ;;
     OMLX_BIND_HOST)              echo "--host oMLX binds. Default 127.0.0.1 (LiteLLM-only, matches every other backend in this repo). Set to 0.0.0.0 to also expose oMLX's own OpenAI/Anthropic/audio API + admin panel directly on the LAN (e.g. for a client that wants oMLX's native /v1/messages, not LiteLLM's translation) — do this ONLY after OMLX_API_KEY is set, since oMLX's inference routes have no auth at all otherwise" ;;
     OMLX_API_KEY)                echo "oMLX --api-key: required by every caller once set, INCLUDING LiteLLM's own local calls (render_litellm_config wires this same key into main/main-fast/embed/rerank's litellm_params automatically). Plaintext in this 644 conf — LAN-only, like VNC_PASSWORD/DASHBOARD_TOKEN. Empty = auto-generated on the next --apply; clear it + --apply to rotate" ;;
     GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off" ;;
@@ -513,6 +517,8 @@ config_hint() {
     PAPERLESS_OCR_VLM_MIN_CHARS) echo "Auto-fallback threshold: if Apple Vision yields fewer than this many text chars/page, re-OCR with the VLM (default 80). Raise if blank/near-blank scans wrongly trigger the VLM" ;;
     PAPERLESS_OCR_VLM_MAX_TOKENS) echo "Max tokens for the VLM transcription per page (default 4000)" ;;
     PAPERLESS_OCR_VLM_TIMEOUT_SEC) echo "HTTP timeout (seconds) for a VLM page request (default 300; a big model can be slow)" ;;
+    PAPERLESS_OCR_PICTURE_DETECT) echo "1 = when Apple Vision reads (almost) nothing, one VLM call checks whether the page is a picture (children's drawing/photo/graphic). A picture gets a short title, an invisible 'Bildbeschreibung' text layer and a tag; documents (handwriting) take the VLM route as before. 0 = off" ;;
+    PAPERLESS_OCR_PICTURE_TAG_PREFIX) echo "Tag prefix for detected pictures (default bild: -> bild:kinderbild, bild:foto, bild:grafik). Map them to a document type / person with a paperless workflow" ;;
     *)                           echo "" ;;
   esac
 }
@@ -1755,6 +1761,10 @@ _omlx_symlink_one() {
 # A/B on the M1 Max 2026-10-30 (gemma4-26b-qat): prefill +27-32%, paperless-
 # like extraction 23-24% faster at 5K/15K/30K tokens, decode +5%, tool calls
 # 18/18 both ways, no fp16-overflow symptoms in 22 RU/DE prose prompts.
+# BUT it breaks IMAGES (2026-11-02): every image request yields NaN logits (<pad>
+# tokens, content null, finish_reason length) — and oMLX's vision-feature SSD cache
+# keeps serving those NaN features after fp16 is turned off. Default is therefore 0;
+# a change of the flag therefore also clears $OMLX_SSD_CACHE_DIR/vision_features.
 ensure_omlx_settings() {
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   [ -n "${OMLX_MAX_CONTEXT_WINDOW:-}" ] || return 0
@@ -1770,7 +1780,7 @@ ensure_omlx_settings() {
   local tmp; tmp=$(/usr/bin/mktemp)
   /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env \
     OMLX_SETTINGS_FILE="$file" OMLX_MODEL_KEY="$served" OMLX_CTX="$OMLX_MAX_CONTEXT_WINDOW" \
-    OMLX_LEGACY_KEY="mlx-$id" OMLX_FP16="${OMLX_ACTIVATION_FP16:-1}" \
+    OMLX_LEGACY_KEY="mlx-$id" OMLX_FP16="${OMLX_ACTIVATION_FP16:-0}" \
     /usr/bin/python3 - >"$tmp" <<'PY'
 import json, os
 path, key, ctx = os.environ["OMLX_SETTINGS_FILE"], os.environ["OMLX_MODEL_KEY"], int(os.environ["OMLX_CTX"])
@@ -1802,10 +1812,20 @@ PY
     return 0
   fi
   if [ "$before" != "$(hash_file "$tmp")" ]; then
+    # oMLX's vision-feature SSD cache is not keyed on the activation dtype — features
+    # computed under fp16 (NaN on gemma4) would keep breaking images after a switch.
+    local fp16_was fp16_now
+    fp16_was=$(/usr/bin/grep -c '"activation_fp16_enabled": true' "$file" 2>/dev/null || true)
+    fp16_now=$(/usr/bin/grep -c '"activation_fp16_enabled": true' "$tmp" || true)
     /bin/mv -f "$tmp" "$file"
     /bin/chmod 644 "$file"
     /usr/sbin/chown "$TARGET_USER" "$file" 2>/dev/null || true
-    ok "omlx per-model settings: $served max_context_window=$OMLX_MAX_CONTEXT_WINDOW activation_fp16=${OMLX_ACTIVATION_FP16:-1} -> $file"
+    ok "omlx per-model settings: $served max_context_window=$OMLX_MAX_CONTEXT_WINDOW activation_fp16=${OMLX_ACTIVATION_FP16:-0} -> $file"
+    if [ "${fp16_was:-0}" != "${fp16_now:-0}" ] && [ -n "${OMLX_SSD_CACHE_DIR:-}" ] \
+       && [ -d "$OMLX_SSD_CACHE_DIR/vision_features" ]; then
+      /bin/rm -rf "$OMLX_SSD_CACHE_DIR/vision_features"/*
+      ok "activation dtype changed — cleared oMLX vision-feature cache"
+    fi
     if daemon_running com.local.omlx.main; then
       /bin/launchctl kickstart -k system/com.local.omlx.main >/dev/null 2>&1 \
         && ok "restarted com.local.omlx.main to apply the new per-model settings"
