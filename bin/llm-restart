@@ -40,7 +40,8 @@ label_for() {
     vncfilter)       echo com.local.vncfilter ;;
     novnc)           echo com.local.novnc ;;
     paperless)       echo com.local.paperless.ocr ;;
-    *)               echo "" ;;
+    beszel)          echo com.local.beszel.agent ;;
+    *)             echo "" ;;
   esac
 }
 
@@ -48,11 +49,11 @@ ALL_SHORT_NAMES=(main litellm immich-proxy immich docling-proxy docling \
                  images-proxy images \
                  voicestt-proxy voicestt voicetts-proxy voicetts voicewyoming-proxy \
                  node silicon ondemand watchdog preventsleep \
-                 dashboard mqtt vncfilter novnc paperless)
+                 dashboard mqtt vncfilter novnc paperless beszel)
 ALL_ALWAYS_ON=(main litellm immich-proxy docling-proxy images-proxy \
                voicestt-proxy voicetts-proxy voicewyoming-proxy \
                node silicon ondemand watchdog preventsleep \
-               dashboard mqtt vncfilter novnc paperless)
+               dashboard mqtt vncfilter novnc paperless beszel)
 
 implicit_all=0
 if [ $# -eq 0 ] || [ "${1:-}" = all ]; then
