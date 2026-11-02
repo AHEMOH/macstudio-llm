@@ -291,6 +291,7 @@ that you can disable the universal token in the hub without breaking this agent.
 | `BESZEL_KEY` | _(empty)_ | Hub public key (quote it — it has a space) |
 | `BESZEL_TOKEN` | _(empty)_ | Universal/system token (plaintext in the 644 conf, LAN-only) |
 | `BESZEL_LISTEN` | `45876` | Agent listen port (hub SSH fallback) |
+| `BESZEL_GPU_COLLECTOR` | `macmon` | Apple-Silicon GPU usage/power/temp source (`macmon` or `powermetrics`, empty = off). Beszel has no ANE metric — that stays in the silicon exporter / Home Assistant |
 
 **Check it:**
 

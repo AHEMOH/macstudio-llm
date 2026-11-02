@@ -467,6 +467,7 @@ use the menu) to change a live box.
 | `INSTALL_BESZEL` | `0` | Beszel monitoring agent (root LaunchDaemon) — **off by default** |
 | `BESZEL_HUB_URL` / `BESZEL_KEY` / `BESZEL_TOKEN` | _(empty)_ | Hub URL, hub public key, universal token (plaintext in the 644 conf) — agent won't start until all three are set |
 | `BESZEL_LISTEN` | `45876` | Agent's listen port (hub SSH fallback) |
+| `BESZEL_GPU_COLLECTOR` | `macmon` | GPU source (`macmon` or `powermetrics`, empty = off). Beszel shows no ANE |
 | `WATCHDOG_PRESSURE_THRESHOLD` | `warn` | `warn` or `critical` |
 | `AUTO_ACCEPT` | `0` | `1` = skip "press Enter" prompts in the TUI |
 
