@@ -187,6 +187,16 @@ VLM_PROMPT = os.environ.get(
     "handschriftliche Eintraege. Gib mathematische Formeln als LaTeX aus. Nur die "
     "Transkription, keine Kommentare.")
 
+# --- Pictures without text (children's drawings, photos, graphics) ---------------------
+# When Vision reads (almost) nothing, ONE vision call first asks the VLM whether the page is
+# a picture or a document. A picture gets an invisible "Bildbeschreibung: …" layer instead of
+# a pointless transcription, a short title, and the tag PICTURE_TAG_PREFIX + kind
+# (bild:kinderbild|foto|grafik) for paperless workflows to map onto type/person. A document
+# (handwriting, forms) takes the VLM transcription route as before. Forced VLM routes skip it.
+PICTURE_DETECT = os.environ.get("PAPERLESS_OCR_PICTURE_DETECT", "1") == "1"
+PICTURE_TAG_PREFIX = os.environ.get("PAPERLESS_OCR_PICTURE_TAG_PREFIX", "bild:")
+PICTURE_KINDS = ("kinderbild", "foto", "grafik")
+
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".webp"}
 ACCEPT_EXTS = {".pdf"} | IMAGE_EXTS
 
@@ -275,9 +285,10 @@ def _already_has_text(pdf_path):
         d.close()
 
 
-def make_searchable(src, dst, use_vlm=False, force=False):
+def make_searchable(src, dst, use_vlm=False, force=False, meta=None):
     """Produce a searchable PDF at `dst`. Returns (mode, count) where mode is
-    'passthrough' | 'ocr' | 'vlm'.
+    'passthrough' | 'ocr' | 'vlm' | 'picture'. For 'picture', a passed `meta` dict gets
+    "title" and "kind" (see PICTURE_DETECT).
 
     Two independent controls:
       * `use_vlm` — pick the engine: False = Apple Vision (fast; auto-escalates to the VLM
@@ -297,7 +308,22 @@ def make_searchable(src, dst, use_vlm=False, force=False):
         except Exception as e:
             log(f"VLM route failed ({e}); falling back to Apple Vision")
     n = ocr_pdf(src, dst)  # Apple Vision (fast, always run first as the printed-text pass)
-    if VLM_AUTO and VLM_URL and not use_vlm and _avg_chars(dst) < VLM_MIN_CHARS:
+    sparse = VLM_URL and not use_vlm and _avg_chars(dst) < VLM_MIN_CHARS
+    if sparse and PICTURE_DETECT:
+        try:
+            pic = _classify_picture(src)
+            if pic and pic["kind"] == "leer":
+                log("blank page — keeping the Apple Vision result (no VLM transcription)")
+                return ("ocr", n)
+            if pic:
+                log(f"picture detected ({pic['kind']}): '{pic['title']}'")
+                chars = picture_pdf(src, dst, pic["description"])
+                if meta is not None:
+                    meta.update(title=pic["title"], kind=pic["kind"])
+                return ("picture", chars)
+        except Exception as e:
+            log(f"picture detection failed ({e}); treating it as a document")
+    if VLM_AUTO and sparse:
         try:
             log(f"Vision sparse (<{VLM_MIN_CHARS} chars/pg) — escalating to VLM {VLM_MODEL}")
             return ("vlm", vlm_ocr_pdf(src, dst))
@@ -502,6 +528,74 @@ def vlm_ocr_pdf(src, dst):
         npage = out.new_page(width=page.rect.width, height=page.rect.height)
         npage.insert_image(npage.rect, stream=jpg)
         total += _place_fulltext(npage, _vlm_page_text(jpg))
+    indoc.close()
+    try:
+        out.subset_fonts()
+    except Exception as e:
+        log(f"subset_fonts skipped ({e}); output will be larger")
+    out.save(str(dst), garbage=4, deflate=True)
+    out.close()
+    return total
+
+
+def _classify_picture(src):
+    """ONE vision call on page 1: is this a picture (drawing/photo/graphic) or a document?
+    Returns {"kind", "title", "description"} for a picture, {"kind": "leer"} for a blank
+    page (so the VLM isn't asked to transcribe nothing), None for a document."""
+    d = _open_as_pdf(src)
+    try:
+        zoom = ANALYZE_DPI / 72.0
+        jpg = d[0].get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False).tobytes("jpg", jpg_quality=JPEG_Q)
+    finally:
+        d.close()
+    prompt = (
+        "Ist dieses Bild ein Dokument oder ein Bild? Antworte NUR mit JSON: "
+        "{\"art\": \"kinderbild|foto|grafik|dokument|leer\", \"titel\": \"...\", \"beschreibung\": \"...\"}.\n"
+        "art: 'dokument', sobald lesbarer Text, Handschrift oder ein Formular zu sehen ist; "
+        "'leer' für eine leere oder fast leere Seite; 'kinderbild' für Zeichnungen/Malereien "
+        "von Kindern; 'foto' für Fotos; 'grafik' für alles andere Bildhafte.\n"
+        "titel: 3-6 Wörter auf Deutsch, z. B. 'Aquarell blau-gelb' oder 'Zeichnung Haus mit Sonne'.\n"
+        "beschreibung: 1-2 Sätze auf Deutsch: Motiv, Farben, Technik. Nichts erfinden.")
+    b64 = base64.b64encode(jpg).decode("ascii")
+    payload = {"model": VLM_MODEL, "temperature": 0, "max_tokens": 300,
+               "response_format": {"type": "json_object"},
+               "messages": [{"role": "user", "content": [
+                   {"type": "text", "text": prompt},
+                   {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+               ]}]}
+    r = requests.post(VLM_URL, data=json.dumps(payload),
+                      headers={"Content-Type": "application/json"}, timeout=VLM_TIMEOUT)
+    r.raise_for_status()
+    content = r.json()["choices"][0]["message"]["content"]
+    try:
+        data = json.loads(content)
+    except ValueError:
+        mm = re.search(r"\{.*\}", content, re.S)
+        data = json.loads(mm.group(0)) if mm else {}
+    kind = str(data.get("art") or "").strip().lower()
+    if kind == "leer":
+        return {"kind": "leer"}
+    if kind not in PICTURE_KINDS:
+        return None
+    title = _safe_filename(str(data.get("titel") or "")) or kind.capitalize()
+    desc = re.sub(r"\s+", " ", str(data.get("beschreibung") or "")).strip()[:500]
+    return {"kind": kind, "title": title, "description": desc}
+
+
+def picture_pdf(src, dst, description):
+    """Rebuild every page as its image (no transcription) and put an invisible
+    'Bildbeschreibung: …' layer on page 1, so the picture is findable in paperless.
+    Returns chars placed."""
+    indoc = _open_as_pdf(src)
+    out = fitz.open()
+    zoom = DPI / 72.0
+    total = 0
+    for i, page in enumerate(indoc):
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        npage = out.new_page(width=page.rect.width, height=page.rect.height)
+        npage.insert_image(npage.rect, stream=pix.tobytes("jpg", jpg_quality=JPEG_Q))
+        if i == 0 and description:
+            total += _place_fulltext(npage, f"Bildbeschreibung: {description}")
     indoc.close()
     try:
         out.subset_fonts()
@@ -939,20 +1033,24 @@ def _process_and_upload(src_pdf, title, use_vlm=False, force=False, fixed_title=
     (editor) is used verbatim instead of asking the LLM.
     Returns (detail_str, name, check_dict_or_None)."""
     out = WORK / (Path(title).stem + ".ocr.pdf")
+    meta = {}
     try:
-        mode, n = make_searchable(src_pdf, out, use_vlm=use_vlm, force=force)
+        mode, n = make_searchable(src_pdf, out, use_vlm=use_vlm, force=force, meta=meta)
         _assert_pagecount(src_pdf, out, mode)  # never upload a silently-truncated result
         check = _page_check(out, allow_partial=allow_partial) if PAGE_CHECK else None
-        name = fixed_title or _smart_name(out, Path(title).stem)
-        tags = None
+        name = fixed_title or meta.get("title") or _smart_name(out, Path(title).stem)
+        tags = []
         if check and not check["ok"]:
-            tags = [_tag_id(CHECK_TAG)]
+            tags.append(_tag_id(CHECK_TAG))
             log(f"page-check '{name}': {check['detail']} -> tagged '{CHECK_TAG}'")
+        if meta.get("kind"):
+            tags.append(_tag_id(PICTURE_TAG_PREFIX + meta["kind"]))
         _upload(out, title=name, tags=tags)
     finally:
         out.unlink(missing_ok=True)
     detail = {"passthrough": "passed through (already had text)",
-              "vlm": f"VLM-OCR'd ({n} chars)"}.get(mode, f"OCR'd ({n} boxes)")
+              "vlm": f"VLM-OCR'd ({n} chars)",
+              "picture": f"picture, described ({n} chars)"}.get(mode, f"OCR'd ({n} boxes)")
     return detail, name, check
 
 
@@ -2029,7 +2127,8 @@ def retrofix_once():
                 resp.raise_for_status()
                 src.write_bytes(resp.content)
             out = WORK / f"{did}.ocr.pdf"
-            mode, n = make_searchable(src, out, use_vlm=use_vlm, force=force)
+            meta = {}
+            mode, n = make_searchable(src, out, use_vlm=use_vlm, force=force, meta=meta)
             base_tags = [t for t in dtags if t not in trigger_ids]
             if mode == "passthrough":
                 # Already has a good text layer and NOT forced — nothing to re-OCR. Just
@@ -2042,14 +2141,16 @@ def retrofix_once():
                     f"use a *-force tag to re-OCR anyway)")
             else:
                 new_tags = base_tags + [_tag_id(DONE_TAG)]
-                _upload(out, title=doc.get("title"), tags=new_tags,
+                if meta.get("kind"):
+                    new_tags.append(_tag_id(PICTURE_TAG_PREFIX + meta["kind"]))
+                _upload(out, title=meta.get("title") or doc.get("title"), tags=new_tags,
                         created=doc.get("created"), correspondent=doc.get("correspondent"))
                 # Retag the OLD doc so it is not reprocessed: drop triggers, add superseded.
                 _session.patch(f"{URL}/api/documents/{did}/",
                                json={"tags": base_tags + [_tag_id(SUPERSEDED_TAG)]}, timeout=REST_TIMEOUT).raise_for_status()
                 if DELETE_ORIGINAL:
                     _session.delete(f"{URL}/api/documents/{did}/", timeout=REST_TIMEOUT)
-                unit = "chars" if mode == "vlm" else "boxes"
+                unit = "chars" if mode in ("vlm", "picture") else "boxes"
                 log(f"retrofix: doc {did} -> searchable copy via {mode} ({n} {unit}); old retagged")
             src.unlink(missing_ok=True)
             out.unlink(missing_ok=True)
