@@ -26,4 +26,6 @@ DATA_DIR=/var/macstudio/beszel
 export HOME=/var/root
 export HUB_URL="$BESZEL_HUB_URL" KEY="$BESZEL_KEY" TOKEN="$BESZEL_TOKEN"
 export LISTEN="${BESZEL_LISTEN:-45876}" DATA_DIR
+# Apple-Silicon GPU stats are opt-in in the agent; empty = none. (No ANE metric in Beszel.)
+[ -n "${BESZEL_GPU_COLLECTOR:-}" ] && export GPU_COLLECTOR="$BESZEL_GPU_COLLECTOR"
 exec "$BIN"

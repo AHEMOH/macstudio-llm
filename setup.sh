@@ -173,6 +173,7 @@ CONFIG_KEYS=(
   BESZEL_KEY
   BESZEL_TOKEN
   BESZEL_LISTEN
+  BESZEL_GPU_COLLECTOR
   INSTALL_PAPERLESS_OCR
   PAPERLESS_OCR_URL
   PAPERLESS_OCR_TOKEN
@@ -328,6 +329,7 @@ config_default() {
     BESZEL_KEY)                  echo "" ;;
     BESZEL_TOKEN)                echo "" ;;
     BESZEL_LISTEN)               echo 45876 ;;
+    BESZEL_GPU_COLLECTOR)        echo macmon ;;
     INSTALL_PAPERLESS_OCR)       echo 0 ;;
     PAPERLESS_OCR_URL)           echo "" ;;
     PAPERLESS_OCR_TOKEN)         echo "" ;;
@@ -463,6 +465,7 @@ config_hint() {
     INSTALL_BESZEL)              echo "1 = run the Beszel monitoring agent (brew henrygd/beszel/beszel-agent) as a ROOT LaunchDaemon, so it reports to the hub from boot without anyone logged in (brew services would only run while TARGET_USER is logged in). Connects OUT to BESZEL_HUB_URL. Needs BESZEL_HUB_URL/KEY/TOKEN set" ;;
     BESZEL_HUB_URL)              echo "Beszel hub URL (e.g. http://vm.home.arpa:8090). Empty = agent refuses to start" ;;
     BESZEL_KEY)                  echo "The hub's public SSH key (ssh-ed25519 AAAA…), from the hub's 'Add system' dialog. Quote it — it contains a space" ;;
+    BESZEL_GPU_COLLECTOR)        echo "Apple-Silicon GPU source for Beszel (agent env GPU_COLLECTOR): macmon (default; GPU usage/power/temp, brew macmon) or powermetrics (needs root — the agent is root). Empty = no GPU stats. Beszel has NO ANE metric" ;;
     BESZEL_TOKEN)                echo "Beszel universal/system token for self-registration. Plaintext in this 644 conf — LAN-only, like MQTT_PASS. After the first registration the agent keeps its fingerprint in /var/macstudio/beszel, so a disabled universal token does not break it" ;;
     BESZEL_LISTEN)               echo "Port the Beszel agent also listens on for the hub's SSH fallback (default 45876)" ;;
     INSTALL_PAPERLESS_OCR)       echo "1 = run the Apple-Vision searchable-PDF worker for paperless-ngx (gateway inbox + tag-triggered retro-fix). Opt-in (default 0): needs PAPERLESS_OCR_URL + _TOKEN" ;;
@@ -1052,8 +1055,9 @@ ensure_formulas() {
   [ "${INSTALL_EXPORTERS:-0}" = 1 ] && ensure_formula node_exporter
   [ "${INSTALL_TUI:-1}" = 1 ] && ensure_formula mactop
   # macmon doubles as the silicon-exporter's sampler (sys power, temps, real
-  # GPU usage), so the exporters need it even when the TUI tools are off.
-  if [ "${INSTALL_TUI:-1}" = 1 ] || [ "${INSTALL_EXPORTERS:-0}" = 1 ]; then
+  # GPU usage), so the exporters need it even when the TUI tools are off — and so
+  # does the Beszel agent (BESZEL_GPU_COLLECTOR=macmon).
+  if [ "${INSTALL_TUI:-1}" = 1 ] || [ "${INSTALL_EXPORTERS:-0}" = 1 ] || [ "${INSTALL_BESZEL:-0}" = 1 ]; then
     ensure_formula macmon
   fi
   # Optional for the TTS backend: only needed if a client requests a
