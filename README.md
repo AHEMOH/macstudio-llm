@@ -86,6 +86,9 @@ raise a couple of config keys.
   default): publishes power/GPU/thermal/RAM/disk/update telemetry with HA
   autodiscovery and exposes a **one-click main-model switch** as an HA `select`.
   See [INTEGRATIONS.md](INTEGRATIONS.md#mac-studio-in-home-assistant-mqtt).
+- **Beszel monitoring agent** is **opt-in** (`INSTALL_BESZEL=1`, off by
+  default): reports the Mac to a Beszel hub from boot, no login needed.
+  See [INTEGRATIONS.md](INTEGRATIONS.md#beszel-monitoring-agent-install_beszel).
 - **Web dashboard** (on by default, `INSTALL_DASHBOARD=1`): browser control of
   the whole box on `http://mac.home.arpa:8090` — models (download with live
   progress, switch main/embed/rerank), services (restart/stop/wake +
@@ -130,6 +133,9 @@ Opt-in metrics (INSTALL_EXPORTERS=1, off by default):
 
 Opt-in Home Assistant (INSTALL_MQTT=1, off by default):
   com.local.mqtt.bridge                     MQTT telemetry + HA autodiscovery + model switch
+
+Opt-in Beszel (INSTALL_BESZEL=1, off by default):
+  com.local.beszel.agent           :45876   Beszel agent (root) → hub
 
 One-shot at boot:
   com.local.iogpu.wiredlimit                sets iogpu.wired_limit_mb
@@ -458,6 +464,9 @@ use the menu) to change a live box.
 | `MQTT_USER` / `MQTT_PASS` | _(empty)_ | Broker auth (plaintext in the 644 conf) |
 | `MQTT_TOPIC_PREFIX` / `MQTT_DISCOVERY_PREFIX` | `macstudio` / `homeassistant` | Topic base / HA discovery prefix |
 | `MQTT_PUBLISH_INTERVAL_SEC` | `10` | Telemetry cadence (updates polled every 6 h) |
+| `INSTALL_BESZEL` | `0` | Beszel monitoring agent (root LaunchDaemon) — **off by default** |
+| `BESZEL_HUB_URL` / `BESZEL_KEY` / `BESZEL_TOKEN` | _(empty)_ | Hub URL, hub public key, universal token (plaintext in the 644 conf) — agent won't start until all three are set |
+| `BESZEL_LISTEN` | `45876` | Agent's listen port (hub SSH fallback) |
 | `WATCHDOG_PRESSURE_THRESHOLD` | `warn` | `warn` or `critical` |
 | `AUTO_ACCEPT` | `0` | `1` = skip "press Enter" prompts in the TUI |
 

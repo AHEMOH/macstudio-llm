@@ -259,6 +259,51 @@ a local display — the JSON keys above are the contract.
 
 ---
 
+## Beszel monitoring agent (`INSTALL_BESZEL`)
+
+Puts the Mac into your [Beszel](https://beszel.dev) hub (CPU, RAM, disk, network,
+temperatures). The agent is the vendor's brew formula, but it runs as a **root
+LaunchDaemon** (`com.local.beszel.agent`), not via `brew services`: `brew services`
+registers a LaunchAgent, which only runs while `mac` is logged in — and after a
+reboot nobody is. Not via Docker either: on macOS the agent would only see the VM.
+
+The agent connects **out** to the hub, so no firewall change is needed.
+
+**Turn it on** (on the Mac, one line each):
+
+```bash
+cd ~/macstudio-llm && git pull                                       # get the latest repo
+sudo bash setup.sh --set-config BESZEL_HUB_URL 'http://vm.home.arpa:8090'   # where the hub runs
+sudo bash setup.sh --set-config BESZEL_KEY 'ssh-ed25519 AAAA…'       # hub's public key ("Add system" dialog)
+sudo bash setup.sh --set-config BESZEL_TOKEN '<universal token>'      # hub → Settings → Tokens & Fingerprints
+sudo bash setup.sh --set-config INSTALL_BESZEL 1                     # enable the service
+sudo bash setup.sh --apply                                           # install brew formula + start daemon
+```
+
+The Mac shows up in the hub by itself a few seconds later. On first contact the hub
+binds the system to a fingerprint the agent stores in `/var/macstudio/beszel` — after
+that you can disable the universal token in the hub without breaking this agent.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `INSTALL_BESZEL` | `0` | Run the agent |
+| `BESZEL_HUB_URL` | _(empty)_ | Hub URL |
+| `BESZEL_KEY` | _(empty)_ | Hub public key (quote it — it has a space) |
+| `BESZEL_TOKEN` | _(empty)_ | Universal/system token (plaintext in the 644 conf, LAN-only) |
+| `BESZEL_LISTEN` | `45876` | Agent listen port (hub SSH fallback) |
+
+**Check it:**
+
+```bash
+llm-status | grep beszel        # daemon running, has a PID
+llm-logs beszel-agent           # wrong key/token/URL shows up here
+sudo llm-restart beszel         # restart after changing a BESZEL_* key
+```
+
+The weekly autoupdate upgrades the formula (`brew upgrade`) and restarts the agent.
+
+---
+
 ## Home Assistant Voice Assistant (Wyoming)
 
 Separate from the MQTT bridge above — this gives Home Assistant's **Assist** voice

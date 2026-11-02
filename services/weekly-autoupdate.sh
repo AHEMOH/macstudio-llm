@@ -130,6 +130,7 @@ fi
 [ "${INSTALL_DOCLING:-1}" = "1" ] && { /bin/launchctl kickstart -k system/com.local.docling.proxy 2>/dev/null || true; }
 /bin/launchctl kickstart -k system/com.local.node.exporter  2>/dev/null || true
 /bin/launchctl kickstart -k system/com.local.silicon.exporter 2>/dev/null || true
+[ "${INSTALL_BESZEL:-0}" = "1" ]  && { /bin/launchctl kickstart -k system/com.local.beszel.agent 2>/dev/null || true; }
 
 step "macOS updates (password-free items install; OS updates notify-only)"
 FLAG_DIR=/var/macstudio

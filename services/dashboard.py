@@ -112,6 +112,7 @@ SERVICES = [
     ("com.local.vncfilter",         "Remote Desktop (VNC-Filter)", "always"),
     ("com.local.novnc",             "Remote Desktop (noVNC)",      "always"),
     ("com.local.paperless.ocr",     "Paperless Apple-OCR",         "always"),
+    ("com.local.beszel.agent",      "Beszel-Agent",                "always"),
 ]
 ALL_LABELS = {lbl for lbl, _n, _k in SERVICES}
 
@@ -147,6 +148,7 @@ LABEL_LOG = {
     "com.local.vncfilter": "vncfilter.log",
     "com.local.novnc": "novnc.log",
     "com.local.paperless.ocr": "paperless-ocr.log",
+    "com.local.beszel.agent": "beszel-agent.log",
 }
 
 
@@ -256,6 +258,8 @@ def active_labels():
             keep = c.get("INSTALL_NOVNC", "1") == "1" and c.get("INSTALL_REMOTE", "1") == "1"
         elif lbl == "com.local.paperless.ocr":
             keep = c.get("INSTALL_PAPERLESS_OCR", "0") == "1"
+        elif lbl == "com.local.beszel.agent":
+            keep = c.get("INSTALL_BESZEL", "0") == "1"
         else:
             keep = True
         if keep:

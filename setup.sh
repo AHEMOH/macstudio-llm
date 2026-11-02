@@ -50,6 +50,7 @@ ALWAYS_ON_LABELS=(
   com.local.vncfilter
   com.local.novnc
   com.local.paperless.ocr
+  com.local.beszel.agent
 )
 # On-demand backends (KeepAlive=false, RunAtLoad=false)
 ONDEMAND_LABELS=(
@@ -167,6 +168,11 @@ CONFIG_KEYS=(
   NOVNC_PORT
   VNC_FILTER_PORT
   VNC_PASSWORD
+  INSTALL_BESZEL
+  BESZEL_HUB_URL
+  BESZEL_KEY
+  BESZEL_TOKEN
+  BESZEL_LISTEN
   INSTALL_PAPERLESS_OCR
   PAPERLESS_OCR_URL
   PAPERLESS_OCR_TOKEN
@@ -317,6 +323,11 @@ config_default() {
     NOVNC_PORT)                  echo 6080 ;;
     VNC_FILTER_PORT)             echo 5901 ;;
     VNC_PASSWORD)                echo "" ;;
+    INSTALL_BESZEL)              echo 0 ;;
+    BESZEL_HUB_URL)              echo "" ;;
+    BESZEL_KEY)                  echo "" ;;
+    BESZEL_TOKEN)                echo "" ;;
+    BESZEL_LISTEN)               echo 45876 ;;
     INSTALL_PAPERLESS_OCR)       echo 0 ;;
     PAPERLESS_OCR_URL)           echo "" ;;
     PAPERLESS_OCR_TOKEN)         echo "" ;;
@@ -449,6 +460,11 @@ config_hint() {
     NOVNC_PORT)                  echo "Public HTTP port the noVNC browser bridge binds (default 6080). Open http://<mac>:6080/vnc.html" ;;
     VNC_FILTER_PORT)             echo "Port for com.local.vncfilter (default 5901): a tiny proxy in front of :5900 that strips macOS' Apple/ARD auth offer from the RFB handshake, leaving only VNC-password auth. Point Windows VNC clients AND the noVNC bridge here instead of :5900 so both use the single shared VNC_PASSWORD" ;;
     VNC_PASSWORD)                echo "Screen Sharing / VNC password (max 8 chars — legacy VNC/DES limit). Plaintext in this 644 conf — LAN-only, like MQTT_PASS. Empty = auto-generated (8 random chars) on the next --apply; used by both the Windows VNC client and the browser (noVNC), both connecting via VNC_FILTER_PORT" ;;
+    INSTALL_BESZEL)              echo "1 = run the Beszel monitoring agent (brew henrygd/beszel/beszel-agent) as a ROOT LaunchDaemon, so it reports to the hub from boot without anyone logged in (brew services would only run while TARGET_USER is logged in). Connects OUT to BESZEL_HUB_URL. Needs BESZEL_HUB_URL/KEY/TOKEN set" ;;
+    BESZEL_HUB_URL)              echo "Beszel hub URL (e.g. http://vm.home.arpa:8090). Empty = agent refuses to start" ;;
+    BESZEL_KEY)                  echo "The hub's public SSH key (ssh-ed25519 AAAA…), from the hub's 'Add system' dialog. Quote it — it contains a space" ;;
+    BESZEL_TOKEN)                echo "Beszel universal/system token for self-registration. Plaintext in this 644 conf — LAN-only, like MQTT_PASS. After the first registration the agent keeps its fingerprint in /var/macstudio/beszel, so a disabled universal token does not break it" ;;
+    BESZEL_LISTEN)               echo "Port the Beszel agent also listens on for the hub's SSH fallback (default 45876)" ;;
     INSTALL_PAPERLESS_OCR)       echo "1 = run the Apple-Vision searchable-PDF worker for paperless-ngx (gateway inbox + tag-triggered retro-fix). Opt-in (default 0): needs PAPERLESS_OCR_URL + _TOKEN" ;;
     PAPERLESS_OCR_URL)           echo "Base URL of your paperless-ngx (e.g. http://paperless.home.arpa:8000). Empty = worker idles" ;;
     PAPERLESS_OCR_TOKEN)         echo "paperless-ngx API token (Settings -> API token). Plaintext in this 644 conf — LAN-only, like MQTT_PASS. Empty = worker idles" ;;
@@ -686,6 +702,7 @@ motd_services() {
   fi
   [ "${INSTALL_PAPERLESS_OCR:-0}" = 1 ] && other+=("paperless-ocr")
   [ "${INSTALL_MQTT:-0}" = 1 ] && other+=("MQTT → HA")
+  [ "${INSTALL_BESZEL:-0}" = 1 ] && other+=("beszel-agent :${BESZEL_LISTEN:-45876}")
   [ "${INSTALL_EXPORTERS:-0}" = 1 ] && other+=("exporters :${NODE_EXPORTER_PORT:-9100}/${SILICON_EXPORTER_PORT:-9101}/${ONDEMAND_EXPORTER_PORT:-9103}")
   local first=1
   _motd_line() {   # _motd_line <label> <items...>
@@ -788,6 +805,8 @@ load_config() {
         { [ "${INSTALL_NOVNC:-1}" = 1 ] && [ "${INSTALL_REMOTE:-1}" = 1 ]; } || continue ;;
       com.local.paperless.ocr)
         [ "${INSTALL_PAPERLESS_OCR:-0}" = 1 ] || continue ;;
+      com.local.beszel.agent)
+        [ "${INSTALL_BESZEL:-0}" = 1 ] || continue ;;
     esac
     ACTIVE_LABELS+=("$_lbl")
   done
@@ -843,6 +862,7 @@ label_log() {
     com.local.vncfilter)         echo "$LOG_DIR/vncfilter.log" ;;
     com.local.novnc)             echo "$LOG_DIR/novnc.log" ;;
     com.local.paperless.ocr)     echo "$LOG_DIR/paperless-ocr.log" ;;
+    com.local.beszel.agent)      echo "$LOG_DIR/beszel-agent.log" ;;
     *) echo "$LOG_DIR/${1#com.local.}.log" ;;
   esac
 }
@@ -1050,6 +1070,13 @@ ensure_formulas() {
     ensure_formula colima
     ensure_formula docker
     ensure_formula docker-compose
+  fi
+  # Beszel agent comes from the vendor's own tap. Newer brew refuses formulae from
+  # untrusted third-party taps until `brew trust` — best-effort, older brew lacks it.
+  if [ "${INSTALL_BESZEL:-0}" = 1 ]; then
+    brew_ tap | /usr/bin/grep -qx henrygd/beszel || brew_ tap henrygd/beszel || warn "brew tap henrygd/beszel failed"
+    brew_ trust henrygd/beszel/beszel-agent >/dev/null 2>&1 || true
+    ensure_formula henrygd/beszel/beszel-agent
   fi
 }
 
@@ -2739,6 +2766,11 @@ render_all_plists() {
         # needs its own venv (ocrmac/pymupdf/requests). It chowns the files it writes back to
         # TARGET_USER so archived originals stay reachable over SMB.
         [ "${INSTALL_PAPERLESS_OCR:-0}" = 1 ] || { remove_plist "$label"; /bin/rm -f /var/macstudio/paperless-ocr-status; continue; } ;;
+      com.local.beszel.agent)
+        # Beszel monitoring agent (brew). ROOT daemon, not `brew services` (a LaunchAgent
+        # that only runs while TARGET_USER is logged in — nobody is after a reboot) and
+        # not TARGET_USER (Local Network Privacy blocks non-Apple binaries from the LAN).
+        [ "${INSTALL_BESZEL:-0}" = 1 ] || { remove_plist "$label"; continue; } ;;
     esac
     local before_hash; before_hash=$(hash_file "$dst")
     render_template "$src" "$dst" 644 root:wheel || true
@@ -2938,6 +2970,14 @@ mqtt_apply_warnings() {
   fi
 }
 
+beszel_apply_warnings() {
+  [ "${INSTALL_BESZEL:-0}" = 1 ] || return 0
+  if [ -z "${BESZEL_HUB_URL:-}" ] || [ -z "${BESZEL_KEY:-}" ] || [ -z "${BESZEL_TOKEN:-}" ]; then
+    warn "INSTALL_BESZEL=1 but BESZEL_HUB_URL/BESZEL_KEY/BESZEL_TOKEN not all set — the agent won't start."
+    warn "  set them: sudo bash setup.sh --set-config BESZEL_HUB_URL '…' (same for _KEY/_TOKEN), then --apply"
+  fi
+}
+
 apply_everything() {
   need_root "$@"
   # Serialize apply runs: the weekly autoupdate daemon, the TUI, an MQTT-driven
@@ -2984,6 +3024,7 @@ apply_everything() {
   dbg "step: ensure_dashboard_token";  ensure_dashboard_token
   dbg "step: render_all_plists";      render_all_plists
   dbg "step: mqtt_apply_warnings";    mqtt_apply_warnings
+  dbg "step: beszel_apply_warnings";  beszel_apply_warnings
   dbg "step: render_motd";            render_motd
   dbg "step: apply_iogpu_wired_limit"; apply_iogpu_wired_limit
   dbg "step: apply_pmset";            apply_pmset
@@ -3135,9 +3176,11 @@ menu_select_services() {
       INSTALL_REMOTE    "$(onoff_label "${INSTALL_REMOTE:-1}")" "${VNC_FILTER_PORT:-5901}"
     printf "  9) %-18s [%s]   Browser VNC bridge (noVNC) :%s/vnc.html — needs #8\n" \
       INSTALL_NOVNC     "$(onoff_label "${INSTALL_NOVNC:-1}")" "${NOVNC_PORT:-6080}"
+    printf " 10) %-18s [%s]   Beszel monitoring agent -> hub %s\n" \
+      INSTALL_BESZEL    "$(onoff_label "${INSTALL_BESZEL:-0}")" "${BESZEL_HUB_URL:-<unset>}"
     echo
     echo "   a) Apply these choices now     q) Back (don't apply)"
-    read -r -p "Toggle which? [1-9 / a / q]: " c
+    read -r -p "Toggle which? [1-10 / a / q]: " c
     case "$c" in
       1) toggle_install_flag INSTALL_MLX       ;;
       2) toggle_install_flag INSTALL_IMMICH    ;;
@@ -3148,6 +3191,7 @@ menu_select_services() {
       7) toggle_install_flag INSTALL_DASHBOARD ;;
       8) toggle_install_flag INSTALL_REMOTE    ;;
       9) toggle_install_flag INSTALL_NOVNC    ;;
+      10) toggle_install_flag INSTALL_BESZEL  ;;
       a|A) apply_everything; pause_enter; return 0 ;;
       q|Q|"") return 0 ;;
       *) warn "unknown: $c"; sleep 1 ;;

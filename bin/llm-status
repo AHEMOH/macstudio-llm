@@ -39,6 +39,7 @@ LABELS=(
   "com.local.vncfilter"
   "com.local.novnc"
   "com.local.paperless.ocr"
+  "com.local.beszel.agent"
   "com.local.llm.watchdog"
   "com.local.preventsleep"
   "com.local.iogpu.wiredlimit"
