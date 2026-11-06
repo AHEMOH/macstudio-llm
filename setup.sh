@@ -116,6 +116,7 @@ CONFIG_KEYS=(
   INSTALL_VOICE
   VOICE_PROJECT_DIR
   VOICE_REPO_REF
+  VOICE_STT_MODEL
   VOICESTT_PUBLIC_PORT
   VOICESTT_BACKEND_PORT
   IDLE_TIMEOUT_VOICESTT
@@ -244,7 +245,7 @@ config_default() {
     LLM_REQUEST_TIMEOUT)         echo 3600 ;;
     TEXT_ENGINE)                 echo omlx ;;
     OMLX_REPO)                   echo https://github.com/jundot/omlx ;;
-    OMLX_REPO_REF)               echo v0.7.3rc1 ;;
+    OMLX_REPO_REF)               echo v0.7.3 ;;
     OMLX_PROJECT_DIR)            echo /Users/mac/projects/omlx ;;
     OMLX_MODEL_DIR)              echo /Users/mac/.cache/omlx-models ;;
     OMLX_MEMORY_GUARD_GB)        echo 30 ;;
@@ -273,7 +274,8 @@ config_default() {
     MFLUX_MODEL_DIR)             echo /Users/mac/.cache/mflux-models ;;
     INSTALL_VOICE)               echo 0 ;;
     VOICE_PROJECT_DIR)           echo /Users/mac/projects/macos-speech-server ;;
-    VOICE_REPO_REF)              echo 211c5dec4a24afa991c9b1c76ab9482eb979cda1 ;;
+    VOICE_REPO_REF)              echo cce7bafc126e65bb72765a12a1b024c6c02c603e ;;
+    VOICE_STT_MODEL)             echo ultra ;;
     VOICESTT_PUBLIC_PORT)        echo 5006 ;;
     VOICESTT_BACKEND_PORT)       echo 15006 ;;
     IDLE_TIMEOUT_VOICESTT)       echo -1 ;;
@@ -396,7 +398,7 @@ config_hint() {
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
     TEXT_ENGINE)                 echo "Engine serving 'main'/'embed'/'rerank': omlx (UNIFIED text+images+embed+rerank in ONE process, SSD paged-prefix-cache, continuous batching). The only supported engine" ;;
     OMLX_REPO)                   echo "Git URL of oMLX (jundot/omlx), cloned+editable-installed into OMLX_PROJECT_DIR" ;;
-    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.7.3rc1, alpha-stage — RC exception 2026-10-30 (after the v0.7.3.dev1 DEV-tag exception of 2026-10-24: +6-12% decode/prefill for gemma4 on M1 Max): Metal relaxed context-store timeout on pre-M5 Macs against 0000000e errors in long prefills, memory guard re-reads iogpu.wired_limit_mb, incomplete_tool_call error instead of raw text, per-model activation_fp16_enabled (M1/M2 "Float16 Activations", seeded via OMLX_ACTIVATION_FP16=1 after the 2026-10-30 A/B); return to stable tags at v0.7.3) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; v0.7.0 pinned 2026-10-10 — rebuilt memory guard (--memory-guard-gb unchanged), M1 Max native-decode threadgroup fix, mlx 0.32.2 + custom kernels built at pip install; expect one SSD-prefix-cache cold start per model after a bump)" ;;
+    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.7.3, stable 2026-10-31 — back to stable-tag discipline after the v0.7.3rc1 RC exception of 2026-10-30 (after the v0.7.3.dev1 DEV-tag exception of 2026-10-24: +6-12% decode/prefill for gemma4 on M1 Max): Metal relaxed context-store timeout on pre-M5 Macs against 0000000e errors in long prefills, memory guard re-reads iogpu.wired_limit_mb, incomplete_tool_call error instead of raw text, per-model activation_fp16_enabled (M1/M2 "Float16 Activations", seeded via OMLX_ACTIVATION_FP16=1); v0.7.3 final adds the stuck-prefill-memory-guard fix and in-place batch KV cache updates) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; v0.7.0 pinned 2026-10-10 — rebuilt memory guard (--memory-guard-gb unchanged), M1 Max native-decode threadgroup fix, mlx 0.32.2 + custom kernels built at pip install; expect one SSD-prefix-cache cold start per model after a bump)" ;;
     OMLX_PROJECT_DIR)            echo "Where ensure_omlx_project() clones+builds oMLX (git clone + pip install -e, one-time + on ref bump during --apply)" ;;
     OMLX_MODEL_DIR)              echo "--model-dir symlink farm (one <org>--<name> HF-repo entry per downloaded row) that makes every model — main AND embed/rerank — discoverable by the one resident oMLX process under its real HF repo name" ;;
     OMLX_MEMORY_GUARD_GB)        echo "oMLX's soft RAM ceiling (--memory-guard-gb) — matches the project's 30GB wired-memory hard rule. oMLX has no hard --max-kv-size-equivalent flag" ;;
@@ -425,7 +427,8 @@ config_hint() {
     MFLUX_MODEL_DIR)             echo "Where ensure_mflux_model() saves the pre-quantized checkpoint (mflux-save, one-time during --apply). Subdirectory name is <MFLUX_MODEL>-q<MFLUX_QUANTIZE>" ;;
     INSTALL_VOICE)               echo "1 = run two on-demand voice backends exposed via LiteLLM as 'stt'/'tts' aliases for OpenWebUI's native voice input/output: Speech-to-Text via FluidAudio's macos-speech-server (Parakeet, Apple Neural Engine — measured zero GPU contention with the resident main LLM) and Text-to-Speech via macOS's own 'say' (faster and bug-free vs. macos-speech-server's bundled TTS, see CLAUDE.md). Opt-in (default 0) — NOT part of the model catalog, same reasoning as INSTALL_IMAGES" ;;
     VOICE_PROJECT_DIR)           echo "Where ensure_voice_project() clones+builds FluidAudio's macos-speech-server (git clone + swift build -c release, one-time during --apply, several minutes)" ;;
-    VOICE_REPO_REF)              echo "Pinned macos-speech-server commit — full 40-char SHA so it stays fetchable (default = upstream HEAD as of 2026-10-28, 211c5de: includes the upstream Wyoming close-on-EOF fix #42 and GET /health). Same pin discipline as OMLX_REPO_REF; bump deliberately + --apply. Any local patches/macos-speech-server-*.patch must still apply — if upstream merges an equivalent fix, retire the patch instead of fighting the conflict (done 2026-09-16 for Wyoming-languages, 2a03e7d, and 2026-10-30 for Wyoming close-on-EOF, #42)" ;;
+    VOICE_REPO_REF)              echo "Pinned macos-speech-server commit — full 40-char SHA so it stays fetchable (default = upstream HEAD as of 2026-11-02, cce7baf: FluidAudio 0.17.7 + Parakeet Ultra, Qwen3 STT engine removed; includes the Wyoming close-on-EOF fix #42 and GET /health). Same pin discipline as OMLX_REPO_REF; bump deliberately + --apply. Any local patches/macos-speech-server-*.patch must still apply — if upstream merges an equivalent fix, retire the patch instead of fighting the conflict (done 2026-09-16 for Wyoming-languages, 2a03e7d, and 2026-10-30 for Wyoming close-on-EOF, #42)" ;;
+    VOICE_STT_MODEL)             echo "Parakeet model for stt + the Wyoming/Home-Assistant STT: ultra (default since 2026-11-06 — post-trained v3, same 25 languages and speed, lower WER, ~630 MB downloaded on first start) | v3 (Parakeet TDT 0.6B v3, multilingual) | v2 (English-only). Upstream rejects any other value at startup, so setup.sh falls back to v3 with a warning" ;;
     VOICESTT_PUBLIC_PORT)        echo "Public on-demand-proxy port for the Speech-to-Text backend (default 5006)" ;;
     VOICESTT_BACKEND_PORT)       echo "Internal port the speech-server binary binds (127.0.0.1 only, default 15006)" ;;
     IDLE_TIMEOUT_VOICESTT)       echo "Seconds before the STT backend sleeps; default -1 = never sleep. Deliberately kept warm — this backend is shared by TWO independent on-demand proxies (com.local.voicestt.proxy for LiteLLM's 'stt' HTTP alias, com.local.voicewyoming.proxy for Home Assistant), and letting either one auto-sleep it would fight the other's wake cycle. Small footprint either way (~200MB Parakeet model)" ;;
@@ -1897,13 +1900,13 @@ ensure_omlx_project() {
   # $VENV_DIR/omlx (matches litellm/mflux — every wrapper execs
   # "$VENV_DIR/<name>/bin/...", zero special-casing needed).
   #
-  # OMLX_REPO_REF is a PINNED TAG (v0.7.3rc1), not a floating branch: we
+  # OMLX_REPO_REF is a PINNED TAG (v0.7.3), not a floating branch: we
   # `fetch` + explicit `checkout "$ref"` every run — a no-op when already on
   # that tag.
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   local dir="${OMLX_PROJECT_DIR:-$TARGET_HOME/projects/omlx}"
   local repo="${OMLX_REPO:-https://github.com/jundot/omlx}"
-  local ref="${OMLX_REPO_REF:-v0.7.3rc1}"
+  local ref="${OMLX_REPO_REF:-v0.7.3}"
   local vdir="${VENV_DIR:-/Users/mac/.macstudio-venvs}/omlx"
   local changed=0
 
@@ -2264,7 +2267,7 @@ ensure_voice_project() {
   # boundary silence-dropping bug).
   [ "${INSTALL_VOICE:-0}" = 1 ] || return 0
   local dir="${VOICE_PROJECT_DIR:-/Users/mac/projects/macos-speech-server}"
-  local ref="${VOICE_REPO_REF:-efc40c1fb307ebdf124b6dd9680fa79fb11e2ed5}"
+  local ref="${VOICE_REPO_REF:-cce7bafc126e65bb72765a12a1b024c6c02c603e}"
   local port="${VOICESTT_BACKEND_PORT:-15006}"
   local wport="${VOICE_WYOMING_BACKEND_PORT:-15008}"
 
@@ -2351,6 +2354,14 @@ ensure_voice_project() {
   # for consistency. Its sentence-concatenation silence-dropping bug (see
   # CLAUDE.md) only matters for multi-sentence input; HA voice-assistant
   # replies are typically one short sentence, so it's a non-issue here.
+  # stt.parakeet.model_version is a strict enum upstream since cce7baf
+  # (v2|v3|ultra) — any other value fails config parsing and the server never
+  # comes up, so a typo in the conf falls back to v3 here instead.
+  local stt_model="${VOICE_STT_MODEL:-ultra}"
+  case "$stt_model" in
+    v2|v3|ultra) ;;
+    *) warn "VOICE_STT_MODEL='$stt_model' is not v2|v3|ultra — using v3"; stt_model=v3 ;;
+  esac
   local yaml_before; yaml_before=$(hash_file "$dir/speech-server.yaml")
   cat >"$dir/speech-server.yaml" <<YAML
 log_level: notice
@@ -2364,7 +2375,7 @@ servers:
 stt:
   engine: parakeet
   parakeet:
-    model_version: v3
+    model_version: $stt_model
 tts:
   engine: avspeech
   avspeech:
@@ -3901,7 +3912,7 @@ menu_models() {
 menu_updates() {
   load_config
   printf "\n${C_BOLD}── Check for updates (read-only) ──────────────${C_RST}\n"
-  printf "oMLX pin: OMLX_REPO_REF=%s   (engine — frozen unless you bump it)\n\n" "${OMLX_REPO_REF:-v0.7.3rc1}"
+  printf "oMLX pin: OMLX_REPO_REF=%s   (engine — frozen unless you bump it)\n\n" "${OMLX_REPO_REF:-v0.7.3}"
   local odir="${OMLX_PROJECT_DIR:-/Users/mac/projects/omlx}"
   if [ -d "$odir/.git" ]; then
     local installed latest
