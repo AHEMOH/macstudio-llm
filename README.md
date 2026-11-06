@@ -13,7 +13,7 @@ Designed for a 32 GB M1 Max but scales unchanged to bigger Apple Silicon — jus
 raise a couple of config keys.
 
 > **Text engine — oMLX.** The always-on backend is **oMLX**
-> (pinned `OMLX_REPO_REF=v0.7.3rc1`), serving **one unified multimodal
+> (pinned `OMLX_REPO_REF=v0.7.3`), serving **one unified multimodal
 > model** that handles **text *and* images in the same chat** plus tool calling —
 > AND, in the SAME process, the BGE embed/rerank pair — with an SSD
 > paged-prefix-cache and continuous batching. The default main is `gemma4-26b-qat`
@@ -31,10 +31,9 @@ raise a couple of config keys.
   model's chat template. For Gemma 4, `setup.sh` overlays Google's canonical
   2026-07-09 chat template (better multi-turn tool calling) into the model-dir
   farm, because the mlx-community repos still ship the older June revision.
-  Version pinned via `OMLX_REPO_REF` (v0.7.3rc1, 2026-10-30 — a deliberate
-  pre-release exception, following v0.7.3.dev1, which measured +6–12% decode and prefill
-  for gemma4 on the M1 Max vs v0.7.0; rc1 adds a Metal-timeout fix for long
-  prefills on pre-M5 Macs. Back to stable tags from v0.7.3 on). oMLX's native Metal kernels are built with `make kernels`,
+  Version pinned via `OMLX_REPO_REF` (v0.7.3, stable, 2026-11-06 — the
+  v0.7.3 line measured +6–12% decode and prefill for gemma4 on the M1 Max vs v0.7.0,
+  plus a Metal-timeout fix for long prefills on pre-M5 Macs). oMLX's native Metal kernels are built with `make kernels`,
   which needs full Xcode (see *Prerequisites*).
 - **LiteLLM gateway** on the public port (:11434): apps talk OpenAI `/v1` (and
   Anthropic `/v1/messages`) to the stable aliases — `main` (text + images, reasons by
@@ -424,7 +423,7 @@ use the menu) to change a live box.
 | `MAIN_BACKEND_PORT` | `18000` | Internal port `oMLX` binds (serves main + embed + rerank) |
 | `LLM_REQUEST_TIMEOUT` | `3600` | Per-request timeout (s) for the text engine **and** LiteLLM; long docs/OCR |
 | `TEXT_ENGINE` | `omlx` | The engine (`oMLX`) — one unified process for main (text+images+tools) + embed + rerank |
-| `OMLX_REPO` / `OMLX_REPO_REF` | `github.com/jundot/omlx` / `v0.7.3rc1` | Git source + pinned tag for the `omlx` venv (alpha-stage, not on PyPI) |
+| `OMLX_REPO` / `OMLX_REPO_REF` | `github.com/jundot/omlx` / `v0.7.3` | Git source + pinned tag for the `omlx` venv (alpha-stage, not on PyPI) |
 | `OMLX_PROJECT_DIR` | `/Users/mac/projects/omlx` | Where the oMLX git checkout lives |
 | `OMLX_MODEL_DIR` | `/Users/mac/.cache/omlx-models` | `--model-dir` symlink farm making every downloaded model discoverable |
 | `OMLX_MEMORY_GUARD_GB` | `30` | Soft RAM ceiling for the one oMLX process (`--memory-guard-gb`) |
@@ -452,7 +451,8 @@ use the menu) to change a live box.
 | `INSTALL_VOICE` | `0` | Speech-to-Text (`stt`) + Text-to-Speech (`tts`) — **off by default** |
 | `INSTALL_IMMICH` | `0` | Immich-ML backend (official image under Colima, :3003) — **off by default** (needs a running Immich server) |
 | `VOICE_PROJECT_DIR` | `/Users/mac/projects/macos-speech-server` | Where FluidAudio's `macos-speech-server` is cloned+built |
-| `VOICE_REPO_REF` | `211c5de…` (full SHA) | Pinned `macos-speech-server` commit — bump deliberately, then `--apply` (same discipline as `OMLX_REPO_REF`) |
+| `VOICE_REPO_REF` | `cce7baf…` (full SHA) | Pinned `macos-speech-server` commit — bump deliberately, then `--apply` (same discipline as `OMLX_REPO_REF`) |
+| `VOICE_STT_MODEL` | `ultra` | Parakeet model for `stt` and Home Assistant: `ultra` (lower error rate, same 25 languages), `v3`, or `v2` (English only) |
 | `VOICESTT_PUBLIC_PORT` / `VOICESTT_BACKEND_PORT` | `5006` / `15006` | Speech-to-Text ports (proxy / backend) |
 | `IDLE_TIMEOUT_VOICESTT` / `STARTUP_TIMEOUT_VOICESTT` | `900` / `60` | STT idle-to-sleep / wake-deadline seconds |
 | `VOICETTS_PUBLIC_PORT` / `VOICETTS_BACKEND_PORT` | `5007` / `15007` | Text-to-Speech ports (proxy / backend) |

@@ -322,8 +322,8 @@ default `10300`, fronted by its own always-on proxy `com.local.voicewyoming.prox
 **Non-English languages (e.g. Russian) in the pipeline language picker:**
 `macos-speech-server` advertises each provider's real languages over Wyoming
 since upstream commit `2a03e7d` (2026-09-11, included in the pinned
-`VOICE_REPO_REF`): the multilingual Parakeet v3 ASR model is reported with all
-25 of its languages (incl. Russian and German), and every AVSpeechSynthesizer
+`VOICE_REPO_REF`): the multilingual Parakeet ASR model (`VOICE_STT_MODEL`, default
+`ultra`; `v3` reports the same) is reported with all 25 of its languages (incl. Russian and German), and every AVSpeechSynthesizer
 TTS voice carries its real locale, so voices like Katya/Milena/Yuri show up
 tagged `ru` and HA's pipeline language dropdown offers Russian. (Older upstream
 builds hardcoded "en" for everything — this repo carried a local patch for that
