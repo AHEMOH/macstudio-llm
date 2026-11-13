@@ -202,7 +202,9 @@ ACCEPT_EXTS = {".pdf"} | IMAGE_EXTS
 
 
 def log(msg):
-    print(f"[paperless-ocr] {msg}", flush=True)
+    # Timestamped so intermittent failures (e.g. the sporadic docs.home.arpa DNS
+    # misses seen 2026-11) can be placed in time — the log used to have none.
+    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [paperless-ocr] {msg}", flush=True)
 
 
 # ------------------------------------------------------------------------- OCR core
@@ -2190,6 +2192,10 @@ def _loop(fn, interval, name, wake_on_command=False):
     while True:
         try:
             fn()
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            # Transient network/DNS miss: one line, no ~25-line traceback. The loop
+            # retries after `interval` either way.
+            log(f"{name} loop: paperless unreachable ({type(e).__name__}): {e}")
         except Exception as e:
             log(f"{name} loop error: {e}\n{traceback.format_exc()}")
         if wake_on_command:
