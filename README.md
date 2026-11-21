@@ -360,6 +360,10 @@ and recreate the container only when the image actually changed.
 onwards: faster, less RAM, and no re-index needed. The on-demand backend sleeps when idle. Point your
 Immich server at `http://<mac>:3003` — see INTEGRATIONS.md.
 
+If the Colima VM is down (for example after a reboot), `--apply` and the weekly autoupdate
+start it again and say why it was down. Check by hand with
+`sudo -u colima-svc -H colima status`.
+
 ## Hardware assumptions
 
 - **Apple Silicon** (M1–M5, any variant).

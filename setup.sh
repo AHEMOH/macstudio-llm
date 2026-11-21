@@ -1201,22 +1201,91 @@ ensure_immich_ml_container() {
   fi
 
   # Colima's OWN launchd registration — not something this project renders/owns
-  # (see comment above). Idempotent (`brew services start` on an already-running
-  # service is a no-op). Best-effort: with no GUI/Aqua domain yet (e.g. running
-  # --apply over plain SSH before anyone has auto-logged-in once), the live
-  # start can fail even though the LaunchAgent file is still registered —
-  # auto-login picks it up for real on the next actual boot.
-  /usr/bin/sudo -u "$session_user" -H "$brew" services start colima >/dev/null 2>&1 \
-    || warn "colima did not start live (no GUI/Aqua session yet?) — it will start automatically once $session_user auto-logs in at boot"
+  # (see comment above): `brew services start colima` writes
+  # ~/Library/LaunchAgents/homebrew.mxcl.colima.plist (RunAtLoad, `colima start
+  # -f`), and auto-login loads it into gui/<uid> on every boot. Relying on
+  # `brew services start` alone failed in three ways — found 2026-11-21, when
+  # the VM had been down for six days after a reboot although the session user
+  # WAS logged in, and --apply only said "no GUI/Aqua session yet?":
+  #   1. The agent logs to <brew prefix>/var/log/colima.log. That directory
+  #      belongs to the Homebrew owner; the non-admin session user cannot create
+  #      a file there, so launchd fails the job with exit 78 (EX_CONFIG, "spawn
+  #      failed") before colima even runs. Create the file, hand it over.
+  #   2. `brew services` run by a non-owner dies on a Homebrew API lock it may
+  #      not write ("Permission denied … locks/…download.lock") unless
+  #      auto-update is off — and through sudo it talks to the user/<uid>
+  #      domain, not the gui/<uid> one the agent lives in.
+  #   3. An EXISTING but stopped instance was never started; only a missing one
+  #      was (above).
+  # So: register the agent once via brew, keep its log writable, and start a
+  # stopped VM through launchd in the session user's own gui domain. A plain
+  # `colima start` is the fallback while that domain does not exist yet.
+  local suid; suid=$(/usr/bin/id -u "$session_user")
+  local agent_label="homebrew.mxcl.colima"
+  local agent_plist="/Users/$session_user/Library/LaunchAgents/$agent_label.plist"
+  if [ ! -f "$agent_plist" ]; then
+    /usr/bin/sudo -u "$session_user" -H /usr/bin/env HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1 \
+        "$brew" services start colima >/dev/null 2>&1 \
+      || warn "immich-ml: could not register the Colima LaunchAgent (brew services start colima as $session_user) — Colima will not start by itself after a reboot"
+  fi
+  local agent_log=""
+  [ -f "$agent_plist" ] && agent_log=$(/usr/bin/plutil -extract StandardOutPath raw -o - "$agent_plist" 2>/dev/null || true)
+  [ -n "$agent_log" ] || agent_log="/opt/homebrew/var/log/colima.log"
+  if [ ! -f "$agent_log" ] || [ "$(/usr/bin/stat -f %Su "$agent_log" 2>/dev/null)" != "$session_user" ]; then
+    if /usr/bin/touch "$agent_log" 2>/dev/null && /usr/sbin/chown "$session_user" "$agent_log" 2>/dev/null; then
+      ok "immich-ml: $agent_log is now writable by $session_user (without it launchd fails the Colima LaunchAgent with exit 78)"
+    else
+      warn "immich-ml: could not create $agent_log for $session_user — the Colima LaunchAgent will fail with exit 78 at the next boot"
+    fi
+  fi
 
+  # _colima_docker_up <seconds> — wait until dockerd inside the VM answers.
   local waited=0
-  while [ $waited -lt 20 ] && ! /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" info >/dev/null 2>&1; do
-    /bin/sleep 1; waited=$((waited+1))
-  done
+  _colima_docker_up() {
+    local limit=$1 n=0
+    while ! /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" info >/dev/null 2>&1; do
+      [ $n -ge "$limit" ] && return 1
+      /bin/sleep 1; n=$((n+1)); waited=$((waited+1))
+    done
+    return 0
+  }
+
+  # A cold VM boot needs 15-30 s before dockerd answers; a running one answers
+  # at once, so only a start we triggered ourselves gets the long wait.
+  local colima_started=0
+  if /usr/bin/sudo -u "$session_user" -H "$colima" status >/dev/null 2>&1; then
+    _colima_docker_up 20 || true
+  elif /bin/launchctl print "gui/$suid" >/dev/null 2>&1 && [ -f "$agent_plist" ]; then
+    colima_started=1
+    log "immich-ml: Colima is not running — starting it through its LaunchAgent (gui/$suid/$agent_label)"
+    /bin/launchctl print "gui/$suid/$agent_label" >/dev/null 2>&1 \
+      || /bin/launchctl bootstrap "gui/$suid" "$agent_plist" >/dev/null 2>&1
+    /bin/launchctl kickstart "gui/$suid/$agent_label" >/dev/null 2>&1
+    if ! _colima_docker_up 45; then
+      # The agent's foreground `colima start -f` outlives its VM after a manual
+      # `colima stop`: launchd still sees a running job, so the plain kickstart
+      # above was a no-op. The VM is down either way — restart the job.
+      log "immich-ml: still down — restarting the LaunchAgent (its process can outlive a stopped VM)"
+      /bin/launchctl kickstart -k "gui/$suid/$agent_label" >/dev/null 2>&1
+      _colima_docker_up 90 || true
+    fi
+  else
+    colima_started=1
+    log "immich-ml: Colima is not running and $session_user has no GUI session — trying a plain colima start"
+    /usr/bin/sudo -u "$session_user" -H "$colima" start --cpu "$want_cpu" --memory "$want_mem_gb" >/dev/null 2>&1
+    _colima_docker_up 90 || true
+  fi
   if ! /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" info >/dev/null 2>&1; then
-    warn "colima/docker not reachable yet as $session_user — image pull/container setup deferred to the next --apply"
+    if ! /bin/launchctl print "gui/$suid" >/dev/null 2>&1; then
+      warn "colima/docker not reachable as $session_user: that account has no GUI session (auto-login off or not logged in yet) — image pull/container setup deferred to the next --apply"
+    else
+      local agent_exit
+      agent_exit=$(/bin/launchctl print "gui/$suid/$agent_label" 2>/dev/null | /usr/bin/sed -n 's/^[[:space:]]*last exit code = //p' | /usr/bin/head -1)
+      warn "colima/docker not reachable as $session_user although that account is logged in (LaunchAgent last exit: ${agent_exit:-unknown}; see $agent_log and: sudo -u $session_user -H colima status) — image pull/container setup deferred to the next --apply"
+    fi
     return 0
   fi
+  [ "$colima_started" = 1 ] && ok "immich-ml: Colima is up (docker answered after ${waited}s)"
 
   # Immich's image hardcodes MACHINE_LEARNING_MODEL_INTRA_OP_THREADS=2
   # regardless of how many vCPUs the container sees (confirmed against
@@ -1242,9 +1311,14 @@ ensure_immich_ml_container() {
   # Pull every run and compare image IDs instead. A failed pull (offline,
   # registry hiccup) keeps whatever image is already local — --apply must not
   # break on a network blip.
+  # One retry: the first pull right after a VM start died once with "failed to
+  # copy: failed to send write: EOF" (2026-11-21) and went through seconds later.
   log "immich-ml: checking $ref for a newer image"
-  "${dk[@]}" pull "$ref" >"$LOG_DIR/immich-pull.log" 2>&1 \
-    || warn "docker pull $ref failed (keeping the local image); see $LOG_DIR/immich-pull.log"
+  if ! "${dk[@]}" pull "$ref" >"$LOG_DIR/immich-pull.log" 2>&1; then
+    /bin/sleep 10
+    "${dk[@]}" pull "$ref" >>"$LOG_DIR/immich-pull.log" 2>&1 \
+      || warn "docker pull $ref failed twice (keeping the local image); see $LOG_DIR/immich-pull.log"
+  fi
   local want_id
   want_id=$("${dk[@]}" image inspect --format '{{.Id}}' "$ref" 2>/dev/null || true)
   if [ -z "$want_id" ]; then
