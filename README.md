@@ -31,9 +31,10 @@ raise a couple of config keys.
   model's chat template. For Gemma 4, `setup.sh` overlays Google's canonical
   2026-07-09 chat template (better multi-turn tool calling) into the model-dir
   farm, because the mlx-community repos still ship the older June revision.
-  Version pinned via `OMLX_REPO_REF` (v0.8.2, stable, 2026-11-21 — measured on the
-  M1 Max against v0.7.3: gemma4 decodes 4–5% faster and prefills 5–8% faster; v0.7.3
-  before it had brought +6–12% over v0.7.0). A short request that arrives while a long
+  Version pinned via `OMLX_REPO_REF` (v0.8.2, stable, 2026-11-21 — speed-neutral for
+  gemma4 on the M1 Max against v0.7.3: decode 2–4% faster, prefill up to 3% slower,
+  document extraction unchanged; v0.7.3 before it had brought +6–12% over v0.7.0).
+  A short request that arrives while a long
   document is still being read in waits until that prefill is done — unchanged in
   v0.8.2 (about 58 s behind a 28K-token document). oMLX's native Metal kernels are built with `make kernels`,
   which needs full Xcode (see *Prerequisites*).
