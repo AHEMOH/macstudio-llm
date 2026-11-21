@@ -1239,27 +1239,42 @@ ensure_immich_ml_container() {
     fi
   fi
 
-  local colima_started=0
-  if ! /usr/bin/sudo -u "$session_user" -H "$colima" status >/dev/null 2>&1; then
-    if /bin/launchctl print "gui/$suid" >/dev/null 2>&1 && [ -f "$agent_plist" ]; then
-      log "immich-ml: Colima is not running — starting it through its LaunchAgent (gui/$suid/$agent_label)"
-      /bin/launchctl print "gui/$suid/$agent_label" >/dev/null 2>&1 \
-        || /bin/launchctl bootstrap "gui/$suid" "$agent_plist" >/dev/null 2>&1
-      /bin/launchctl kickstart "gui/$suid/$agent_label" >/dev/null 2>&1
-    else
-      log "immich-ml: Colima is not running and $session_user has no GUI session — trying a plain colima start"
-      /usr/bin/sudo -u "$session_user" -H "$colima" start --cpu "$want_cpu" --memory "$want_mem_gb" >/dev/null 2>&1
-    fi
-    colima_started=1
-  fi
+  # _colima_docker_up <seconds> — wait until dockerd inside the VM answers.
+  local waited=0
+  _colima_docker_up() {
+    local limit=$1 n=0
+    while ! /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" info >/dev/null 2>&1; do
+      [ $n -ge "$limit" ] && return 1
+      /bin/sleep 1; n=$((n+1)); waited=$((waited+1))
+    done
+    return 0
+  }
 
   # A cold VM boot needs 15-30 s before dockerd answers; a running one answers
   # at once, so only a start we triggered ourselves gets the long wait.
-  local waited=0 wait_max=20
-  [ "$colima_started" = 1 ] && wait_max=90
-  while [ $waited -lt $wait_max ] && ! /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" info >/dev/null 2>&1; do
-    /bin/sleep 1; waited=$((waited+1))
-  done
+  local colima_started=0
+  if /usr/bin/sudo -u "$session_user" -H "$colima" status >/dev/null 2>&1; then
+    _colima_docker_up 20 || true
+  elif /bin/launchctl print "gui/$suid" >/dev/null 2>&1 && [ -f "$agent_plist" ]; then
+    colima_started=1
+    log "immich-ml: Colima is not running — starting it through its LaunchAgent (gui/$suid/$agent_label)"
+    /bin/launchctl print "gui/$suid/$agent_label" >/dev/null 2>&1 \
+      || /bin/launchctl bootstrap "gui/$suid" "$agent_plist" >/dev/null 2>&1
+    /bin/launchctl kickstart "gui/$suid/$agent_label" >/dev/null 2>&1
+    if ! _colima_docker_up 45; then
+      # The agent's foreground `colima start -f` outlives its VM after a manual
+      # `colima stop`: launchd still sees a running job, so the plain kickstart
+      # above was a no-op. The VM is down either way — restart the job.
+      log "immich-ml: still down — restarting the LaunchAgent (its process can outlive a stopped VM)"
+      /bin/launchctl kickstart -k "gui/$suid/$agent_label" >/dev/null 2>&1
+      _colima_docker_up 90 || true
+    fi
+  else
+    colima_started=1
+    log "immich-ml: Colima is not running and $session_user has no GUI session — trying a plain colima start"
+    /usr/bin/sudo -u "$session_user" -H "$colima" start --cpu "$want_cpu" --memory "$want_mem_gb" >/dev/null 2>&1
+    _colima_docker_up 90 || true
+  fi
   if ! /usr/bin/sudo -u "$session_user" -H /usr/bin/env "DOCKER_HOST=$DOCKER_HOST" "$docker" info >/dev/null 2>&1; then
     if ! /bin/launchctl print "gui/$suid" >/dev/null 2>&1; then
       warn "colima/docker not reachable as $session_user: that account has no GUI session (auto-login off or not logged in yet) — image pull/container setup deferred to the next --apply"
