@@ -45,6 +45,12 @@ Toggle `main-fast` with `PRESET_ALIASES`.
 can send `enable_thinking:false` to turn it off). **`main-fast` always runs without
 thinking** (suppressed at the gateway) — so `main-fast` is the fast/clean chat & tool path.
 
+**Forced tool calls belong on `main-fast`.** With `tool_choice: "required"` (or a named
+function) `main-fast` returned a tool call in 10 of 10 tries, `main` only in 8–9 of 12:
+after thinking, Gemma sometimes writes the call as plain text (`set_tags(tags=[…])`)
+instead of a real tool call. Clients that cannot work without one — paperless-ngx AI
+suggestions, agents with `tool_required` — should use `main-fast`.
+
 **Images:** the unified oMLX `main` is multimodal — send `image_url` straight to
 `main` (or `main-fast`). Document OCR is handled by the separate **paperless-ocr** service
 (Apple Vision, see below), not a gateway alias.
