@@ -76,13 +76,21 @@ for pair in "litellm:litellm" "mflux:mflux"; do
   vn=${pair%%:*}; pk=${pair##*:}
   py="$VENV_DIR/$vn/bin/python"; [ -x "$py" ] || continue
   "$py" - "$pk" <<'PY' 2>/dev/null || true
-import sys, json, urllib.request, importlib.metadata as M
+import sys, json, re, urllib.request, importlib.metadata as M
 pkg=sys.argv[1]
 try: cur=M.version(pkg)
 except Exception: cur="?"
 try:
     d=json.load(urllib.request.urlopen("https://pypi.org/pypi/%s/json"%pkg, timeout=8))
-    print("  %-10s installed=%s  latest_stable=%s"%(pkg,cur,d["info"]["version"]))
+    # litellm is pinned to an LTS line (1.108.x): the newest release of the
+    # INSTALLED line is the one to take; the overall latest is a newer minor
+    # and only FYI. Plain x.y.z versions only (no rc/dev), yanked ones skipped.
+    line=".".join(cur.split(".")[:2])
+    same=[v for v,f in d["releases"].items()
+          if re.fullmatch(r"\d+(\.\d+)+",v) and v.startswith(line+".")
+          and f and not all(x.get("yanked") for x in f)]
+    best=max(same,key=lambda v:tuple(int(x) for x in v.split("."))) if same else "?"
+    print("  %-10s installed=%s  newest_%s.x=%s  latest_overall=%s"%(pkg,cur,line,best,d["info"]["version"]))
 except Exception:
     print("  %-10s installed=%s  (pypi check n/a)"%(pkg,cur))
 PY
