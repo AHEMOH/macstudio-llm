@@ -1626,6 +1626,10 @@ ensure_novnc_assets() {
 CATALOG_DIR=/usr/local/etc/macstudio-models
 CATALOG_FILE="$CATALOG_DIR/catalog.tsv"
 LITELLM_CONFIG_FILE=/usr/local/etc/litellm.config.yaml
+# Set by ensure_python_venvs when the litellm pin changed the installed version;
+# render_litellm_config then restarts the gateway once, with the config that
+# version needs (see both functions).
+LITELLM_VENV_BUMPED=""
 
 # catalog_field <id> <column-number> — print a single field from the live
 # catalog, skipping comment lines. Columns (schema v7):
@@ -2266,19 +2270,31 @@ ensure_python_venvs() {
   # 2026 LiteLLM CVE is fixed at <= 1.84 — and 1.102.0's ~300 changes touch
   # guardrails/budgets/MCP/sidecars, nothing in the openai/infinity provider
   # paths we use; 1.103.x/1.104.x are new minors, not taken until there is a reason.
-  # The proxy daemon loads litellm at start, so a pin bump must
-  # kickstart it — handled right below via the before/after version compare.
+  # 2026-11-21: the 1.102.x line got its last release on 2026-10-08, so the
+  # pin moves to upstream's LTS line — 1.108.14 (LTS), the one line upstream
+  # labels long-term support and keeps patching (15 releases 11-04 … 11-20;
+  # carries the fixes for GHSA-2rwg and GHSA-4xm2, neither of which reached
+  # this DB-less, non-Azure setup). Take LTS patch releases from now on; a new
+  # minor only when a new LTS line is announced. ONE breaking change on the
+  # way: 1.108 refuses to start without a master-key decision — see
+  # render_litellm_config. Verified against the live config in a second venv on
+  # another port before the bump: thinking pins, forced/named tool calls,
+  # vision, embed, rerank (Infinity provider + return_documents:false still
+  # needed and working), /v1/messages, streaming with usage, stt, tts, image.
+  # The proxy daemon loads litellm at start, so a pin bump must restart it —
+  # but NOT here: a new LiteLLM can need a config key the file on disk does not
+  # carry yet, and restarting now would crash-loop the gateway until
+  # render_litellm_config (a few steps further down in apply_everything)
+  # rewrites that file. Record the bump; render_litellm_config restarts once.
   local _litellm_before=""
   [ -x "$vdir/litellm/bin/pip" ] && _litellm_before=$(/usr/bin/sudo -u "$TARGET_USER" -H \
       "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
-  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.102.4'
+  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.108.14'
   local _litellm_after=""
   [ -x "$vdir/litellm/bin/pip" ] && _litellm_after=$(/usr/bin/sudo -u "$TARGET_USER" -H \
       "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
-  if [ -n "$_litellm_before" ] && [ "$_litellm_before" != "$_litellm_after" ] \
-      && daemon_running com.local.litellm.proxy; then
-    /bin/launchctl kickstart -k system/com.local.litellm.proxy >/dev/null 2>&1 \
-      && ok "restarted com.local.litellm.proxy to pick up litellm $_litellm_after (was $_litellm_before)"
+  if [ -n "$_litellm_before" ] && [ "$_litellm_before" != "$_litellm_after" ]; then
+    LITELLM_VENV_BUMPED="$_litellm_before -> $_litellm_after"
   fi
 
   # FLUX image generation: mflux (MLX-native, no PyTorch/ComfyUI) + flask for the
@@ -2732,11 +2748,23 @@ render_litellm_config() {
     # do NOT retry (re-running a 20-min generation 2x is wasteful, not helpful).
     printf '  request_timeout: %s\n' "${LLM_REQUEST_TIMEOUT:-3600}"
     echo "  num_retries: 0"
+    # The gateway is deliberately open on the LAN: no master key, clients send
+    # any value (the docs use sk-local) — see INTEGRATIONS.md "Authentication".
+    # LiteLLM 1.108 refuses to start in that state ("UnsafeMasterKeyError …
+    # no master key is set") unless it is stated explicitly here. 1.102.4
+    # ignores the key, so rolling the pin back keeps working (tested both).
+    echo "general_settings:"
+    echo "  dangerously_permit_weak_or_unset_master_key: true"
   } >"$tmp"
 
   if [ "$(hash_file "$tmp")" = "$(hash_file "$LITELLM_CONFIG_FILE")" ]; then
     /bin/rm -f "$tmp"
     ok "litellm config up to date"
+    if [ -n "${LITELLM_VENV_BUMPED:-}" ] && daemon_running com.local.litellm.proxy; then
+      /bin/launchctl kickstart -k system/com.local.litellm.proxy >/dev/null 2>&1 \
+        && ok "restarted com.local.litellm.proxy to pick up litellm ($LITELLM_VENV_BUMPED)"
+    fi
+    LITELLM_VENV_BUMPED=""
     return 0
   fi
   # 640 root:staff, NOT world-readable: this file embeds OMLX_API_KEY. The
@@ -2746,8 +2774,9 @@ render_litellm_config() {
   ok "litellm config written → $LITELLM_CONFIG_FILE (main=${ALIAS_MAIN}, embed=${ALIAS_EMBED:-none}, rerank=${ALIAS_RERANK:-none}, image=$([ "${INSTALL_IMAGES:-0}" = 1 ] && echo "${MFLUX_MODEL:-dev}-q${MFLUX_QUANTIZE:-8}" || echo none), voice=$([ "${INSTALL_VOICE:-0}" = 1 ] && echo "stt+tts (${VOICE_TTS_DEFAULT_VOICE:-default})" || echo none))"
   if daemon_loaded com.local.litellm.proxy; then
     /bin/launchctl kickstart -k system/com.local.litellm.proxy >/dev/null 2>&1 \
-      && ok "restarted litellm to pick up new routing"
+      && ok "restarted litellm to pick up new routing${LITELLM_VENV_BUMPED:+ and litellm ($LITELLM_VENV_BUMPED)}"
   fi
+  LITELLM_VENV_BUMPED=""
 }
 
 render_wrappers() {
