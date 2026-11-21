@@ -245,7 +245,7 @@ config_default() {
     LLM_REQUEST_TIMEOUT)         echo 3600 ;;
     TEXT_ENGINE)                 echo omlx ;;
     OMLX_REPO)                   echo https://github.com/jundot/omlx ;;
-    OMLX_REPO_REF)               echo v0.7.3 ;;
+    OMLX_REPO_REF)               echo v0.8.2 ;;
     OMLX_PROJECT_DIR)            echo /Users/mac/projects/omlx ;;
     OMLX_MODEL_DIR)              echo /Users/mac/.cache/omlx-models ;;
     OMLX_MEMORY_GUARD_GB)        echo 30 ;;
@@ -274,7 +274,7 @@ config_default() {
     MFLUX_MODEL_DIR)             echo /Users/mac/.cache/mflux-models ;;
     INSTALL_VOICE)               echo 0 ;;
     VOICE_PROJECT_DIR)           echo /Users/mac/projects/macos-speech-server ;;
-    VOICE_REPO_REF)              echo cce7bafc126e65bb72765a12a1b024c6c02c603e ;;
+    VOICE_REPO_REF)              echo bec23445cfc76cdd4b27c2bc93d13bc348601dbe ;;
     VOICE_STT_MODEL)             echo ultra ;;
     VOICESTT_PUBLIC_PORT)        echo 5006 ;;
     VOICESTT_BACKEND_PORT)       echo 15006 ;;
@@ -398,7 +398,7 @@ config_hint() {
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
     TEXT_ENGINE)                 echo "Engine serving 'main'/'embed'/'rerank': omlx (UNIFIED text+images+embed+rerank in ONE process, SSD paged-prefix-cache, continuous batching). The only supported engine" ;;
     OMLX_REPO)                   echo "Git URL of oMLX (jundot/omlx), cloned+editable-installed into OMLX_PROJECT_DIR" ;;
-    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.7.3, stable 2026-10-31 — back to stable-tag discipline after the v0.7.3rc1 RC exception of 2026-10-30 (after the v0.7.3.dev1 DEV-tag exception of 2026-10-24: +6-12% decode/prefill for gemma4 on M1 Max): Metal relaxed context-store timeout on pre-M5 Macs against 0000000e errors in long prefills, memory guard re-reads iogpu.wired_limit_mb, incomplete_tool_call error instead of raw text, per-model activation_fp16_enabled (M1/M2 "Float16 Activations", seeded via OMLX_ACTIVATION_FP16=1); v0.7.3 final adds the stuck-prefill-memory-guard fix and in-place batch KV cache updates) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; v0.7.0 pinned 2026-10-10 — rebuilt memory guard (--memory-guard-gb unchanged), M1 Max native-decode threadgroup fix, mlx 0.32.2 + custom kernels built at pip install; expect one SSD-prefix-cache cold start per model after a bump)" ;;
+    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.8.2, stable 2026-11-21 — measured on the M1 Max against v0.7.3 with gemma4-26b-qat: decode +4-5%, prefill +5% at 17K / +8% at 60K tokens, long-document extraction 1-3% faster at unchanged accuracy. New in the 0.8 line: tool-call parsing fixes, compiled-grammar cache capped at 1 GiB, reasoning_effort none/off = thinking off, five native kernel groups instead of four; a version-1 model_settings.json only logs a warning. The new scheduler default Concurrent Request Priority 'Balanced' changes nothing measurable for gemma4 here: a short request arriving 5 s into a 28K-token prefill still waits about 58 s for its first token, same as on v0.7.3. Before that v0.7.3, stable 2026-10-31 — back to stable-tag discipline after the v0.7.3rc1 RC exception of 2026-10-30 (after the v0.7.3.dev1 DEV-tag exception of 2026-10-24: +6-12% decode/prefill for gemma4 on M1 Max): Metal relaxed context-store timeout on pre-M5 Macs against 0000000e errors in long prefills, memory guard re-reads iogpu.wired_limit_mb, incomplete_tool_call error instead of raw text, per-model activation_fp16_enabled (M1/M2 "Float16 Activations", seeded via OMLX_ACTIVATION_FP16=1); v0.7.3 final adds the stuck-prefill-memory-guard fix and in-place batch KV cache updates) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; v0.7.0 pinned 2026-10-10 — rebuilt memory guard (--memory-guard-gb unchanged), M1 Max native-decode threadgroup fix, mlx 0.32.2 + custom kernels built at pip install; expect one SSD-prefix-cache cold start per model after a bump)" ;;
     OMLX_PROJECT_DIR)            echo "Where ensure_omlx_project() clones+builds oMLX (git clone + pip install -e, one-time + on ref bump during --apply)" ;;
     OMLX_MODEL_DIR)              echo "--model-dir symlink farm (one <org>--<name> HF-repo entry per downloaded row) that makes every model — main AND embed/rerank — discoverable by the one resident oMLX process under its real HF repo name" ;;
     OMLX_MEMORY_GUARD_GB)        echo "oMLX's soft RAM ceiling (--memory-guard-gb) — matches the project's 30GB wired-memory hard rule. oMLX has no hard --max-kv-size-equivalent flag" ;;
@@ -427,7 +427,7 @@ config_hint() {
     MFLUX_MODEL_DIR)             echo "Where ensure_mflux_model() saves the pre-quantized checkpoint (mflux-save, one-time during --apply). Subdirectory name is <MFLUX_MODEL>-q<MFLUX_QUANTIZE>" ;;
     INSTALL_VOICE)               echo "1 = run two on-demand voice backends exposed via LiteLLM as 'stt'/'tts' aliases for OpenWebUI's native voice input/output: Speech-to-Text via FluidAudio's macos-speech-server (Parakeet, Apple Neural Engine — measured zero GPU contention with the resident main LLM) and Text-to-Speech via macOS's own 'say' (faster and bug-free vs. macos-speech-server's bundled TTS, see CLAUDE.md). Opt-in (default 0) — NOT part of the model catalog, same reasoning as INSTALL_IMAGES" ;;
     VOICE_PROJECT_DIR)           echo "Where ensure_voice_project() clones+builds FluidAudio's macos-speech-server (git clone + swift build -c release, one-time during --apply, several minutes)" ;;
-    VOICE_REPO_REF)              echo "Pinned macos-speech-server commit — full 40-char SHA so it stays fetchable (default = upstream HEAD as of 2026-11-02, cce7baf: FluidAudio 0.17.7 + Parakeet Ultra, Qwen3 STT engine removed; includes the Wyoming close-on-EOF fix #42 and GET /health). Same pin discipline as OMLX_REPO_REF; bump deliberately + --apply. Any local patches/macos-speech-server-*.patch must still apply — if upstream merges an equivalent fix, retire the patch instead of fighting the conflict (done 2026-09-16 for Wyoming-languages, 2a03e7d, and 2026-10-30 for Wyoming close-on-EOF, #42)" ;;
+    VOICE_REPO_REF)              echo "Pinned macos-speech-server commit — full 40-char SHA so it stays fetchable (default = upstream HEAD as of 2026-11-18, bec2344: the stt 'language' form field is now honoured as a script filter — ISO 639-1 code of a loaded-model language such as de/ru/en, or omitted/'auto'; anything else, e.g. 'de-DE', is rejected with HTTP 400 instead of being ignored — and verbose_json reports the detected language; before that cce7baf, 2026-11-02: FluidAudio 0.17.7 + Parakeet Ultra, Qwen3 STT engine removed; includes the Wyoming close-on-EOF fix #42 and GET /health). Same pin discipline as OMLX_REPO_REF; bump deliberately + --apply. Any local patches/macos-speech-server-*.patch must still apply — if upstream merges an equivalent fix, retire the patch instead of fighting the conflict (done 2026-09-16 for Wyoming-languages, 2a03e7d, and 2026-10-30 for Wyoming close-on-EOF, #42)" ;;
     VOICE_STT_MODEL)             echo "Parakeet model for stt + the Wyoming/Home-Assistant STT: ultra (default since 2026-11-06 — post-trained v3, same 25 languages and speed, lower WER, ~630 MB downloaded on first start) | v3 (Parakeet TDT 0.6B v3, multilingual) | v2 (English-only). Upstream rejects any other value at startup, so setup.sh falls back to v3 with a warning" ;;
     VOICESTT_PUBLIC_PORT)        echo "Public on-demand-proxy port for the Speech-to-Text backend (default 5006)" ;;
     VOICESTT_BACKEND_PORT)       echo "Internal port the speech-server binary binds (127.0.0.1 only, default 15006)" ;;
@@ -1891,6 +1891,29 @@ model_status() {
   fi
 }
 
+# _omlx_metal_toolchain — prints the TOOLCHAINS value `make kernels` needs
+# (empty = none needed); returns 1 when there is no usable Metal compiler.
+# mlx's CMake runs `xcrun -sdk macosx metal`, i.e. Xcode's own `metal` stub.
+# After a reboot / macOS update that stub can lose the downloaded
+# MetalToolchain ("cannot execute tool 'metal' due to missing Metal
+# Toolchain") although the component is still installed and a plain
+# `xcrun metal` keeps working — hit 2026-11-21 on macOS 27.2. Naming the
+# toolchain via TOOLCHAINS makes the -sdk lookup find it again. Probe the
+# SAME call the build makes: `make kernels` deletes the old .so files first,
+# so a build that fails halfway leaves the daemon without native kernels.
+_omlx_metal_toolchain() {
+  if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/xcrun -sdk macosx metal --version >/dev/null 2>&1; then
+    return 0
+  fi
+  local id
+  id=$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/xcodebuild -showComponent MetalToolchain 2>/dev/null \
+        | /usr/bin/awk -F': ' '/^Toolchain Identifier:/{print $2; exit}')
+  [ -n "$id" ] || return 1
+  /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env TOOLCHAINS="$id" \
+    /usr/bin/xcrun -sdk macosx metal --version >/dev/null 2>&1 || return 1
+  printf '%s' "$id"
+}
+
 ensure_omlx_project() {
   # Clones + builds oMLX (github.com/jundot/omlx) — main AND embed/rerank in
   # ONE process. Alpha-stage, not on PyPI:
@@ -1900,13 +1923,13 @@ ensure_omlx_project() {
   # $VENV_DIR/omlx (matches litellm/mflux — every wrapper execs
   # "$VENV_DIR/<name>/bin/...", zero special-casing needed).
   #
-  # OMLX_REPO_REF is a PINNED TAG (v0.7.3), not a floating branch: we
+  # OMLX_REPO_REF is a PINNED TAG (v0.8.2), not a floating branch: we
   # `fetch` + explicit `checkout "$ref"` every run — a no-op when already on
   # that tag.
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   local dir="${OMLX_PROJECT_DIR:-$TARGET_HOME/projects/omlx}"
   local repo="${OMLX_REPO:-https://github.com/jundot/omlx}"
-  local ref="${OMLX_REPO_REF:-v0.7.3}"
+  local ref="${OMLX_REPO_REF:-v0.8.2}"
   local vdir="${VENV_DIR:-/Users/mac/.macstudio-venvs}/omlx"
   local changed=0
 
@@ -2036,16 +2059,19 @@ ensure_omlx_project() {
   local khead; khead=$(/usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" rev-parse HEAD 2>/dev/null)
   if [ "${OMLX_NATIVE_KERNELS:-1}" = 1 ]; then
     local kprobe="from omlx.custom_kernels import native_kernel_status as s; import sys; sys.exit(0 if all(v['available'] for v in s().values()) else 1)"
+    local ktc=""
     if [ "$khead" = "$(/bin/cat "$kstamp" 2>/dev/null)" ] \
        && /usr/bin/sudo -u "$TARGET_USER" -H "$vdir/bin/python" -c "$kprobe" >/dev/null 2>&1; then
       ok "oMLX native kernels present"
-    elif ! /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/xcrun metal --version >/dev/null 2>&1; then
+    elif ! ktc=$(_omlx_metal_toolchain); then
       warn "oMLX native kernels skipped: no Metal compiler. Install Xcode (App Store), then 'sudo xcodebuild -license accept' and 'sudo xcodebuild -downloadComponent MetalToolchain', and re-run --apply"
     elif [ ! -x /opt/homebrew/bin/cmake ]; then
       warn "oMLX native kernels skipped: cmake missing (brew install cmake), then re-run --apply"
     else
+      [ -n "$ktc" ] && log "the Xcode metal stub lost the Metal toolchain — building with TOOLCHAINS=$ktc"
       log "building oMLX native kernels (make kernels; a few minutes)"
       if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+            ${ktc:+TOOLCHAINS="$ktc"} \
             /usr/bin/make -C "$dir" kernels PYTHON="$vdir/bin/python" >"$LOG_DIR/omlx-kernels.log" 2>&1; then
         /usr/bin/sudo -u "$TARGET_USER" -H /bin/sh -c "printf '%s' '$khead' > '$kstamp'"
         ok "oMLX native kernels built"
@@ -2267,7 +2293,7 @@ ensure_voice_project() {
   # boundary silence-dropping bug).
   [ "${INSTALL_VOICE:-0}" = 1 ] || return 0
   local dir="${VOICE_PROJECT_DIR:-/Users/mac/projects/macos-speech-server}"
-  local ref="${VOICE_REPO_REF:-cce7bafc126e65bb72765a12a1b024c6c02c603e}"
+  local ref="${VOICE_REPO_REF:-bec23445cfc76cdd4b27c2bc93d13bc348601dbe}"
   local port="${VOICESTT_BACKEND_PORT:-15006}"
   local wport="${VOICE_WYOMING_BACKEND_PORT:-15008}"
 
@@ -3912,7 +3938,7 @@ menu_models() {
 menu_updates() {
   load_config
   printf "\n${C_BOLD}── Check for updates (read-only) ──────────────${C_RST}\n"
-  printf "oMLX pin: OMLX_REPO_REF=%s   (engine — frozen unless you bump it)\n\n" "${OMLX_REPO_REF:-v0.7.3}"
+  printf "oMLX pin: OMLX_REPO_REF=%s   (engine — frozen unless you bump it)\n\n" "${OMLX_REPO_REF:-v0.8.2}"
   local odir="${OMLX_PROJECT_DIR:-/Users/mac/projects/omlx}"
   if [ -d "$odir/.git" ]; then
     local installed latest
