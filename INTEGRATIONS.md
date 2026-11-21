@@ -420,6 +420,10 @@ via environment variables:
   AUDIO_STT_OPENAI_API_KEY=sk-local
   AUDIO_STT_MODEL=stt
   ```
+  The language is detected automatically. A client may send the optional `language`
+  field to pin it — a two-letter code such as `de`, `ru` or `en` (or `auto`). Region
+  codes such as `de-DE` are rejected with HTTP 400, so leave the field empty if the
+  client can only send those.
 - **Text-to-Speech:** Engine `OpenAI`, API Base URL `http://mac.home.arpa:11434/v1`,
   API Key `sk-local`, Model `tts`.
   ```

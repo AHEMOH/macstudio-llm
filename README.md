@@ -13,7 +13,7 @@ Designed for a 32 GB M1 Max but scales unchanged to bigger Apple Silicon — jus
 raise a couple of config keys.
 
 > **Text engine — oMLX.** The always-on backend is **oMLX**
-> (pinned `OMLX_REPO_REF=v0.7.3`), serving **one unified multimodal
+> (pinned `OMLX_REPO_REF=v0.8.2`), serving **one unified multimodal
 > model** that handles **text *and* images in the same chat** plus tool calling —
 > AND, in the SAME process, the BGE embed/rerank pair — with an SSD
 > paged-prefix-cache and continuous batching. The default main is `gemma4-26b-qat`
@@ -31,9 +31,11 @@ raise a couple of config keys.
   model's chat template. For Gemma 4, `setup.sh` overlays Google's canonical
   2026-07-09 chat template (better multi-turn tool calling) into the model-dir
   farm, because the mlx-community repos still ship the older June revision.
-  Version pinned via `OMLX_REPO_REF` (v0.7.3, stable, 2026-11-06 — the
-  v0.7.3 line measured +6–12% decode and prefill for gemma4 on the M1 Max vs v0.7.0,
-  plus a Metal-timeout fix for long prefills on pre-M5 Macs). oMLX's native Metal kernels are built with `make kernels`,
+  Version pinned via `OMLX_REPO_REF` (v0.8.2, stable, 2026-11-21 — measured on the
+  M1 Max against v0.7.3: gemma4 decodes 4–5% faster and prefills 5–8% faster; v0.7.3
+  before it had brought +6–12% over v0.7.0). A short request that arrives while a long
+  document is still being read in waits until that prefill is done — unchanged in
+  v0.8.2 (about 58 s behind a 28K-token document). oMLX's native Metal kernels are built with `make kernels`,
   which needs full Xcode (see *Prerequisites*).
 - **LiteLLM gateway** on the public port (:11434): apps talk OpenAI `/v1` (and
   Anthropic `/v1/messages`) to the stable aliases — `main` (text + images, reasons by
@@ -321,7 +323,7 @@ present):
 | **python@3.12** | `brew install python@3.12` (MLX/docling wheels need ≥3.10) | if `INSTALL_MLX=1` or `INSTALL_DOCLING=1` |
 | **omlx project + venv** | `git clone` `OMLX_REPO`@`OMLX_REPO_REF` + `pip install -e .` (editable, alpha-stage, not on PyPI) in `$VENV_DIR/omlx` | if `INSTALL_MLX=1` |
 | **cmake** | `brew install cmake` (for oMLX's `make kernels`) | if `INSTALL_MLX=1` |
-| **oMLX native kernels** | `make kernels` in the omlx checkout (needs **full Xcode + Metal Toolchain — manual, see below**) | if `OMLX_NATIVE_KERNELS=1` and `xcrun metal` works |
+| **oMLX native kernels** | `make kernels` in the omlx checkout (needs **full Xcode + Metal Toolchain — manual, see below**) | if `OMLX_NATIVE_KERNELS=1` and the Metal compiler works |
 
 **One manual step: full Xcode + Metal Toolchain.** The Command Line Tools have no
 Metal compiler, and Xcode needs an Apple ID, so `setup.sh` can't install it. Without it,
@@ -335,6 +337,10 @@ sudo xcodebuild -downloadComponent MetalToolchain   # ~840 MB Metal compiler dow
 xcrun metal --version                           # should print "Apple metal version …"
 sudo bash ~/macstudio-llm/setup.sh --apply      # builds the kernels, restarts oMLX
 ```
+
+After a reboot or a macOS update, Xcode's own `metal` command can report "missing Metal
+Toolchain" although the toolchain is still installed (seen on macOS 27.2). `setup.sh`
+detects this and points the build at the installed toolchain itself — nothing to do by hand.
 | **litellm venv** | `pip install 'litellm[proxy]==1.102.4'` (pinned) in `$VENV_DIR/litellm` | if `INSTALL_MLX=1` |
 | **node_exporter** | `brew install node_exporter` | if `INSTALL_EXPORTERS=1` (off by default) |
 | **mactop + macmon** | `brew install mactop macmon` | if `INSTALL_TUI=1` |
@@ -423,7 +429,7 @@ use the menu) to change a live box.
 | `MAIN_BACKEND_PORT` | `18000` | Internal port `oMLX` binds (serves main + embed + rerank) |
 | `LLM_REQUEST_TIMEOUT` | `3600` | Per-request timeout (s) for the text engine **and** LiteLLM; long docs/OCR |
 | `TEXT_ENGINE` | `omlx` | The engine (`oMLX`) — one unified process for main (text+images+tools) + embed + rerank |
-| `OMLX_REPO` / `OMLX_REPO_REF` | `github.com/jundot/omlx` / `v0.7.3` | Git source + pinned tag for the `omlx` venv (alpha-stage, not on PyPI) |
+| `OMLX_REPO` / `OMLX_REPO_REF` | `github.com/jundot/omlx` / `v0.8.2` | Git source + pinned tag for the `omlx` venv (alpha-stage, not on PyPI) |
 | `OMLX_PROJECT_DIR` | `/Users/mac/projects/omlx` | Where the oMLX git checkout lives |
 | `OMLX_MODEL_DIR` | `/Users/mac/.cache/omlx-models` | `--model-dir` symlink farm making every downloaded model discoverable |
 | `OMLX_MEMORY_GUARD_GB` | `30` | Soft RAM ceiling for the one oMLX process (`--memory-guard-gb`) |
@@ -451,7 +457,7 @@ use the menu) to change a live box.
 | `INSTALL_VOICE` | `0` | Speech-to-Text (`stt`) + Text-to-Speech (`tts`) — **off by default** |
 | `INSTALL_IMMICH` | `0` | Immich-ML backend (official image under Colima, :3003) — **off by default** (needs a running Immich server) |
 | `VOICE_PROJECT_DIR` | `/Users/mac/projects/macos-speech-server` | Where FluidAudio's `macos-speech-server` is cloned+built |
-| `VOICE_REPO_REF` | `cce7baf…` (full SHA) | Pinned `macos-speech-server` commit — bump deliberately, then `--apply` (same discipline as `OMLX_REPO_REF`) |
+| `VOICE_REPO_REF` | `bec2344…` (full SHA) | Pinned `macos-speech-server` commit — bump deliberately, then `--apply` (same discipline as `OMLX_REPO_REF`) |
 | `VOICE_STT_MODEL` | `ultra` | Parakeet model for `stt` and Home Assistant: `ultra` (lower error rate, same 25 languages), `v3`, or `v2` (English only) |
 | `VOICESTT_PUBLIC_PORT` / `VOICESTT_BACKEND_PORT` | `5006` / `15006` | Speech-to-Text ports (proxy / backend) |
 | `IDLE_TIMEOUT_VOICESTT` / `STARTUP_TIMEOUT_VOICESTT` | `900` / `60` | STT idle-to-sleep / wake-deadline seconds |
