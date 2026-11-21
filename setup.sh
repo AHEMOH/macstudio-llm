@@ -1311,9 +1311,14 @@ ensure_immich_ml_container() {
   # Pull every run and compare image IDs instead. A failed pull (offline,
   # registry hiccup) keeps whatever image is already local — --apply must not
   # break on a network blip.
+  # One retry: the first pull right after a VM start died once with "failed to
+  # copy: failed to send write: EOF" (2026-11-21) and went through seconds later.
   log "immich-ml: checking $ref for a newer image"
-  "${dk[@]}" pull "$ref" >"$LOG_DIR/immich-pull.log" 2>&1 \
-    || warn "docker pull $ref failed (keeping the local image); see $LOG_DIR/immich-pull.log"
+  if ! "${dk[@]}" pull "$ref" >"$LOG_DIR/immich-pull.log" 2>&1; then
+    /bin/sleep 10
+    "${dk[@]}" pull "$ref" >>"$LOG_DIR/immich-pull.log" 2>&1 \
+      || warn "docker pull $ref failed twice (keeping the local image); see $LOG_DIR/immich-pull.log"
+  fi
   local want_id
   want_id=$("${dk[@]}" image inspect --format '{{.Id}}' "$ref" 2>/dev/null || true)
   if [ -z "$want_id" ]; then
