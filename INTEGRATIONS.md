@@ -55,6 +55,12 @@ LiteLLM does **not** enforce a master key here — **any** non-empty API key is
 accepted (e.g. `sk-local`). Apps usually require *some* value in the key field;
 put anything there.
 
+This is a deliberate choice for a gateway that is only reachable on the home LAN:
+everyone on that network can use the models. Newer LiteLLM versions refuse to start
+without a master key, so `setup.sh` states the choice explicitly in the generated config
+(`general_settings.dangerously_permit_weak_or_unset_master_key: true`). Do not expose
+port 11434 to the internet in this state.
+
 ### Endpoint reference
 
 | Method & path                     | Use with model | Purpose                                  |
