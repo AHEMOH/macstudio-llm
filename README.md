@@ -344,7 +344,7 @@ sudo bash ~/macstudio-llm/setup.sh --apply      # builds the kernels, restarts o
 After a reboot or a macOS update, Xcode's own `metal` command can report "missing Metal
 Toolchain" although the toolchain is still installed (seen on macOS 27.2). `setup.sh`
 detects this and points the build at the installed toolchain itself — nothing to do by hand.
-| **litellm venv** | `pip install 'litellm[proxy]==1.108.14'` (pinned, upstream's LTS line) in `$VENV_DIR/litellm` | if `INSTALL_MLX=1` |
+| **litellm venv** | `pip install 'litellm[proxy]==1.108.19'` (pinned, upstream's LTS line) in `$VENV_DIR/litellm` | if `INSTALL_MLX=1` |
 | **node_exporter** | `brew install node_exporter` | if `INSTALL_EXPORTERS=1` (off by default) |
 | **mactop + macmon** | `brew install mactop macmon` | if `INSTALL_TUI=1` |
 | **docling-serve venv** | `pip install 'docling[…]' 'docling-serve[ui]'` | if `INSTALL_DOCLING=1` |

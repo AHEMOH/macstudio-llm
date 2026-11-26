@@ -2332,6 +2332,10 @@ ensure_python_venvs() {
   # another port before the bump: thinking pins, forced/named tool calls,
   # vision, embed, rerank (Infinity provider + return_documents:false still
   # needed and working), /v1/messages, streaming with usage, stt, tts, image.
+  # 2026-11-26: 1.108.14 -> 1.108.19 (LTS patches: streamed usage kept when
+  # data-less SSE lines precede it, /v1/messages field mapping, provider fixes;
+  # 1.108.15's 401 for keyless deployments does not hit us — every route sets
+  # api_key). Same second-venv test on :11435 against the live config: all pass.
   # The proxy daemon loads litellm at start, so a pin bump must restart it —
   # but NOT here: a new LiteLLM can need a config key the file on disk does not
   # carry yet, and restarting now would crash-loop the gateway until
@@ -2340,7 +2344,7 @@ ensure_python_venvs() {
   local _litellm_before=""
   [ -x "$vdir/litellm/bin/pip" ] && _litellm_before=$(/usr/bin/sudo -u "$TARGET_USER" -H \
       "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
-  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.108.14'
+  _ensure_venv litellm bin:litellm       'litellm[proxy]==1.108.19'
   local _litellm_after=""
   [ -x "$vdir/litellm/bin/pip" ] && _litellm_after=$(/usr/bin/sudo -u "$TARGET_USER" -H \
       "$vdir/litellm/bin/pip" show litellm 2>/dev/null | /usr/bin/awk '/^Version:/{print $2; exit}')
