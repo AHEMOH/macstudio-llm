@@ -13,7 +13,7 @@ Designed for a 32 GB M1 Max but scales unchanged to bigger Apple Silicon — jus
 raise a couple of config keys.
 
 > **Text engine — oMLX.** The always-on backend is **oMLX**
-> (pinned `OMLX_REPO_REF=v0.8.2`), serving **one unified multimodal
+> (pinned `OMLX_REPO_REF=v0.8.4`), serving **one unified multimodal
 > model** that handles **text *and* images in the same chat** plus tool calling —
 > AND, in the SAME process, the BGE embed/rerank pair — with an SSD
 > paged-prefix-cache and continuous batching. The default main is `gemma4-26b-qat`
@@ -31,12 +31,14 @@ raise a couple of config keys.
   model's chat template. For Gemma 4, `setup.sh` overlays Google's canonical
   2026-07-09 chat template (better multi-turn tool calling) into the model-dir
   farm, because the mlx-community repos still ship the older June revision.
-  Version pinned via `OMLX_REPO_REF` (v0.8.2, stable, 2026-11-21 — speed-neutral for
-  gemma4 on the M1 Max against v0.7.3: decode 2–4% faster, prefill up to 3% slower,
-  document extraction unchanged; v0.7.3 before it had brought +6–12% over v0.7.0).
+  Version pinned via `OMLX_REPO_REF` (v0.8.4, stable, 2026-11-26 — same speed as
+  v0.8.2 for gemma4 in bf16). On M1/M2, `main` runs its language model in **fp16**
+  (`OMLX_ACTIVATION_FP16=1`): long-document extraction 23–25% faster, prefill about
+  30% faster. A small local patch keeps the vision part in bf16 — without it every
+  image request returned nothing.
   A short request that arrives while a long
-  document is still being read in waits until that prefill is done — unchanged in
-  v0.8.2 (about 58 s behind a 28K-token document). oMLX's native Metal kernels are built with `make kernels`,
+  document is still being read in waits until that prefill is done (about 58 s
+  behind a 28K-token document on v0.8.2). oMLX's native Metal kernels are built with `make kernels`,
   which needs full Xcode (see *Prerequisites*).
 - **LiteLLM gateway** on the public port (:11434): apps talk OpenAI `/v1` (and
   Anthropic `/v1/messages`) to the stable aliases — `main` (text + images, reasons by
@@ -434,12 +436,12 @@ use the menu) to change a live box.
 | `MAIN_BACKEND_PORT` | `18000` | Internal port `oMLX` binds (serves main + embed + rerank) |
 | `LLM_REQUEST_TIMEOUT` | `3600` | Per-request timeout (s) for the text engine **and** LiteLLM; long docs/OCR |
 | `TEXT_ENGINE` | `omlx` | The engine (`oMLX`) — one unified process for main (text+images+tools) + embed + rerank |
-| `OMLX_REPO` / `OMLX_REPO_REF` | `github.com/jundot/omlx` / `v0.8.2` | Git source + pinned tag for the `omlx` venv (alpha-stage, not on PyPI) |
+| `OMLX_REPO` / `OMLX_REPO_REF` | `github.com/jundot/omlx` / `v0.8.4` | Git source + pinned tag for the `omlx` venv (alpha-stage, not on PyPI) |
 | `OMLX_PROJECT_DIR` | `/Users/mac/projects/omlx` | Where the oMLX git checkout lives |
 | `OMLX_MODEL_DIR` | `/Users/mac/.cache/omlx-models` | `--model-dir` symlink farm making every downloaded model discoverable |
 | `OMLX_MEMORY_GUARD_GB` | `30` | Soft RAM ceiling for the one oMLX process (`--memory-guard-gb`) |
 | `OMLX_MAX_CONTEXT_WINDOW` | `65536` | Per-model context cap for `main`, pre-seeded into `~/.omlx/model_settings.json` (NOT a CLI flag) |
-| `OMLX_ACTIVATION_FP16` | `0` | Run `main`'s bf16 parts as fp16 (M1/M2 have no native bf16). ~23% faster long-document extraction on the M1 Max, **but every image request then returns nothing** (NaN) — leave it off. Changing it clears oMLX's image-feature cache automatically |
+| `OMLX_ACTIVATION_FP16` | `1` | Run `main`'s language model in fp16 (M1/M2 have no native bf16): long-document extraction 23–25% faster on the M1 Max. Needs the local patch `patches/omlx-fp16-keep-towers-bf16.patch` (keeps the vision part in bf16, else every image request returns nothing) — without it the setting is ignored. Changing it clears oMLX's image-feature cache |
 | `OMLX_SSD_CACHE_DIR` / `_MAX_SIZE` | `~/.cache/omlx-ssd-cache` / `20GB` | SSD paged-prefix-cache — real speedup on repeated long prompts. Empty dir = disabled |
 | `OMLX_HOT_CACHE_MAX_SIZE` | _(empty)_ | In-memory hot-cache max size. Empty = oMLX default |
 | `OMLX_NATIVE_KERNELS` | `1` | Build oMLX's native Metal kernels (`make kernels`; needs full Xcode + Metal Toolchain). `0` = skip and delete them |

@@ -1,0 +1,73 @@
+diff --git a/omlx/cache/paged_ssd_cache.py b/omlx/cache/paged_ssd_cache.py
+index a8e6298..72ba061 100644
+--- a/omlx/cache/paged_ssd_cache.py
++++ b/omlx/cache/paged_ssd_cache.py
+@@ -416,8 +416,13 @@ def numerics_revision_for_model(model: Any) -> str | None:
+     if yarn := _yarn_revision(modules):
+         revisions.add(yarn)
+     # Set by cast_bf16_params_to_fp16: KV computed before the recast is bf16.
+-    if any(getattr(module, "_omlx_fp16_recast", False) for module in modules):
+-        revisions.add("fp16-recast")
++    for module in modules:
++        recast = getattr(module, "_omlx_fp16_recast", False)
++        if recast:
++            revisions.add(
++                f"fp16-recast-{recast}" if isinstance(recast, str) else "fp16-recast"
++            )
++            break
+     # Set by apply_adapter: KV depends on the LoRA weights.
+     revisions.update(
+         f"lora-{signature}"
+diff --git a/omlx/utils/model_loading.py b/omlx/utils/model_loading.py
+index 26861e9..5ce82e7 100644
+--- a/omlx/utils/model_loading.py
++++ b/omlx/utils/model_loading.py
+@@ -1732,6 +1732,14 @@ def checkpoint_has_bf16_leaves(model_path: str) -> bool:
+     return False
+ 
+ 
++# Encoder towers whose activations leave the float16 range stay in bfloat16.
++# Gemma 4's vision pooler scales the pooled encoder output by sqrt(hidden_size)
++# (x33.9) before standardizing it: ~72-80k on ordinary images, so in float16
++# every image turns into inf/NaN features and the answer into <pad> tokens.
++# The towers are a small share of the work; the language model keeps float16.
++_FP16_RECAST_SKIP_PREFIXES = ("vision_tower.", "audio_tower.")
++
++
+ def cast_bf16_params_to_fp16(model: Any) -> int:
+     """Recast every bfloat16 parameter of a loaded model to float16.
+ 
+@@ -1746,11 +1754,18 @@ def cast_bf16_params_to_fp16(model: Any) -> int:
+ 
+     Returns the number of tensors recast.
+     """
+-    pending = [
++    bf16_leaves = [
+         (key, value)
+         for key, value in tree_flatten(model.parameters())
+         if isinstance(value, mx.array) and value.dtype == mx.bfloat16
+     ]
++    pending = [
++        (key, value)
++        for key, value in bf16_leaves
++        if not key.startswith(_FP16_RECAST_SKIP_PREFIXES)
++    ]
++    towers_kept = len(pending) < len(bf16_leaves)
++    del bf16_leaves
+     count = len(pending)
+     fp16_max = mx.finfo(mx.float16).max
+     # Reductions only, so this pass allocates no tensor-sized temporaries.
+@@ -1776,8 +1791,11 @@ def cast_bf16_params_to_fp16(model: Any) -> int:
+         model.update(tree_unflatten(converted))
+         del chunk, converted
+     if count:
+-        # Read by numerics_revision_for_model so bfloat16 KV blocks are not reused.
+-        model._omlx_fp16_recast = True
++        # Read by numerics_revision_for_model so bfloat16 KV blocks are not
++        # reused. A recast that kept the towers in bfloat16 gets its own
++        # revision: KV blocks and vision features from a full recast may hold
++        # the NaN of an overflowed tower and must not be served again.
++        model._omlx_fp16_recast = "towers-bf16" if towers_kept else True
+     return count
+ 
+ 
