@@ -245,7 +245,7 @@ config_default() {
     LLM_REQUEST_TIMEOUT)         echo 3600 ;;
     TEXT_ENGINE)                 echo omlx ;;
     OMLX_REPO)                   echo https://github.com/jundot/omlx ;;
-    OMLX_REPO_REF)               echo v0.8.2 ;;
+    OMLX_REPO_REF)               echo v0.8.4 ;;
     OMLX_PROJECT_DIR)            echo /Users/mac/projects/omlx ;;
     OMLX_MODEL_DIR)              echo /Users/mac/.cache/omlx-models ;;
     OMLX_MEMORY_GUARD_GB)        echo 30 ;;
@@ -255,7 +255,7 @@ config_default() {
     OMLX_NATIVE_KERNELS)         echo 1 ;;
     OMLX_MAX_CONCURRENT_REQUESTS) echo 8 ;;
     OMLX_MAX_CONTEXT_WINDOW)     echo 65536 ;;
-    OMLX_ACTIVATION_FP16)        echo 0 ;;
+    OMLX_ACTIVATION_FP16)        echo 1 ;;
     OMLX_BIND_HOST)              echo 127.0.0.1 ;;
     OMLX_API_KEY)                echo "" ;;
     GEMMA_TOP_K)                 echo 64 ;;
@@ -398,7 +398,7 @@ config_hint() {
     LLM_REQUEST_TIMEOUT)         echo "Per-request timeout in seconds for the text engine + LiteLLM (default 3600 = 60 min; long docs/OCR)" ;;
     TEXT_ENGINE)                 echo "Engine serving 'main'/'embed'/'rerank': omlx (UNIFIED text+images+embed+rerank in ONE process, SSD paged-prefix-cache, continuous batching). The only supported engine" ;;
     OMLX_REPO)                   echo "Git URL of oMLX (jundot/omlx), cloned+editable-installed into OMLX_PROJECT_DIR" ;;
-    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.8.2, stable 2026-11-21 — speed-neutral on the M1 Max against v0.7.3 with gemma4-26b-qat, production against production: decode +2-4%, prefill 0-3% slower, long-document extraction within 3% at unchanged accuracy; a sandbox run without the SSD cache had suggested +5-8% prefill, which production did not confirm. New in the 0.8 line: tool-call parsing fixes, compiled-grammar cache capped at 1 GiB, reasoning_effort none/off = thinking off, five native kernel groups instead of four; a version-1 model_settings.json only logs a warning. The new scheduler default Concurrent Request Priority 'Balanced' changes nothing measurable for gemma4 here: a short request arriving 5 s into a 28K-token prefill still waits about 58 s for its first token, same as on v0.7.3. Before that v0.7.3, stable 2026-10-31 — back to stable-tag discipline after the v0.7.3rc1 RC exception of 2026-10-30 (after the v0.7.3.dev1 DEV-tag exception of 2026-10-24: +6-12% decode/prefill for gemma4 on M1 Max): Metal relaxed context-store timeout on pre-M5 Macs against 0000000e errors in long prefills, memory guard re-reads iogpu.wired_limit_mb, incomplete_tool_call error instead of raw text, per-model activation_fp16_enabled (M1/M2 "Float16 Activations", seeded via OMLX_ACTIVATION_FP16=1); v0.7.3 final adds the stuck-prefill-memory-guard fix and in-place batch KV cache updates) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; v0.7.0 pinned 2026-10-10 — rebuilt memory guard (--memory-guard-gb unchanged), M1 Max native-decode threadgroup fix, mlx 0.32.2 + custom kernels built at pip install; expect one SSD-prefix-cache cold start per model after a bump)" ;;
+    OMLX_REPO_REF)               echo "Pinned oMLX tag (default v0.8.4, stable 2026-11-26 — MLX 0.32.5 + mlx-vlm 0.8.1, NaN vision features are no longer cached (#5597), vision-cache and KV-cache keys carry the numerics revision; the rest of 0.8.3/0.8.4 is Inkling/Hy4/DeepSeek work. Sandbox on the M1 Max with gemma4-26b-qat, bf16: decode 60/45 tok/s short/17K, prefill 479 tok/s at 17K, extraction 11.8/32.7/68.3 s at 5K/15K/30K — same as v0.8.2. Native kernels must be rebuilt (make kernels, automatic). Before that v0.8.2, stable 2026-11-21 — speed-neutral on the M1 Max against v0.7.3 with gemma4-26b-qat, production against production: decode +2-4%, prefill 0-3% slower, long-document extraction within 3% at unchanged accuracy; a sandbox run without the SSD cache had suggested +5-8% prefill, which production did not confirm. New in the 0.8 line: tool-call parsing fixes, compiled-grammar cache capped at 1 GiB, reasoning_effort none/off = thinking off, five native kernel groups instead of four; a version-1 model_settings.json only logs a warning. The new scheduler default Concurrent Request Priority 'Balanced' changes nothing measurable for gemma4 here: a short request arriving 5 s into a 28K-token prefill still waits about 58 s for its first token, same as on v0.7.3. Before that v0.7.3, stable 2026-10-31 — back to stable-tag discipline after the v0.7.3rc1 RC exception of 2026-10-30 (after the v0.7.3.dev1 DEV-tag exception of 2026-10-24: +6-12% decode/prefill for gemma4 on M1 Max): Metal relaxed context-store timeout on pre-M5 Macs against 0000000e errors in long prefills, memory guard re-reads iogpu.wired_limit_mb, incomplete_tool_call error instead of raw text, per-model activation_fp16_enabled (M1/M2 "Float16 Activations", seeded via OMLX_ACTIVATION_FP16=1); v0.7.3 final adds the stuck-prefill-memory-guard fix and in-place batch KV cache updates) — bump deliberately + --apply, prefer STABLE tags (v0.6.0 made 'omlx serve' a pure multi-model --model-dir server — its serve subcommand DROPPED --model, which our wrapper never passed anyway — and added --memory-guard presets, our explicit --memory-guard-gb still wins; v0.6.3rc2 was the ONE deliberate RC exception 2026-08-21: oQ-quant support + Qwen ANE/CPU prefill groundwork for the planned Ornith-1.5 main switch; v0.6.4 pinned 2026-09-06 returns to stable-tag discipline — Qwen3.8-Flash-Next support + model-loading/continuous-batching fixes, tool_choice patch verified to still apply cleanly; v0.7.0 pinned 2026-10-10 — rebuilt memory guard (--memory-guard-gb unchanged), M1 Max native-decode threadgroup fix, mlx 0.32.2 + custom kernels built at pip install; expect one SSD-prefix-cache cold start per model after a bump)" ;;
     OMLX_PROJECT_DIR)            echo "Where ensure_omlx_project() clones+builds oMLX (git clone + pip install -e, one-time + on ref bump during --apply)" ;;
     OMLX_MODEL_DIR)              echo "--model-dir symlink farm (one <org>--<name> HF-repo entry per downloaded row) that makes every model — main AND embed/rerank — discoverable by the one resident oMLX process under its real HF repo name" ;;
     OMLX_MEMORY_GUARD_GB)        echo "oMLX's soft RAM ceiling (--memory-guard-gb) — matches the project's 30GB wired-memory hard rule. oMLX has no hard --max-kv-size-equivalent flag" ;;
@@ -408,7 +408,7 @@ config_hint() {
     OMLX_NATIVE_KERNELS)         echo "1 = build oMLX's native Metal kernels (make kernels; needs full Xcode + 'xcodebuild -downloadComponent MetalToolchain' + cmake). Gives one shared Metal command queue for main+embed+rerank (no multi-model GPU hang, #4224). 0 = skip, delete built kernels → generic MLX paths" ;;
     OMLX_MAX_CONCURRENT_REQUESTS) echo "oMLX max concurrent in-flight requests (--max-concurrent-requests, continuous batching). Default 8" ;;
     OMLX_MAX_CONTEXT_WINDOW)     echo "Per-model context cap for the active main, pre-seeded into ~/.omlx/model_settings.json (NOT a CLI flag — oMLX has no --max-kv-size equivalent). Default 65536 (64K), preserving today's documented ceiling" ;;
-    OMLX_ACTIVATION_FP16)        echo "OFF by default since 2026-11-02 — fp16 BREAKS IMAGES on gemma4 (NaN on every image request: paperless-ocr VLM route, picture detection, image chat). 1 = set activation_fp16_enabled for the active main in ~/.omlx/model_settings.json: oMLX (>= v0.7.3rc1) recasts the checkpoint's bf16 scales/norms/embeddings to fp16 at load, because M1/M2 GPUs have no native bf16 (MLX emulates it). Measured on the M1 Max with gemma4-26b-qat 2026-10-30: prefill +27-32%, long-doc extraction ~23% faster, decode +5%, no quality loss seen. 0 = off (bf16). A change restarts oMLX on the next --apply. Not useful on M3+ (native bf16); cannot be combined with oMLX's MoE expert offload" ;;
+    OMLX_ACTIVATION_FP16)        echo "1 = set activation_fp16_enabled for the active main in ~/.omlx/model_settings.json: oMLX recasts the checkpoint's bf16 scales/norms/embeddings to fp16 at load, because M1/M2 GPUs have no native bf16 (MLX emulates it). Only honoured while patches/omlx-fp16-keep-towers-bf16.patch is live — it keeps the vision tower in bf16 (unpatched, gemma4's vision pooler overflows fp16 and EVERY image request returns NaN, the 2026-11-02 incident). Measured on the M1 Max with gemma4-26b-qat on oMLX v0.8.4 2026-11-26: long-doc extraction 23-25% faster, prefill +29-33%, decode +5-7%, tool calls 18/18, images/prose unchanged. 0 = off (bf16). A change restarts oMLX on the next --apply. Not useful on M3+ (native bf16); cannot be combined with oMLX's MoE expert offload" ;;
     OMLX_BIND_HOST)              echo "--host oMLX binds. Default 127.0.0.1 (LiteLLM-only, matches every other backend in this repo). Set to 0.0.0.0 to also expose oMLX's own OpenAI/Anthropic/audio API + admin panel directly on the LAN (e.g. for a client that wants oMLX's native /v1/messages, not LiteLLM's translation) — do this ONLY after OMLX_API_KEY is set, since oMLX's inference routes have no auth at all otherwise" ;;
     OMLX_API_KEY)                echo "oMLX --api-key: required by every caller once set, INCLUDING LiteLLM's own local calls (render_litellm_config wires this same key into main/main-fast/embed/rerank's litellm_params automatically). Plaintext in this 644 conf — LAN-only, like VNC_PASSWORD/DASHBOARD_TOKEN. Empty = auto-generated on the next --apply; clear it + --apply to rotate" ;;
     GEMMA_TOP_K)                 echo "Gemma reference top_k for main/main-fast (default 64; Gemma's recommended sampling is temp 1.0 / top_p 0.95 / top_k 64). top_k is NOT a native OpenAI param so it rides in extra_body. 0/empty = off" ;;
@@ -1842,10 +1842,13 @@ _omlx_symlink_one() {
 # A/B on the M1 Max 2026-10-30 (gemma4-26b-qat): prefill +27-32%, paperless-
 # like extraction 23-24% faster at 5K/15K/30K tokens, decode +5%, tool calls
 # 18/18 both ways, no fp16-overflow symptoms in 22 RU/DE prose prompts.
-# BUT it breaks IMAGES (2026-11-02): every image request yields NaN logits (<pad>
-# tokens, content null, finish_reason length) — and oMLX's vision-feature SSD cache
-# keeps serving those NaN features after fp16 is turned off. Default is therefore 0;
-# a change of the flag therefore also clears $OMLX_SSD_CACHE_DIR/vision_features.
+# Unpatched it breaks IMAGES (2026-11-02): every image request yields NaN logits
+# (<pad> tokens, content null, finish_reason length). Cause found 2026-11-26: gemma4's
+# vision pooler scales by sqrt(1152) to 72-80k, above fp16's 65504.
+# patches/omlx-fp16-keep-towers-bf16.patch keeps the towers in bf16 — fp16 is only
+# seeded while that patch is live (_omlx_fp16_patched), otherwise it stays off.
+# A change of the flag still clears $OMLX_SSD_CACHE_DIR/vision_features (belt and
+# braces: since v0.8.4 + the patch the cache keys carry the numerics revision).
 ensure_omlx_settings() {
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   [ -n "${OMLX_MAX_CONTEXT_WINDOW:-}" ] || return 0
@@ -1856,12 +1859,17 @@ ensure_omlx_settings() {
   local served="${repo//\//--}"
   local dir="${TARGET_HOME:-/Users/mac}/.omlx"
   local file="$dir/model_settings.json"
+  local fp16="${OMLX_ACTIVATION_FP16:-0}"
+  if [ "$fp16" = 1 ] && ! _omlx_fp16_patched; then
+    warn "OMLX_ACTIVATION_FP16=1 ignored: the oMLX fp16 tower patch is not live (images would return NaN) — staying on bf16"
+    fp16=0
+  fi
   /usr/bin/sudo -u "$TARGET_USER" -H /bin/mkdir -p "$dir"
   local before; before=$(hash_file "$file")
   local tmp; tmp=$(/usr/bin/mktemp)
   /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/env \
     OMLX_SETTINGS_FILE="$file" OMLX_MODEL_KEY="$served" OMLX_CTX="$OMLX_MAX_CONTEXT_WINDOW" \
-    OMLX_LEGACY_KEY="mlx-$id" OMLX_FP16="${OMLX_ACTIVATION_FP16:-0}" \
+    OMLX_LEGACY_KEY="mlx-$id" OMLX_FP16="$fp16" \
     /usr/bin/python3 - >"$tmp" <<'PY'
 import json, os
 path, key, ctx = os.environ["OMLX_SETTINGS_FILE"], os.environ["OMLX_MODEL_KEY"], int(os.environ["OMLX_CTX"])
@@ -1893,15 +1901,16 @@ PY
     return 0
   fi
   if [ "$before" != "$(hash_file "$tmp")" ]; then
-    # oMLX's vision-feature SSD cache is not keyed on the activation dtype — features
-    # computed under fp16 (NaN on gemma4) would keep breaking images after a switch.
+    # Before v0.8.4 oMLX's vision-feature SSD cache was not keyed on the activation
+    # dtype — NaN features from an unpatched fp16 run kept breaking images after a
+    # switch. Kept as a cheap guard.
     local fp16_was fp16_now
     fp16_was=$(/usr/bin/grep -c '"activation_fp16_enabled": true' "$file" 2>/dev/null || true)
     fp16_now=$(/usr/bin/grep -c '"activation_fp16_enabled": true' "$tmp" || true)
     /bin/mv -f "$tmp" "$file"
     /bin/chmod 644 "$file"
     /usr/sbin/chown "$TARGET_USER" "$file" 2>/dev/null || true
-    ok "omlx per-model settings: $served max_context_window=$OMLX_MAX_CONTEXT_WINDOW activation_fp16=${OMLX_ACTIVATION_FP16:-0} -> $file"
+    ok "omlx per-model settings: $served max_context_window=$OMLX_MAX_CONTEXT_WINDOW activation_fp16=$fp16 -> $file"
     if [ "${fp16_was:-0}" != "${fp16_now:-0}" ] && [ -n "${OMLX_SSD_CACHE_DIR:-}" ] \
        && [ -d "$OMLX_SSD_CACHE_DIR/vision_features" ]; then
       /bin/rm -rf "$OMLX_SSD_CACHE_DIR/vision_features"/*
@@ -1992,6 +2001,23 @@ _omlx_metal_toolchain() {
   printf '%s' "$id"
 }
 
+# _omlx_patch_state <dir> — hash of the oMLX checkout's local modifications
+# (= the applied patches); ensure_omlx_project restarts the daemon only when
+# this changes.
+_omlx_patch_state() {
+  /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$1" diff --no-color 2>/dev/null \
+    | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}'
+}
+
+# _omlx_fp16_patched [dir] — true when patches/omlx-fp16-keep-towers-bf16.patch
+# is live in the oMLX checkout (towers stay bf16 + own cache numerics revision).
+_omlx_fp16_patched() {
+  local dir="${1:-${OMLX_PROJECT_DIR:-$TARGET_HOME/projects/omlx}}"
+  /usr/bin/grep -q '^_FP16_RECAST_SKIP_PREFIXES = ("vision_tower\.", "audio_tower\.")' \
+      "$dir/omlx/utils/model_loading.py" 2>/dev/null \
+    && /usr/bin/grep -q 'fp16-recast-{recast}' "$dir/omlx/cache/paged_ssd_cache.py" 2>/dev/null
+}
+
 ensure_omlx_project() {
   # Clones + builds oMLX (github.com/jundot/omlx) — main AND embed/rerank in
   # ONE process. Alpha-stage, not on PyPI:
@@ -2001,13 +2027,13 @@ ensure_omlx_project() {
   # $VENV_DIR/omlx (matches litellm/mflux — every wrapper execs
   # "$VENV_DIR/<name>/bin/...", zero special-casing needed).
   #
-  # OMLX_REPO_REF is a PINNED TAG (v0.8.2), not a floating branch: we
+  # OMLX_REPO_REF is a PINNED TAG (v0.8.4), not a floating branch: we
   # `fetch` + explicit `checkout "$ref"` every run — a no-op when already on
   # that tag.
   [ "${INSTALL_MLX:-1}" = 1 ] || return 0
   local dir="${OMLX_PROJECT_DIR:-$TARGET_HOME/projects/omlx}"
   local repo="${OMLX_REPO:-https://github.com/jundot/omlx}"
-  local ref="${OMLX_REPO_REF:-v0.8.2}"
+  local ref="${OMLX_REPO_REF:-v0.8.4}"
   local vdir="${VENV_DIR:-/Users/mac/.macstudio-venvs}/omlx"
   local changed=0
 
@@ -2017,14 +2043,15 @@ ensure_omlx_project() {
     return 1
   fi
 
-  # Hash omlx/server.py as the RUNNING daemon currently has it — i.e. WITH the
-  # local patch — before the reset further down wipes it. Comparing against the
-  # post-`git apply` hash then only differs on a real change (fresh clone, ref
-  # bump, edited patch file). Taking this hash after the reset would compare
-  # clean-vs-patched every time and restart the daemon (30-60 s model reload) on
-  # every single --apply.
+  # Hash the local patch state (`git diff` of the checkout) as the RUNNING
+  # daemon currently has it — i.e. WITH the local patches — before the reset
+  # further down wipes it. Comparing against the post-`git apply` state then
+  # only differs on a real change (fresh clone, ref bump, edited patch file).
+  # Taking this after the reset would compare clean-vs-patched every time and
+  # restart the daemon (30-60 s model reload) on every single --apply. A diff
+  # hash, not one file's hash: the patches touch several files.
   local srv_before=""
-  [ -f "$dir/omlx/server.py" ] && srv_before=$(hash_file "$dir/omlx/server.py")
+  [ -d "$dir/.git" ] && srv_before=$(_omlx_patch_state "$dir")
 
   if [ ! -d "$dir/.git" ]; then
     if [ ! -x /usr/bin/git ]; then
@@ -2094,8 +2121,32 @@ ensure_omlx_project() {
                        inf && /_forced_tool_instruction\(/{f=1} END{exit !f}' "$dir/omlx/server.py"; then
       warn "oMLX tool_choice patch did NOT land in create_chat_completion — forced tool calls (paperless-ngx AI suggestions) will fail; the patch needs re-basing onto $ref"
     fi
-    [ "$srv_before" != "$(hash_file "$dir/omlx/server.py")" ] && changed=1
   fi
+
+  # Local patch 2 (2026-11-26): keep the vision/audio towers in bf16 under
+  # oMLX's fp16 activation recast (OMLX_ACTIVATION_FP16=1). Gemma 4's vision
+  # pooler multiplies the pooled encoder output by sqrt(hidden_size) (x33.9)
+  # before standardizing it — 72-80k on ordinary images, above fp16's 65504 —
+  # so a full recast turned every image into inf/NaN features and the answer
+  # into <pad> tokens (measured layer by layer: the encoder peaks at ~2.7k, the
+  # pooler is the ONLY overflow). The patch also gives such a recast its own
+  # cache numerics revision ("fp16-recast-towers-bf16"): KV blocks from an
+  # unpatched fp16 image prefill are NaN and WERE reused from the paged SSD
+  # cache after the fix (measured), the new revision makes them unreachable.
+  # _omlx_fp16_patched gates ensure_omlx_settings: without the patch, fp16
+  # stays off even when OMLX_ACTIVATION_FP16=1.
+  local fp16_patch="$REPO_DIR/patches/omlx-fp16-keep-towers-bf16.patch"
+  if [ -f "$fp16_patch" ] && [ -f "$dir/omlx/utils/model_loading.py" ]; then
+    if /usr/bin/sudo -u "$TARGET_USER" -H /usr/bin/git -C "$dir" apply "$fp16_patch" \
+          >>"$LOG_DIR/omlx-patch.log" 2>&1; then
+      ok "applied oMLX fp16 tower patch"
+    else
+      warn "failed to apply oMLX fp16 tower patch; see $LOG_DIR/omlx-patch.log (fp16 activations stay off — images would break)"
+    fi
+    _omlx_fp16_patched "$dir" \
+      || warn "oMLX fp16 tower patch did NOT land — OMLX_ACTIVATION_FP16 is ignored (bf16) until it is re-based onto $ref"
+  fi
+  [ -d "$dir/.git" ] && [ "$srv_before" != "$(_omlx_patch_state "$dir")" ] && changed=1
 
   local pyproject="$dir/pyproject.toml"
   if [ ! -f "$pyproject" ]; then
@@ -4041,7 +4092,7 @@ menu_models() {
 menu_updates() {
   load_config
   printf "\n${C_BOLD}── Check for updates (read-only) ──────────────${C_RST}\n"
-  printf "oMLX pin: OMLX_REPO_REF=%s   (engine — frozen unless you bump it)\n\n" "${OMLX_REPO_REF:-v0.8.2}"
+  printf "oMLX pin: OMLX_REPO_REF=%s   (engine — frozen unless you bump it)\n\n" "${OMLX_REPO_REF:-v0.8.4}"
   local odir="${OMLX_PROJECT_DIR:-/Users/mac/projects/omlx}"
   if [ -d "$odir/.git" ]; then
     local installed latest
